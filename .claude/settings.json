@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /tmp/golook-smali -type f -name *Preview*.smali -o -name *preview*.smali -o -name *Live*.smali -o -name *live*.smali)"
+    ]
+  }
+}

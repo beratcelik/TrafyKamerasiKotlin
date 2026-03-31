@@ -103,9 +103,47 @@ class HiDvrSettingsRepository {
     private fun isCamType(key: String) = key in CAM_TYPE_KEYS
 
     /**
+     * Executes an action-type item (Format SD Card, Factory Reset, etc.).
+     * Returns the raw CGI response body, or null on network failure.
+     */
+    suspend fun executeAction(deviceIp: String, key: String): String? {
+        val base = "http://$deviceIp$CGI"
+        val cgiName = if (key.endsWith(".cgi?")) key else "$key.cgi?"
+        val url = "$base/$cgiName"
+        Log.i(TAG, "executeAction: $url")
+        return DashcamHttpClient.get(url)
+    }
+
+    /**
+     * Fetches current WiFi SSID and password from the camera.
+     * The response is a JS-style variable block: var ssid="..."; var password="...";
+     */
+    suspend fun getWifiSettings(deviceIp: String): WifiSettings? {
+        val body = DashcamHttpClient.get("http://$deviceIp$CGI/getwifi.cgi?") ?: return null
+        val ssid = parseVarValue(body, "ssid") ?: return null
+        val password = parseVarValue(body, "password") ?: return null
+        Log.i(TAG, "getWifiSettings: ssid=$ssid password=***")
+        return WifiSettings(ssid, password)
+    }
+
+    /**
+     * Sets a new WiFi password on the camera (keeps existing SSID).
+     * Returns true on HTTP 200.
+     */
+    suspend fun setWifiPassword(deviceIp: String, ssid: String, newPassword: String): Boolean {
+        val url = "http://$deviceIp$CGI/setwifissid.cgi?&-ssid=$ssid&-password=$newPassword"
+        Log.i(TAG, "setWifiPassword: ssid=$ssid")
+        return DashcamHttpClient.probe(url)
+    }
+
+    data class WifiSettings(val ssid: String, val password: String)
+
+    /**
      * Fetches the current value for this item and returns a copy with it filled in.
+     * Action items (empty options) skip the CGI fetch.
      */
     private suspend fun SettingItem.withCurrentValue(deviceIp: String): SettingItem {
+        if (options.isEmpty()) return this   // action-type: no value to fetch
         val base = "http://$deviceIp$CGI"
         val url = if (isCamType(key)) {
             "$base/getcamparam.cgi?&-workmode=$WORKMODE&-type=$key"
@@ -170,7 +208,7 @@ class HiDvrSettingsRepository {
                     }
                     XmlPullParser.END_TAG -> if (parser.name == "menu" && insideMenu) {
                         insideMenu = false
-                        if (menuKey.isNotEmpty() && menuOptions.isNotEmpty()) {
+                        if (menuKey.isNotEmpty()) {
                             result.add(SettingItem(
                                 key              = menuKey,
                                 title            = menuTitle,

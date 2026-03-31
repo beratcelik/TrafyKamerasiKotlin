@@ -17,10 +17,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -31,6 +31,12 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -41,6 +47,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -50,22 +59,26 @@ import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.SettingItem
 import com.example.trafykamerasikotlin.data.model.SettingOption
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
+import com.example.trafykamerasikotlin.ui.theme.ColorDestructive
 import com.example.trafykamerasikotlin.ui.theme.ColorDivider
 import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorSurface
-import com.example.trafykamerasikotlin.ui.theme.ColorSurfaceElevated
 import com.example.trafykamerasikotlin.ui.theme.ColorTextPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorTextSecondary
 import com.example.trafykamerasikotlin.ui.viewmodel.SettingsUiState
 import com.example.trafykamerasikotlin.ui.viewmodel.SettingsViewModel
+import com.example.trafykamerasikotlin.ui.viewmodel.WifiDialogState
 
 @Composable
 fun SettingsScreen(
     device: DeviceInfo?,
+    onRawDump: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = viewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val actionFeedback by viewModel.actionFeedback.collectAsStateWithLifecycle()
+    val wifiDialog by viewModel.wifiDialog.collectAsStateWithLifecycle()
 
     // Trigger load when the screen appears with a connected device
     LaunchedEffect(device) {
@@ -97,20 +110,50 @@ fun SettingsScreen(
             is SettingsUiState.Loading -> LoadingContent()
 
             is SettingsUiState.Loaded -> SettingsList(
-                items     = state.items,
-                applying  = false,
-                onSelect  = { key, value -> viewModel.apply(key, value) }
+                items          = state.items,
+                applying       = false,
+                onSelect       = { key, value -> viewModel.apply(key, value) },
+                onAction       = { key -> viewModel.triggerAction(key) },
+                onWifiSettings = viewModel::openWifiSettings,
+                onRawDump      = onRawDump
             )
 
             is SettingsUiState.Applying -> SettingsList(
-                items    = state.items,
-                applying = true,
-                onSelect = { _, _ -> }
+                items          = state.items,
+                applying       = true,
+                onSelect       = { _, _ -> },
+                onAction       = { },
+                onWifiSettings = { },
+                onRawDump      = onRawDump
             )
 
             is SettingsUiState.Error -> ErrorContent(
                 message   = state.message,
                 onRetry   = { if (device != null) viewModel.reload(device) }
+            )
+        }
+
+        // Action result dialog (shown on top of whatever state the screen is in)
+        actionFeedback?.let { msg ->
+            AlertDialog(
+                onDismissRequest = viewModel::clearActionFeedback,
+                containerColor   = ColorSurface,
+                title = { Text("Result", style = MaterialTheme.typography.titleLarge, color = ColorTextPrimary) },
+                text  = { Text(msg, style = MaterialTheme.typography.bodyMedium, color = ColorTextSecondary) },
+                confirmButton = {
+                    TextButton(onClick = viewModel::clearActionFeedback) {
+                        Text("OK", color = ColorPrimary)
+                    }
+                }
+            )
+        }
+
+        // Wi-Fi password dialog
+        if (wifiDialog !is WifiDialogState.Hidden) {
+            WifiPasswordDialog(
+                state     = wifiDialog,
+                onSave    = { ssid, pass -> viewModel.saveWifiPassword(ssid, pass) },
+                onDismiss = viewModel::dismissWifiDialog
             )
         }
     }
@@ -141,7 +184,7 @@ private fun NotConnectedContent() {
                 textAlign = TextAlign.Center
             )
             Text(
-                text      = "Connect to your dashcam on the Home screen first",
+                text      = "Connect to your Trafy Kamerası on the Home screen first",
                 style     = MaterialTheme.typography.bodyMedium,
                 color     = ColorTextSecondary,
                 textAlign = TextAlign.Center,
@@ -201,13 +244,19 @@ private fun ErrorContent(message: String, onRetry: () -> Unit) {
 
 // ── Settings list ──────────────────────────────────────────────────────────
 
+private val DESTRUCTIVE_KEYS = setOf("format", "reset.cgi?")
+
 @Composable
 private fun SettingsList(
     items: List<SettingItem>,
     applying: Boolean,
     onSelect: (key: String, value: String) -> Unit,
+    onAction: (key: String) -> Unit,
+    onWifiSettings: () -> Unit,
+    onRawDump: () -> Unit,
 ) {
     var pendingItem by remember { mutableStateOf<SettingItem?>(null) }
+    var pendingDestructive by remember { mutableStateOf<SettingItem?>(null) }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -222,8 +271,27 @@ private fun SettingsList(
                 SettingsCard(
                     items    = items,
                     enabled  = !applying,
-                    onTap    = { item -> pendingItem = item }
+                    onTap    = { item ->
+                        when {
+                            item.options.isNotEmpty()    -> pendingItem = item
+                            item.key in DESTRUCTIVE_KEYS -> pendingDestructive = item
+                            item.key == "getwifi.cgi?"  -> onWifiSettings()
+                            else                         -> onAction(item.key)
+                        }
+                    }
                 )
+            }
+            item {
+                TextButton(
+                    onClick  = onRawDump,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text  = "Raw Settings Dump",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ColorTextSecondary
+                    )
+                }
             }
         }
 
@@ -261,6 +329,37 @@ private fun SettingsList(
             }
         )
     }
+
+    // Destructive action confirmation dialog
+    pendingDestructive?.let { item ->
+        AlertDialog(
+            onDismissRequest = { pendingDestructive = null },
+            containerColor   = ColorSurface,
+            title = {
+                Text(item.title, style = MaterialTheme.typography.titleLarge, color = ColorTextPrimary)
+            },
+            text = {
+                Text(
+                    "This action cannot be undone. Are you sure?",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = ColorTextSecondary
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onAction(item.key)
+                    pendingDestructive = null
+                }) {
+                    Text("Confirm", color = ColorDestructive)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDestructive = null }) {
+                    Text("Cancel", color = ColorTextSecondary)
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -293,16 +392,7 @@ private fun SettingsCard(
     }
 }
 
-// Extension to use itemsIndexed inside a regular Column (not LazyColumn)
-@Composable
-private fun ColumnScope(
-    items: List<SettingItem>,
-    block: @Composable (Int, SettingItem) -> Unit
-) {
-    items.forEachIndexed { index, item -> block(index, item) }
-}
-
-// We need a Column-compatible version:
+// Column-compatible itemsIndexed (LazyColumn's version can't be used inside a Card/Column)
 @Composable
 private fun itemsIndexed(
     items: List<SettingItem>,
@@ -317,6 +407,7 @@ private fun SettingRow(
     enabled: Boolean,
     onTap: () -> Unit,
 ) {
+    val isAction = item.options.isEmpty()
     Row(
         modifier          = Modifier
             .fillMaxWidth()
@@ -331,11 +422,20 @@ private fun SettingRow(
             color    = if (enabled) ColorTextPrimary else ColorTextSecondary,
             modifier = Modifier.weight(1f)
         )
-        Text(
-            text  = item.currentValueLabel.ifEmpty { item.currentValue },
-            style = MaterialTheme.typography.bodyMedium,
-            color = ColorPrimary
-        )
+        if (isAction) {
+            Icon(
+                imageVector        = Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint               = ColorTextSecondary,
+                modifier           = Modifier.size(20.dp)
+            )
+        } else {
+            Text(
+                text  = item.currentValueLabel.ifEmpty { item.currentValue },
+                style = MaterialTheme.typography.bodyMedium,
+                color = ColorPrimary
+            )
+        }
     }
 }
 
@@ -382,6 +482,116 @@ private fun OptionPickerDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
+                Text("Cancel", color = ColorTextSecondary)
+            }
+        }
+    )
+}
+
+// ── Wi-Fi password dialog ──────────────────────────────────────────────────
+
+@Composable
+private fun WifiPasswordDialog(
+    state: WifiDialogState,
+    onSave: (ssid: String, password: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val isLoading = state is WifiDialogState.Loading || state is WifiDialogState.Saving
+    val isError   = state is WifiDialogState.Error
+
+    // Only re-initialize from camera data when the Loaded state first arrives.
+    // Using the ssid as the key means the field won't reset while the user types.
+    val loadedState = state as? WifiDialogState.Loaded
+    var password     by remember(loadedState?.ssid) {
+        mutableStateOf(loadedState?.password ?: "")
+    }
+    var showPassword by remember { mutableStateOf(false) }
+
+    val ssid = loadedState?.ssid ?: ""
+
+    AlertDialog(
+        onDismissRequest = { if (!isLoading) onDismiss() },
+        containerColor   = ColorSurface,
+        title = {
+            Text("Wi-Fi Settings", style = MaterialTheme.typography.titleLarge, color = ColorTextPrimary)
+        },
+        text = {
+            when {
+                isLoading -> {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = ColorPrimary, modifier = Modifier.size(32.dp))
+                    }
+                }
+                isError -> {
+                    Text(
+                        "Could not load Wi-Fi settings.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = ColorTextSecondary
+                    )
+                }
+                else -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedTextField(
+                            value         = ssid,
+                            onValueChange = {},
+                            readOnly      = true,
+                            label         = { Text("Network Name (SSID)", color = ColorTextSecondary) },
+                            modifier      = Modifier.fillMaxWidth(),
+                            colors        = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor   = ColorPrimary,
+                                unfocusedBorderColor = ColorTextSecondary,
+                                focusedTextColor     = ColorTextPrimary,
+                                unfocusedTextColor   = ColorTextPrimary,
+                                disabledTextColor    = ColorTextSecondary,
+                            )
+                        )
+                        OutlinedTextField(
+                            value         = password,
+                            onValueChange = { password = it },
+                            label         = { Text("Password", color = ColorTextSecondary) },
+                            singleLine    = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            visualTransformation = if (showPassword) VisualTransformation.None
+                                                   else PasswordVisualTransformation(),
+                            trailingIcon  = {
+                                IconButton(onClick = { showPassword = !showPassword }) {
+                                    Icon(
+                                        imageVector = if (showPassword) Icons.Filled.VisibilityOff
+                                                      else Icons.Filled.Visibility,
+                                        contentDescription = if (showPassword) "Hide password" else "Show password",
+                                        tint = ColorTextSecondary
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors   = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor   = ColorPrimary,
+                                unfocusedBorderColor = ColorTextSecondary,
+                                focusedTextColor     = ColorTextPrimary,
+                                unfocusedTextColor   = ColorTextPrimary,
+                            )
+                        )
+                        Text(
+                            "Minimum 8 characters. You'll need to reconnect after changing.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ColorTextSecondary
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (!isError) {
+                TextButton(
+                    onClick  = { if (!isLoading) onSave(ssid, password) },
+                    enabled  = !isLoading && password.length >= 8
+                ) {
+                    Text("Save", color = ColorPrimary)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { if (!isLoading) onDismiss() }) {
                 Text("Cancel", color = ColorTextSecondary)
             }
         }

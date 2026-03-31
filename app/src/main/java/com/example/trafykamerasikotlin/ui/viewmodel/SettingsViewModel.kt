@@ -15,6 +15,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+sealed class WifiDialogState {
+    data object Hidden : WifiDialogState()
+    data object Loading : WifiDialogState()
+    data class Loaded(val ssid: String, val password: String) : WifiDialogState()
+    data object Saving : WifiDialogState()
+    data object Error : WifiDialogState()
+}
+
 sealed class SettingsUiState {
     data object NotConnected : SettingsUiState()
     data object Loading : SettingsUiState()
@@ -31,6 +39,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private val _uiState = MutableStateFlow<SettingsUiState>(SettingsUiState.NotConnected)
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+
+    /** Non-null while an action result (or error) should be shown to the user. */
+    private val _actionFeedback = MutableStateFlow<String?>(null)
+    val actionFeedback: StateFlow<String?> = _actionFeedback.asStateFlow()
+
+    private val _wifiDialog = MutableStateFlow<WifiDialogState>(WifiDialogState.Hidden)
+    val wifiDialog: StateFlow<WifiDialogState> = _wifiDialog.asStateFlow()
 
     private var loadedForDevice: DeviceInfo? = null
     private var eeasyRepo: EeasytechSettingsRepository? = null
@@ -87,6 +102,53 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             }
         }
     }
+
+    /**
+     * Executes an action-type item (Format SD Card, About Camera, etc.).
+     * Only valid for HiDVR devices. Shows Applying overlay while in-flight.
+     */
+    fun triggerAction(key: String) {
+        val device = loadedForDevice ?: return
+        val current = currentItems() ?: return
+        _uiState.update { SettingsUiState.Applying(current) }
+        viewModelScope.launch {
+            val result = getHiDvrRepo().executeAction(device.protocol.deviceIp, key)
+            _uiState.update { SettingsUiState.Loaded(current) }
+            _actionFeedback.update { result ?: "Action failed — check device connection." }
+        }
+    }
+
+    fun clearActionFeedback() { _actionFeedback.update { null } }
+
+    /** Opens the Wi-Fi password dialog and fetches current settings from the camera. */
+    fun openWifiSettings() {
+        val device = loadedForDevice ?: return
+        _wifiDialog.update { WifiDialogState.Loading }
+        viewModelScope.launch {
+            val settings = getHiDvrRepo().getWifiSettings(device.protocol.deviceIp)
+            _wifiDialog.update {
+                if (settings != null) WifiDialogState.Loaded(settings.ssid, settings.password)
+                else WifiDialogState.Error
+            }
+        }
+    }
+
+    /** Saves a new password to the camera. */
+    fun saveWifiPassword(ssid: String, newPassword: String) {
+        val device = loadedForDevice ?: return
+        val current = (_wifiDialog.value as? WifiDialogState.Loaded) ?: return
+        _wifiDialog.update { WifiDialogState.Saving }
+        viewModelScope.launch {
+            val ok = getHiDvrRepo().setWifiPassword(device.protocol.deviceIp, ssid, newPassword)
+            _wifiDialog.update {
+                if (ok) WifiDialogState.Loaded(current.ssid, newPassword)
+                else WifiDialogState.Error
+            }
+            if (ok) _actionFeedback.update { "Wi-Fi password updated. Reconnect to apply the new password." }
+        }
+    }
+
+    fun dismissWifiDialog() { _wifiDialog.update { WifiDialogState.Hidden } }
 
     /** Forces a fresh reload from the camera (e.g. after an error). */
     fun reload(device: DeviceInfo) {

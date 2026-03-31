@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.SettingItem
 import com.example.trafykamerasikotlin.data.model.SettingOption
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
@@ -59,15 +61,20 @@ import com.example.trafykamerasikotlin.ui.viewmodel.SettingsViewModel
 
 @Composable
 fun SettingsScreen(
-    deviceIp: String?,
+    device: DeviceInfo?,
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = viewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     // Trigger load when the screen appears with a connected device
-    LaunchedEffect(deviceIp) {
-        if (deviceIp != null) viewModel.load(deviceIp)
+    LaunchedEffect(device) {
+        if (device != null) viewModel.load(device)
+    }
+
+    // Tell the camera to exit settings mode when leaving the screen
+    DisposableEffect(device) {
+        onDispose { viewModel.onLeave() }
     }
 
     Column(
@@ -103,7 +110,7 @@ fun SettingsScreen(
 
             is SettingsUiState.Error -> ErrorContent(
                 message   = state.message,
-                onRetry   = { if (deviceIp != null) viewModel.reload(deviceIp) }
+                onRetry   = { if (device != null) viewModel.reload(device) }
             )
         }
     }

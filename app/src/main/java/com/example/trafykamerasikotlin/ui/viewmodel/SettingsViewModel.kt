@@ -4,7 +4,10 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
+import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.SettingItem
+import com.example.trafykamerasikotlin.data.settings.EeasytechSettingsRepository
 import com.example.trafykamerasikotlin.data.settings.HiDvrSettingsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,27 +29,28 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         private const val TAG = "Trafy.SettingsVM"
     }
 
-    private val repository = HiDvrSettingsRepository()
-
     private val _uiState = MutableStateFlow<SettingsUiState>(SettingsUiState.NotConnected)
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
-    private var loadedForIp: String? = null
+    private var loadedForDevice: DeviceInfo? = null
+    private var eeasyRepo: EeasytechSettingsRepository? = null
+    private var hiDvrRepo: HiDvrSettingsRepository? = null
 
     /**
      * Loads all settings from the camera. Idempotent — won't reload if already
-     * loaded for the same IP (unless an error occurred).
+     * loaded for the same device (unless an error occurred).
+     * Picks the correct repository based on [device.protocol].
      */
-    fun load(deviceIp: String) {
-        if (loadedForIp == deviceIp && _uiState.value is SettingsUiState.Loaded) {
-            Log.d(TAG, "Already loaded for $deviceIp — skipping")
+    fun load(device: DeviceInfo) {
+        if (loadedForDevice == device && _uiState.value is SettingsUiState.Loaded) {
+            Log.d(TAG, "Already loaded for ${device.protocol.deviceIp} — skipping")
             return
         }
-        loadedForIp = deviceIp
+        loadedForDevice = device
         _uiState.update { SettingsUiState.Loading }
-        Log.i(TAG, "Loading settings for $deviceIp")
+        Log.i(TAG, "Loading settings for ${device.protocol} @ ${device.protocol.deviceIp}")
         viewModelScope.launch {
-            val items = repository.fetchAll(deviceIp)
+            val items = fetchAll(device)
             if (items != null) {
                 Log.i(TAG, "Loaded ${items.size} settings")
                 _uiState.update { SettingsUiState.Loaded(items) }
@@ -62,12 +66,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
      * then updates the item in-place on success or restores on failure.
      */
     fun apply(key: String, newValue: String) {
-        val ip = loadedForIp ?: return
+        val device = loadedForDevice ?: return
         val current = currentItems() ?: return
         Log.i(TAG, "Applying $key = $newValue")
         _uiState.update { SettingsUiState.Applying(current) }
         viewModelScope.launch {
-            val success = repository.applySetting(ip, key, newValue)
+            val success = applySetting(device, key, newValue)
             if (success) {
                 val updated = current.map { item ->
                     if (item.key == key) {
@@ -85,10 +89,47 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Forces a fresh reload from the camera (e.g. after an error). */
-    fun reload(deviceIp: String) {
-        loadedForIp = null
-        load(deviceIp)
+    fun reload(device: DeviceInfo) {
+        loadedForDevice = null
+        load(device)
     }
+
+    /**
+     * Called when the user leaves the Settings screen.
+     * For Easytech devices, tells the camera to exit settings mode.
+     */
+    fun onLeave() {
+        val device = loadedForDevice ?: return
+        if (device.protocol == ChipsetProtocol.EEASYTECH) {
+            viewModelScope.launch {
+                getEeasyRepo().exitSettings(device.protocol.deviceIp)
+            }
+        }
+    }
+
+    // ── Repository dispatch ────────────────────────────────────────────────
+
+    private suspend fun fetchAll(device: DeviceInfo): List<SettingItem>? =
+        if (device.protocol == ChipsetProtocol.EEASYTECH) {
+            getEeasyRepo().fetchAll(device.protocol.deviceIp)
+        } else {
+            getHiDvrRepo().fetchAll(device.protocol.deviceIp)
+        }
+
+    private suspend fun applySetting(device: DeviceInfo, key: String, value: String): Boolean =
+        if (device.protocol == ChipsetProtocol.EEASYTECH) {
+            getEeasyRepo().applySetting(device.protocol.deviceIp, key, value)
+        } else {
+            getHiDvrRepo().applySetting(device.protocol.deviceIp, key, value)
+        }
+
+    private fun getEeasyRepo(): EeasytechSettingsRepository =
+        eeasyRepo ?: EeasytechSettingsRepository().also { eeasyRepo = it }
+
+    private fun getHiDvrRepo(): HiDvrSettingsRepository =
+        hiDvrRepo ?: HiDvrSettingsRepository().also { hiDvrRepo = it }
+
+    // ── Helpers ────────────────────────────────────────────────────────────
 
     private fun currentItems(): List<SettingItem>? = when (val s = _uiState.value) {
         is SettingsUiState.Loaded   -> s.items

@@ -53,7 +53,7 @@ fun AppNavigation() {
     val mediaViewModel: MediaViewModel     = viewModel()
     val liveViewModel: LiveViewModel       = viewModel()
     val uiState by dashcamViewModel.uiState.collectAsStateWithLifecycle()
-    val connectedDeviceIp = (uiState as? DashcamUiState.Connected)?.device?.protocol?.deviceIp
+    val connectedDevice = (uiState as? DashcamUiState.Connected)?.device
 
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -135,13 +135,13 @@ fun AppNavigation() {
                 )
             }
             composable(BottomNavItem.Live.route) {
-                LiveScreen(deviceIp = connectedDeviceIp, viewModel = liveViewModel)
+                LiveScreen(device = connectedDevice, viewModel = liveViewModel)
             }
             composable(BottomNavItem.Media.route) {
-                MediaScreen(deviceIp = connectedDeviceIp, viewModel = mediaViewModel)
+                MediaScreen(device = connectedDevice, viewModel = mediaViewModel)
             }
             composable(BottomNavItem.Settings.route) {
-                SettingsScreen(deviceIp = connectedDeviceIp)
+                SettingsScreen(device = connectedDevice)
             }
             composable(BottomNavItem.More.route) {
                 MoreScreen(

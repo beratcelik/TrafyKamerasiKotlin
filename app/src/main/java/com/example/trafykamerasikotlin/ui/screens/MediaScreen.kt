@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
+import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.MediaFile
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorDivider
@@ -78,16 +79,16 @@ import com.example.trafykamerasikotlin.ui.viewmodel.MediaViewModel
 
 @Composable
 fun MediaScreen(
-    deviceIp: String?,
+    device: DeviceInfo?,
     modifier: Modifier = Modifier,
     viewModel: MediaViewModel,
 ) {
     val uiState     by viewModel.uiState.collectAsStateWithLifecycle()
     val downloading by viewModel.downloading.collectAsStateWithLifecycle()
 
-    LaunchedEffect(deviceIp) {
-        if (deviceIp != null) viewModel.load(deviceIp)
-        else viewModel.onLeave() // ensure recording restarts if user disconnected while on tab
+    LaunchedEffect(device) {
+        if (device != null) viewModel.load(device)
+        else viewModel.onLeave() // ensure playback exits if user disconnected while on tab
     }
 
     DisposableEffect(Unit) {
@@ -95,7 +96,6 @@ fun MediaScreen(
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Videos", "Photos")
 
     Column(
         modifier = modifier
@@ -110,36 +110,6 @@ fun MediaScreen(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
         )
 
-        // Tabs only when loaded
-        if (uiState is MediaUiState.Loaded) {
-            TabRow(
-                selectedTabIndex = selectedTab,
-                containerColor   = ColorBackground,
-                contentColor     = ColorPrimary,
-                indicator        = { positions ->
-                    TabRowDefaults.SecondaryIndicator(
-                        modifier = Modifier.tabIndicatorOffset(positions[selectedTab]),
-                        color    = ColorPrimary
-                    )
-                },
-                divider = {
-                    Box(modifier = Modifier.fillMaxWidth().background(ColorDivider))
-                }
-            ) {
-                tabs.forEachIndexed { index, title ->
-                    Tab(
-                        selected               = selectedTab == index,
-                        onClick                = { selectedTab = index },
-                        selectedContentColor   = ColorPrimary,
-                        unselectedContentColor = ColorTextSecondary,
-                        text = {
-                            Text(text = title, style = MaterialTheme.typography.titleMedium)
-                        }
-                    )
-                }
-            }
-        }
-
         when (val state = uiState) {
             is MediaUiState.NotConnected -> NotConnectedMediaContent()
             is MediaUiState.Loading      -> LoadingMediaContent()
@@ -148,9 +118,48 @@ fun MediaScreen(
                 onRetry = { viewModel.reload() }
             )
             is MediaUiState.Loaded -> {
-                val files = if (selectedTab == 0) state.videos else state.photos
+                // Group videos by camera channel (front/back/inside) from filename suffix.
+                // Only tabs for cameras that actually have footage are shown.
+                val videosByCamera = groupVideosByCamera(state.videos)
+                val cameraTabs     = listOf("Front", "Back", "Inside")
+                    .filter { videosByCamera.containsKey(it) }
+                val tabs           = cameraTabs + "Photos"
+                // Clamp in case a reload returns fewer cameras than current tab index
+                val safeTab        = selectedTab.coerceIn(0, tabs.lastIndex)
+
+                TabRow(
+                    selectedTabIndex = safeTab,
+                    containerColor   = ColorBackground,
+                    contentColor     = ColorPrimary,
+                    indicator        = { positions ->
+                        TabRowDefaults.SecondaryIndicator(
+                            modifier = Modifier.tabIndicatorOffset(positions[safeTab]),
+                            color    = ColorPrimary
+                        )
+                    },
+                    divider = {
+                        Box(modifier = Modifier.fillMaxWidth().background(ColorDivider))
+                    }
+                ) {
+                    tabs.forEachIndexed { index, title ->
+                        Tab(
+                            selected               = safeTab == index,
+                            onClick                = { selectedTab = index },
+                            selectedContentColor   = ColorPrimary,
+                            unselectedContentColor = ColorTextSecondary,
+                            text = {
+                                Text(text = title, style = MaterialTheme.typography.titleMedium)
+                            }
+                        )
+                    }
+                }
+
+                val isPhotoTab = safeTab == tabs.lastIndex
+                val files      = if (isPhotoTab) state.photos
+                                 else videosByCamera[cameraTabs.getOrNull(safeTab)] ?: emptyList()
+
                 if (files.isEmpty()) {
-                    EmptyMediaContent(isPhoto = selectedTab == 1)
+                    EmptyMediaContent(isPhoto = isPhotoTab)
                 } else {
                     MediaGrid(
                         files       = files,
@@ -163,6 +172,28 @@ fun MediaScreen(
         }
     }
 }
+
+// ── Camera grouping helpers ─────────────────────────────────────────────────
+
+/**
+ * Determines the camera channel of a video file from its filename suffix.
+ *   _f  → Front  (single camera or multi-camera front)
+ *   _b  → Back   (rear camera)
+ *   _i  → Inside (third/inside camera)
+ * Files without a recognised suffix are treated as Front (single-camera devices).
+ */
+private fun cameraOf(file: MediaFile): String {
+    val base = file.name.substringBeforeLast('.').lowercase()
+    return when {
+        base.endsWith("_f") -> "Front"
+        base.endsWith("_b") -> "Back"
+        base.endsWith("_i") -> "Inside"
+        else                -> "Front"
+    }
+}
+
+private fun groupVideosByCamera(videos: List<MediaFile>): Map<String, List<MediaFile>> =
+    videos.groupBy { cameraOf(it) }
 
 // ── State placeholders ──────────────────────────────────────────────────────
 
@@ -501,7 +532,7 @@ private fun formatFileName(name: String): String {
 
 private fun playVideo(context: Context, url: String) {
     val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(Uri.parse(url), "video/mp4")
+        setDataAndType(Uri.parse(url), "video/*")
         // FLAG_ACTIVITY_CLEAR_TASK ensures a fresh player every time — without it
         // the Xiaomi video player reuses its existing task and fails on second play.
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)

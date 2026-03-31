@@ -6,7 +6,10 @@ import android.os.Environment
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.trafykamerasikotlin.data.media.EeasytechMediaRepository
 import com.example.trafykamerasikotlin.data.media.HiDvrMediaRepository
+import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
+import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.MediaFile
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +36,8 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         const val TAG = "Trafy.MediaVM"
     }
 
-    private val repo = HiDvrMediaRepository()
+    private val hiDvrRepo = HiDvrMediaRepository()
+    private val eeasyRepo = EeasytechMediaRepository()
 
     private val _uiState = MutableStateFlow<MediaUiState>(MediaUiState.NotConnected)
     val uiState: StateFlow<MediaUiState> = _uiState
@@ -42,26 +46,27 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     private val _downloading = MutableStateFlow<Set<String>>(emptySet())
     val downloading: StateFlow<Set<String>> = _downloading
 
-    private var loadedIp: String? = null
-    private var loadJob: Job?     = null
+    private var loadedDevice: DeviceInfo? = null
+    private var loadJob: Job?             = null
 
     // ── Public API ─────────────────────────────────────────────────────────
 
-    fun load(deviceIp: String) {
-        if (deviceIp == loadedIp && _uiState.value is MediaUiState.Loaded) {
-            Log.d(TAG, "load: already loaded for $deviceIp, stopping recording only")
-            viewModelScope.launch { repo.stopRecording(deviceIp) }
+    fun load(device: DeviceInfo) {
+        val ip = device.protocol.deviceIp
+        if (loadedDevice == device && _uiState.value is MediaUiState.Loaded) {
+            Log.d(TAG, "load: already loaded for $ip, re-entering playback only")
+            viewModelScope.launch { enterPlayback(device) }
             return
         }
-        loadedIp = deviceIp
+        loadedDevice = device
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
-            Log.i(TAG, "load: fetching for $deviceIp")
+            Log.i(TAG, "load: fetching for $ip")
             _uiState.value = MediaUiState.Loading
-            repo.stopRecording(deviceIp)
+            enterPlayback(device)
             try {
-                val videos = repo.fetchVideos(deviceIp)
-                val photos = repo.fetchPhotos(deviceIp)
+                val videos = fetchVideos(device)
+                val photos = fetchPhotos(device)
                 Log.i(TAG, "load: ${videos.size} videos, ${photos.size} photos")
                 _uiState.value = MediaUiState.Loaded(videos, photos)
             } catch (e: Exception) {
@@ -72,15 +77,15 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun reload() {
-        val ip = loadedIp ?: return
-        loadedIp = null
-        load(ip)
+        val device = loadedDevice ?: return
+        loadedDevice = null
+        load(device)
     }
 
     fun delete(file: MediaFile) {
-        val ip = loadedIp ?: return
+        val device = loadedDevice ?: return
         viewModelScope.launch {
-            val ok = repo.deleteFile(ip, file)
+            val ok = deleteFile(device, file)
             if (ok) {
                 val current = _uiState.value as? MediaUiState.Loaded ?: return@launch
                 _uiState.value = current.copy(
@@ -125,8 +130,47 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onLeave() {
-        val ip = loadedIp ?: return
-        Log.d(TAG, "onLeave: restarting recording for $ip")
-        viewModelScope.launch { repo.startRecording(ip) }
+        val device = loadedDevice ?: return
+        Log.d(TAG, "onLeave: for ${device.protocol.deviceIp}")
+        viewModelScope.launch { leavePlayback(device) }
     }
+
+    // ── Repository dispatch ────────────────────────────────────────────────
+
+    private suspend fun enterPlayback(device: DeviceInfo) {
+        if (device.protocol == ChipsetProtocol.EEASYTECH) {
+            eeasyRepo.enterPlayback(device.protocol.deviceIp)
+        } else {
+            hiDvrRepo.stopRecording(device.protocol.deviceIp)
+        }
+    }
+
+    private suspend fun leavePlayback(device: DeviceInfo) {
+        if (device.protocol == ChipsetProtocol.EEASYTECH) {
+            eeasyRepo.exitPlayback(device.protocol.deviceIp)
+        } else {
+            hiDvrRepo.startRecording(device.protocol.deviceIp)
+        }
+    }
+
+    private suspend fun fetchVideos(device: DeviceInfo): List<MediaFile> =
+        if (device.protocol == ChipsetProtocol.EEASYTECH) {
+            eeasyRepo.fetchVideos(device.protocol.deviceIp)
+        } else {
+            hiDvrRepo.fetchVideos(device.protocol.deviceIp)
+        }
+
+    private suspend fun fetchPhotos(device: DeviceInfo): List<MediaFile> =
+        if (device.protocol == ChipsetProtocol.EEASYTECH) {
+            eeasyRepo.fetchPhotos(device.protocol.deviceIp)
+        } else {
+            hiDvrRepo.fetchPhotos(device.protocol.deviceIp)
+        }
+
+    private suspend fun deleteFile(device: DeviceInfo, file: MediaFile): Boolean =
+        if (device.protocol == ChipsetProtocol.EEASYTECH) {
+            eeasyRepo.deleteFile(device.protocol.deviceIp, file)
+        } else {
+            hiDvrRepo.deleteFile(device.protocol.deviceIp, file)
+        }
 }

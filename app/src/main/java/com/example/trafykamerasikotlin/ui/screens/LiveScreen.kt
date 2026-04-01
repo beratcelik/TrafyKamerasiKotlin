@@ -1,5 +1,6 @@
 package com.example.trafykamerasikotlin.ui.screens
 
+import android.net.Network
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -49,13 +50,14 @@ private const val TAG = "Trafy.LiveScreen"
 @Composable
 fun LiveScreen(
     device: DeviceInfo?,
+    network: Network?,
     viewModel: LiveViewModel = viewModel(),
     modifier: Modifier = Modifier,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     LaunchedEffect(device) {
-        if (device != null) viewModel.startStream(device)
+        if (device != null) viewModel.startStream(device, network)
     }
 
     DisposableEffect(Unit) {

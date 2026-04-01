@@ -1,12 +1,17 @@
 package com.example.trafykamerasikotlin.ui.viewmodel
 
+import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import android.util.Log
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.trafykamerasikotlin.data.media.EeasytechLiveRepository
 import com.example.trafykamerasikotlin.data.media.HiDvrMediaRepository
 import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -23,11 +28,14 @@ sealed class LiveUiState {
     ) : LiveUiState()
 }
 
-class LiveViewModel : ViewModel() {
+class LiveViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         const val TAG = "Trafy.LiveVM"
     }
+
+    private val connectivityManager =
+        application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
     private val hiDvrRepo = HiDvrMediaRepository()
     private val eeasyRepo = EeasytechLiveRepository()
@@ -39,11 +47,24 @@ class LiveViewModel : ViewModel() {
 
     // ── Public API ─────────────────────────────────────────────────────────
 
-    fun startStream(device: DeviceInfo) {
+    /**
+     * Starts the RTSP stream for [device].
+     *
+     * [network] is the dashcam-specific Network obtained via WifiNetworkSpecifier (API 29+).
+     * When non-null, the process is bound to this network so that IjkPlayer's native sockets
+     * also route through the dashcam WiFi. The bind is released in [onLeave].
+     * When null (already-connected or legacy-API path), the system handles routing automatically.
+     */
+    fun startStream(device: DeviceInfo, network: Network?) {
         if (loadedDevice == device && _uiState.value is LiveUiState.Playing) return
         loadedDevice = device
         viewModelScope.launch {
             _uiState.value = LiveUiState.Preparing
+
+            // Bind the process so IjkPlayer's native RTSP sockets route through dashcam WiFi
+            connectivityManager.bindProcessToNetwork(network)
+            Log.i(TAG, "startStream: process bound to network=$network")
+
             val ip = device.protocol.deviceIp
             if (device.protocol == ChipsetProtocol.EEASYTECH) {
                 Log.i(TAG, "startStream: Easytech entering live for $ip")
@@ -59,7 +80,9 @@ class LiveViewModel : ViewModel() {
             } else {
                 Log.i(TAG, "startStream: HiDVR stopping recording for $ip")
                 hiDvrRepo.stopRecording(ip)
-                val rtspUrl = "rtsp://$ip:554/livestream/0"
+                delay(1_000)   // give camera time to release encoder before RTSP
+                hiDvrRepo.registerClient(ip, device.clientIp)
+                val rtspUrl = "rtsp://$ip:554/livestream/1"
                 Log.i(TAG, "startStream: HiDVR ready → $rtspUrl")
                 _uiState.value = LiveUiState.Playing(rtspUrl = rtspUrl)
             }
@@ -86,16 +109,21 @@ class LiveViewModel : ViewModel() {
 
     fun onLeave() {
         val device = loadedDevice ?: return
-        Log.d(TAG, "onLeave: for ${device.protocol.deviceIp}")
-        viewModelScope.launch {
-            if (device.protocol == ChipsetProtocol.EEASYTECH) {
-                eeasyRepo.exitLive(device.protocol.deviceIp)
-            } else {
-                hiDvrRepo.startRecording(device.protocol.deviceIp)
-            }
-        }
         loadedDevice   = null
         _uiState.value = LiveUiState.NotConnected
+        Log.d(TAG, "onLeave: for ${device.protocol.deviceIp}")
+        viewModelScope.launch {
+            val ip = device.protocol.deviceIp
+            if (device.protocol == ChipsetProtocol.EEASYTECH) {
+                eeasyRepo.exitLive(ip)
+            } else {
+                hiDvrRepo.unregisterClient(ip, device.clientIp)
+                hiDvrRepo.startRecording(ip)
+            }
+            // Unbind AFTER exit calls complete so they still route through dashcam WiFi
+            connectivityManager.bindProcessToNetwork(null)
+            Log.i(TAG, "onLeave: process unbound from dashcam network")
+        }
     }
 
     // ── Private helpers ────────────────────────────────────────────────────

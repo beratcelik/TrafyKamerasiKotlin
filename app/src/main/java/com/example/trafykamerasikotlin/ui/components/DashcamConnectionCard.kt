@@ -35,6 +35,9 @@ import com.example.trafykamerasikotlin.ui.theme.ColorTextSecondary
 fun DashcamConnectionCard(
     isConnected: Boolean,
     isConnecting: Boolean = false,
+    isScanning: Boolean = false,
+    availableNetworks: List<String> = emptyList(),
+    onNetworkSelected: (String) -> Unit = {},
     deviceName: String = "Trafy Dos",
     onConnectClick: () -> Unit,
     onLiveViewClick: () -> Unit,
@@ -54,18 +57,91 @@ fun DashcamConnectionCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (isConnected) {
-                ConnectedState(
+            when {
+                isConnected -> ConnectedState(
                     deviceName      = deviceName,
                     onLiveViewClick = onLiveViewClick,
                     onDisconnect    = onDisconnect
                 )
-            } else {
-                DisconnectedState(
+                availableNetworks.isNotEmpty() -> NetworkSelectionState(
+                    networks         = availableNetworks,
+                    onNetworkSelected = onNetworkSelected
+                )
+                isScanning -> ScanningState()
+                else -> DisconnectedState(
                     isConnecting   = isConnecting,
                     onConnectClick = onConnectClick,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ScanningState() {
+    Icon(
+        imageVector        = Icons.Filled.Wifi,
+        contentDescription = "Scanning",
+        tint               = ColorTextSecondary,
+        modifier           = Modifier.size(52.dp)
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text      = "Scanning for Trafy Kamerası networks…",
+        style     = MaterialTheme.typography.titleLarge,
+        color     = ColorTextPrimary,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+    )
+    CircularProgressIndicator(
+        modifier    = Modifier
+            .size(28.dp)
+            .padding(top = 4.dp),
+        strokeWidth = 2.dp,
+        color       = ColorPrimary,
+    )
+    Text(
+        text  = "Searching for nearby Trafy Kamerası WiFi hotspots",
+        style = MaterialTheme.typography.bodySmall,
+        color = ColorTextSecondary
+    )
+}
+
+@Composable
+private fun NetworkSelectionState(
+    networks: List<String>,
+    onNetworkSelected: (String) -> Unit,
+) {
+    Icon(
+        imageVector        = Icons.Filled.Wifi,
+        contentDescription = "WiFi",
+        tint               = ColorPrimary,
+        modifier           = Modifier.size(52.dp)
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    Text(
+        text  = "Multiple Trafy Kamerası devices found",
+        style = MaterialTheme.typography.titleLarge,
+        color = ColorTextPrimary
+    )
+    Text(
+        text  = "Select which Trafy Kamerası to connect:",
+        style = MaterialTheme.typography.bodyMedium,
+        color = ColorTextSecondary
+    )
+    Spacer(modifier = Modifier.height(4.dp))
+    networks.forEach { ssid ->
+        Button(
+            onClick  = { onNetworkSelected(ssid) },
+            shape    = RoundedCornerShape(14.dp),
+            colors   = ButtonDefaults.buttonColors(containerColor = ColorPrimary),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text     = ssid,
+                style    = MaterialTheme.typography.titleMedium,
+                color    = ColorTextPrimary,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
         }
     }
 }
@@ -83,7 +159,7 @@ private fun DisconnectedState(
     )
     Spacer(modifier = Modifier.height(4.dp))
     Text(
-        text  = "Connect to Dashcam",
+        text  = "Connect to Trafy Kamerası",
         style = MaterialTheme.typography.titleLarge,
         color = ColorTextPrimary
     )
@@ -110,7 +186,7 @@ private fun DisconnectedState(
         }
     }
     Text(
-        text  = if (isConnecting) "Identifying dashcam…" else "Make sure WiFi is connected to your dashcam",
+        text  = if (isConnecting) "Connecting to Trafy Kamerası…" else "Tap to scan for nearby Trafy Kamerası networks",
         style = MaterialTheme.typography.bodySmall,
         color = ColorTextSecondary
     )

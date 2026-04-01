@@ -1,5 +1,8 @@
 package com.example.trafykamerasikotlin.ui.screens
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -49,9 +53,27 @@ fun HomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
-    val isConnected  = uiState is DashcamUiState.Connected
-    val isConnecting = uiState is DashcamUiState.Connecting
-    val deviceName   = (uiState as? DashcamUiState.Connected)?.device?.protocol?.displayName
+    // Permission launcher — triggered when ViewModel reaches WifiPermissionRequired state
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) viewModel.connect()
+        // If denied, uiState stays at WifiPermissionRequired; Connect button re-enables
+        // so the user can tap again and trigger the launcher again.
+    }
+
+    // Auto-trigger permission request when the ViewModel signals it's needed
+    LaunchedEffect(uiState) {
+        if (uiState is DashcamUiState.WifiPermissionRequired) {
+            permLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+    }
+
+    val isConnected     = uiState is DashcamUiState.Connected
+    val isConnecting    = uiState is DashcamUiState.Connecting
+    val isScanning      = uiState is DashcamUiState.ScanningWifi
+    val availableNets   = (uiState as? DashcamUiState.WifiFound)?.networks ?: emptyList()
+    val deviceName      = (uiState as? DashcamUiState.Connected)?.device?.protocol?.displayName
         ?: "Dashcam"
 
     Column(
@@ -64,9 +86,13 @@ fun HomeScreen(
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         // Header
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Text(
-                text  = "Trafy",
+                text  = "Trafy Kamerası",
                 style = MaterialTheme.typography.displayMedium,
                 color = ColorTextPrimary
             )
@@ -79,13 +105,16 @@ fun HomeScreen(
 
         // Connection card
         DashcamConnectionCard(
-            isConnected     = isConnected,
-            isConnecting    = isConnecting,
-            deviceName      = deviceName,
-            onConnectClick  = viewModel::connect,
-            onLiveViewClick = onNavigateToLive,
-            onDisconnect    = viewModel::disconnect,
-            modifier        = Modifier.padding(vertical = 8.dp)
+            isConnected       = isConnected,
+            isConnecting      = isConnecting,
+            isScanning        = isScanning,
+            availableNetworks = availableNets,
+            onNetworkSelected = viewModel::selectWifi,
+            deviceName        = deviceName,
+            onConnectClick    = viewModel::connect,
+            onLiveViewClick   = onNavigateToLive,
+            onDisconnect      = viewModel::disconnect,
+            modifier          = Modifier.padding(vertical = 8.dp)
         )
 
         // Shortcut row

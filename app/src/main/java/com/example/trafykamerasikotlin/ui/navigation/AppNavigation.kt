@@ -24,6 +24,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.trafykamerasikotlin.ui.screens.CommunityScreen
+import com.example.trafykamerasikotlin.ui.screens.RawSettingsScreen
 import com.example.trafykamerasikotlin.ui.screens.HomeScreen
 import com.example.trafykamerasikotlin.ui.screens.LiveScreen
 import com.example.trafykamerasikotlin.ui.screens.MediaScreen
@@ -41,8 +42,9 @@ import com.example.trafykamerasikotlin.ui.viewmodel.DashcamViewModel
 import com.example.trafykamerasikotlin.ui.viewmodel.LiveViewModel
 import com.example.trafykamerasikotlin.ui.viewmodel.MediaViewModel
 
-private const val ROUTE_SHOP      = "shop"
-private const val ROUTE_COMMUNITY = "community"
+private const val ROUTE_SHOP         = "shop"
+private const val ROUTE_COMMUNITY    = "community"
+private const val ROUTE_RAW_SETTINGS = "raw_settings"
 
 private val bottomNavRoutes = BottomNavItem.all.map { it.route }.toSet()
 
@@ -54,6 +56,7 @@ fun AppNavigation() {
     val liveViewModel: LiveViewModel       = viewModel()
     val uiState by dashcamViewModel.uiState.collectAsStateWithLifecycle()
     val connectedDevice = (uiState as? DashcamUiState.Connected)?.device
+    val connectedNetwork by dashcamViewModel.connectedNetwork.collectAsStateWithLifecycle()
 
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -135,13 +138,19 @@ fun AppNavigation() {
                 )
             }
             composable(BottomNavItem.Live.route) {
-                LiveScreen(device = connectedDevice, viewModel = liveViewModel)
+                LiveScreen(device = connectedDevice, network = connectedNetwork, viewModel = liveViewModel)
             }
             composable(BottomNavItem.Media.route) {
                 MediaScreen(device = connectedDevice, viewModel = mediaViewModel)
             }
             composable(BottomNavItem.Settings.route) {
-                SettingsScreen(device = connectedDevice)
+                SettingsScreen(
+                    device     = connectedDevice,
+                    onRawDump  = { navController.navigate(ROUTE_RAW_SETTINGS) }
+                )
+            }
+            composable(ROUTE_RAW_SETTINGS) {
+                RawSettingsScreen(device = connectedDevice)
             }
             composable(BottomNavItem.More.route) {
                 MoreScreen(

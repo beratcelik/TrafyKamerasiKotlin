@@ -3,6 +3,7 @@ package com.example.trafykamerasikotlin.data.media
 import android.util.Log
 import com.example.trafykamerasikotlin.data.model.MediaFile
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
+import kotlinx.coroutines.delay
 
 /**
  * Fetches, deletes and controls recording for HiSilicon (HiDVR) dashcam media files.
@@ -40,6 +41,22 @@ class HiDvrMediaRepository {
         val ok = DashcamHttpClient.probe("http://$deviceIp$CGI/workmodecmd.cgi?&-cmd=start")
         Log.d(TAG, "startRecording → $ok")
         return ok
+    }
+
+    suspend fun registerClient(deviceIp: String, clientIp: String): Boolean {
+        val ok = DashcamHttpClient.probe(
+            "http://$deviceIp$CGI/client.cgi?&-operation=register&-ip=$clientIp"
+        )
+        Log.d(TAG, "registerClient → $ok")
+        return ok
+    }
+
+    suspend fun unregisterClient(deviceIp: String, clientIp: String) {
+        DashcamHttpClient.probe(
+            "http://$deviceIp$CGI/client.cgi?&-operation=unregister&-ip=$clientIp"
+        )
+        Log.d(TAG, "unregisterClient sent")
+        delay(1_000)
     }
 
     // ── File listing ───────────────────────────────────────────────────────

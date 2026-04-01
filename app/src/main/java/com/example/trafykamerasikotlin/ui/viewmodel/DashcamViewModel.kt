@@ -1,22 +1,34 @@
 package com.example.trafykamerasikotlin.ui.viewmodel
 
+import android.Manifest
 import android.app.Application
+import android.content.pm.PackageManager
+import android.net.Network
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.trafykamerasikotlin.data.handshake.DashcamHandshakeManager
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.FailureReason
 import com.example.trafykamerasikotlin.data.model.HandshakeResult
+import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
 import com.example.trafykamerasikotlin.data.network.WifiIpProvider
+import com.example.trafykamerasikotlin.data.wifi.DashcamWifiManager
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 sealed class DashcamUiState {
     data object Idle : DashcamUiState()
+    data object ScanningWifi : DashcamUiState()
+    data class WifiFound(val networks: List<String>) : DashcamUiState()
+    data object WifiPermissionRequired : DashcamUiState()
     data object Connecting : DashcamUiState()
     data class Connected(val device: DeviceInfo) : DashcamUiState()
     data class Error(val reason: FailureReason) : DashcamUiState()
@@ -26,40 +38,144 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
 
     companion object {
         private const val TAG = "Trafy.ViewModel"
+        private const val SCAN_TIMEOUT_MS = 12_000L
+        private const val DHCP_SETTLE_DELAY_MS = 1_500L
     }
 
     private val manager = DashcamHandshakeManager(
         wifiIpProvider = WifiIpProvider(application),
     )
 
+    private val wifiManager = DashcamWifiManager(application)
+
     private val _uiState = MutableStateFlow<DashcamUiState>(DashcamUiState.Idle)
     val uiState: StateFlow<DashcamUiState> = _uiState.asStateFlow()
 
+    /** The Network object obtained after WifiNetworkSpecifier connection (API 29+).
+     *  Null on legacy path or when already connected manually. Exposed for LiveViewModel. */
+    private val _connectedNetwork = MutableStateFlow<Network?>(null)
+    val connectedNetwork: StateFlow<Network?> = _connectedNetwork.asStateFlow()
+
+    // ── Public API ──────────────────────────────────────────────────────────────
+
+    /**
+     * Main entry point. Runs the full flow:
+     *   already-on-dashcam → skip scan
+     *   no permission → request permission
+     *   scan → auto-connect (1 result) or show picker (multiple results)
+     */
     fun connect() {
-        Log.i(TAG, "connect() called, current state=${_uiState.value}")
-        if (_uiState.value is DashcamUiState.Connecting) {
-            Log.w(TAG, "Already connecting — ignoring duplicate connect()")
+        val current = _uiState.value
+        if (current is DashcamUiState.Connecting || current is DashcamUiState.ScanningWifi) {
+            Log.w(TAG, "connect() ignored — already in $current")
             return
         }
-        _uiState.update { DashcamUiState.Connecting }
-        Log.i(TAG, "State → Connecting")
+
         viewModelScope.launch {
-            Log.i(TAG, "Coroutine started, calling manager.connect()")
-            when (val result = manager.connect()) {
-                is HandshakeResult.Success -> {
-                    Log.i(TAG, "Result: Success — device=${result.deviceInfo}")
-                    _uiState.update { DashcamUiState.Connected(result.deviceInfo) }
+            // ── Fast path: already on dashcam WiFi ─────────────────────────────
+            val currentSsid = wifiManager.getCurrentDashcamSsid()
+            if (currentSsid != null) {
+                Log.i(TAG, "Already on dashcam WiFi: $currentSsid — skipping scan")
+                _uiState.update { DashcamUiState.Connecting }
+                proceedWithHandshake(network = null)
+                return@launch
+            }
+
+            // ── Location permission check ───────────────────────────────────────
+            val permGranted = ContextCompat.checkSelfPermission(
+                getApplication(), Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!permGranted) {
+                Log.i(TAG, "Location permission not granted — requesting")
+                _uiState.update { DashcamUiState.WifiPermissionRequired }
+                return@launch
+            }
+
+            // ── Scan ────────────────────────────────────────────────────────────
+            _uiState.update { DashcamUiState.ScanningWifi }
+            Log.i(TAG, "State → ScanningWifi")
+
+            val found = try {
+                withTimeout(SCAN_TIMEOUT_MS) { wifiManager.scanForDashcams() }
+            } catch (e: TimeoutCancellationException) {
+                Log.w(TAG, "Scan timed out")
+                emptyList()
+            }
+
+            when {
+                found.isEmpty() -> {
+                    Log.w(TAG, "No dashcam SSIDs found")
+                    _uiState.update { DashcamUiState.Error(FailureReason.NO_DASHCAM_FOUND) }
                 }
-                is HandshakeResult.Failure -> {
-                    Log.e(TAG, "Result: Failure — reason=${result.reason}")
-                    _uiState.update { DashcamUiState.Error(result.reason) }
+                found.size == 1 -> {
+                    Log.i(TAG, "Single dashcam found: ${found.first()} — auto-connecting")
+                    _uiState.update { DashcamUiState.Connecting }
+                    connectToSsid(found.first())
+                }
+                else -> {
+                    Log.i(TAG, "Multiple dashcams found: $found — showing picker")
+                    _uiState.update { DashcamUiState.WifiFound(found) }
                 }
             }
         }
     }
 
+    /** Called when the user picks a network from the WifiFound list. */
+    fun selectWifi(ssid: String) {
+        Log.i(TAG, "selectWifi: $ssid")
+        viewModelScope.launch {
+            _uiState.update { DashcamUiState.Connecting }
+            connectToSsid(ssid)
+        }
+    }
+
     fun disconnect() {
         Log.i(TAG, "disconnect() called")
+        wifiManager.release()
+        DashcamHttpClient.bindToNetwork(null)
+        _connectedNetwork.update { null }
         _uiState.update { DashcamUiState.Idle }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        wifiManager.release()
+    }
+
+    // ── Private helpers ─────────────────────────────────────────────────────────
+
+    private suspend fun connectToSsid(ssid: String) {
+        Log.i(TAG, "connectToSsid: $ssid")
+        when (val result = wifiManager.connectToDashcam(ssid)) {
+            is DashcamWifiManager.ConnectResult.Success -> {
+                _connectedNetwork.update { result.network }
+                result.network?.let { DashcamHttpClient.bindToNetwork(it) }
+                proceedWithHandshake(result.network)
+            }
+            is DashcamWifiManager.ConnectResult.Failure -> {
+                Log.e(TAG, "connectToSsid: WiFi connect failed for $ssid")
+                _uiState.update { DashcamUiState.Error(FailureReason.WIFI_CONNECT_FAILED) }
+            }
+        }
+    }
+
+    private suspend fun proceedWithHandshake(network: Network?) {
+        // Give the dashcam's DHCP server a moment to assign an IP to the phone
+        if (network != null) {
+            Log.i(TAG, "proceedWithHandshake: waiting ${DHCP_SETTLE_DELAY_MS}ms for DHCP")
+            delay(DHCP_SETTLE_DELAY_MS)
+        }
+        Log.i(TAG, "proceedWithHandshake: calling manager.connect()")
+        when (val result = manager.connect()) {
+            is HandshakeResult.Success -> {
+                Log.i(TAG, "Handshake SUCCESS: ${result.deviceInfo}")
+                _uiState.update { DashcamUiState.Connected(result.deviceInfo) }
+            }
+            is HandshakeResult.Failure -> {
+                Log.e(TAG, "Handshake FAILURE: ${result.reason}")
+                _uiState.update { DashcamUiState.Error(result.reason) }
+            }
+        }
     }
 }

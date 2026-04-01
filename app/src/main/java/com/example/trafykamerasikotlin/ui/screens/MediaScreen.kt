@@ -2,6 +2,7 @@ package com.example.trafykamerasikotlin.ui.screens
 
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,6 +27,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Movie
@@ -38,6 +40,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -66,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
+import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.MediaFile
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
@@ -74,8 +78,17 @@ import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorSurface
 import com.example.trafykamerasikotlin.ui.theme.ColorTextPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorTextSecondary
+import com.example.trafykamerasikotlin.ui.viewmodel.DownloadState
 import com.example.trafykamerasikotlin.ui.viewmodel.MediaUiState
 import com.example.trafykamerasikotlin.ui.viewmodel.MediaViewModel
+import android.util.Log
+import android.view.SurfaceHolder
+import android.view.SurfaceView
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.ui.viewinterop.AndroidView
+import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
+import tv.danmaku.ijk.media.player.IjkMediaPlayer
 
 @Composable
 fun MediaScreen(
@@ -83,8 +96,12 @@ fun MediaScreen(
     modifier: Modifier = Modifier,
     viewModel: MediaViewModel,
 ) {
-    val uiState     by viewModel.uiState.collectAsStateWithLifecycle()
-    val downloading by viewModel.downloading.collectAsStateWithLifecycle()
+    val uiState          by viewModel.uiState.collectAsStateWithLifecycle()
+    val downloading      by viewModel.downloading.collectAsStateWithLifecycle()
+    val downloadProgress by viewModel.downloadProgress.collectAsStateWithLifecycle()
+    val playbackUri      by viewModel.playbackUri.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
 
     LaunchedEffect(device) {
         if (device != null) viewModel.load(device)
@@ -97,8 +114,9 @@ fun MediaScreen(
 
     var selectedTab by remember { mutableIntStateOf(0) }
 
+    Box(modifier = modifier.fillMaxSize()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(ColorBackground)
             .windowInsetsPadding(WindowInsets.statusBars)
@@ -162,15 +180,24 @@ fun MediaScreen(
                     EmptyMediaContent(isPhoto = isPhotoTab)
                 } else {
                     MediaGrid(
-                        files       = files,
-                        downloading = downloading,
-                        onDownload  = { viewModel.download(it) },
-                        onDelete    = { viewModel.delete(it) }
+                        files             = files,
+                        device            = device,
+                        downloading       = downloading,
+                        downloadProgress  = downloadProgress,
+                        onPlay            = { viewModel.playFile(it) },
+                        onDownload        = { viewModel.download(it) },
+                        onCancelDownload  = { viewModel.cancelDownload(it) },
+                        onDelete          = { viewModel.delete(it) }
                     )
                 }
             }
         }
     }
+
+    playbackUri?.let { uri ->
+        VideoPlayerOverlay(url = uri, onDismiss = { viewModel.clearPlaybackUri() })
+    }
+    } // Box
 }
 
 // ── Camera grouping helpers ─────────────────────────────────────────────────
@@ -296,8 +323,12 @@ private fun EmptyMediaContent(isPhoto: Boolean) {
 @Composable
 private fun MediaGrid(
     files: List<MediaFile>,
+    device: DeviceInfo?,
     downloading: Set<String>,
+    downloadProgress: Map<String, DownloadState>,
+    onPlay: (MediaFile) -> Unit,
     onDownload: (MediaFile) -> Unit,
+    onCancelDownload: (String) -> Unit,
     onDelete: (MediaFile) -> Unit,
 ) {
     val context = LocalContext.current
@@ -313,8 +344,10 @@ private fun MediaGrid(
     ) {
         items(files, key = { it.path }) { file ->
             MediaFileCard(
-                file    = file,
-                onClick = { actionTarget = file }
+                file          = file,
+                isDownloading = downloading.contains(file.name),
+                downloadState = downloadProgress[file.name],
+                onClick       = { actionTarget = file }
             )
         }
     }
@@ -343,21 +376,39 @@ private fun MediaGrid(
                             color   = ColorPrimary,
                             onClick = {
                                 actionTarget = null
-                                playVideo(context, file.httpUrl)
+                                if (device?.protocol == ChipsetProtocol.GENERALPLUS) {
+                                    // GP: call StartPlayback over GPSOCKET first; the ViewModel
+                                    // will emit the RTSP URL via playbackUri when ready.
+                                    onPlay(file)
+                                } else {
+                                    playVideo(context, file.httpUrl)
+                                }
                             }
                         )
                         HorizontalDivider(color = ColorDivider, thickness = 0.5.dp)
                     }
-                    // Download
-                    DialogActionRow(
-                        icon    = Icons.Filled.Download,
-                        label   = if (downloading.contains(file.name)) "Downloading…" else "Download",
-                        color   = ColorTextPrimary,
-                        onClick = {
-                            actionTarget = null
-                            onDownload(file)
-                        }
-                    )
+                    // Download / Cancel
+                    if (downloading.contains(file.name)) {
+                        DialogActionRow(
+                            icon    = Icons.Filled.Close,
+                            label   = "Cancel Download",
+                            color   = Color(0xFFE53935),
+                            onClick = {
+                                actionTarget = null
+                                onCancelDownload(file.name)
+                            }
+                        )
+                    } else {
+                        DialogActionRow(
+                            icon    = Icons.Filled.Download,
+                            label   = "Download",
+                            color   = ColorTextPrimary,
+                            onClick = {
+                                actionTarget = null
+                                onDownload(file)
+                            }
+                        )
+                    }
                     HorizontalDivider(color = ColorDivider, thickness = 0.5.dp)
                     // Delete
                     DialogActionRow(
@@ -437,6 +488,8 @@ private fun DialogActionRow(
 @Composable
 private fun MediaFileCard(
     file: MediaFile,
+    isDownloading: Boolean,
+    downloadState: DownloadState?,  // null = non-GP or not downloading; non-null = GP progress
     onClick: () -> Unit,
 ) {
     Card(
@@ -482,25 +535,62 @@ private fun MediaFileCard(
                 }
             )
 
-            // Bottom filename overlay
-            Box(
+            // Bottom overlay: filename, or download progress with MB + speed
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
                     .background(Color.Black.copy(alpha = 0.55f))
-                    .padding(horizontal = 6.dp, vertical = 4.dp)
             ) {
-                Text(
-                    text     = formatFileName(file.name),
-                    style    = MaterialTheme.typography.labelSmall,
-                    color    = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (isDownloading && downloadState != null) {
+                    Text(
+                        text     = "Downloading ${downloadState.pct}%  •  ${"%.1f".format(downloadState.speedMbPerSec)} MB/s",
+                        style    = MaterialTheme.typography.labelSmall,
+                        color    = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                    Text(
+                        text     = "${"%.1f".format(downloadState.receivedMb)} / ${"%.1f".format(downloadState.totalMb)} MB",
+                        style    = MaterialTheme.typography.labelSmall,
+                        color    = Color.White.copy(alpha = 0.75f),
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                    LinearProgressIndicator(
+                        progress   = { downloadState.pct / 100f },
+                        modifier   = Modifier.fillMaxWidth().height(3.dp),
+                        color      = ColorPrimary,
+                        trackColor = Color.White.copy(alpha = 0.25f),
+                    )
+                } else if (isDownloading) {
+                    Text(
+                        text     = "Downloading…",
+                        style    = MaterialTheme.typography.labelSmall,
+                        color    = Color.White,
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                    )
+                    LinearProgressIndicator(
+                        modifier   = Modifier.fillMaxWidth().height(3.dp),
+                        color      = ColorPrimary,
+                        trackColor = Color.White.copy(alpha = 0.25f),
+                    )
+                } else {
+                    Text(
+                        text     = formatFileName(file.name),
+                        style    = MaterialTheme.typography.labelSmall,
+                        color    = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                    )
+                }
             }
 
-            // Play icon badge for videos
-            if (!file.isPhoto) {
+            // Play icon badge for videos (hidden while downloading)
+            if (!file.isPhoto && !isDownloading) {
                 Icon(
                     imageVector        = Icons.Filled.PlayArrow,
                     contentDescription = null,
@@ -531,14 +621,141 @@ private fun formatFileName(name: String): String {
 }
 
 private fun playVideo(context: Context, url: String) {
-    val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(Uri.parse(url), "video/*")
-        // FLAG_ACTIVITY_CLEAR_TASK ensures a fresh player every time — without it
-        // the Xiaomi video player reuses its existing task and fails on second play.
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-    }
-    if (intent.resolveActivity(context.packageManager) != null) {
-        context.startActivity(intent)
+    // Use the URI directly so the RTSP scheme routes to a capable player.
+    // Do NOT use resolveActivity() — on Android 11+ it always returns null for
+    // implicit intents unless <queries> are declared in the manifest, causing
+    // startActivity to be silently skipped.
+    try {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            }
+        )
+    } catch (_: android.content.ActivityNotFoundException) {
+        android.util.Log.w("MediaScreen", "No app available to play: $url")
     }
 }
 
+// ── In-app video player overlay ─────────────────────────────────────────────
+
+/**
+ * Full-screen video overlay using IjkMediaPlayer (FFmpeg-based RTSP).
+ * Shown when a GeneralPlus file is ready to stream via RTSP.
+ * Dismissed by the back button or the back gesture.
+ */
+@Composable
+private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
+    BackHandler(onBack = onDismiss)
+
+    val bufferingState = remember { mutableStateOf(true) }
+    val context        = LocalContext.current
+
+    val ijkPlayer = remember(url) {
+        IjkMediaPlayer.loadLibrariesOnce(null)
+        IjkMediaPlayer().apply {
+            // GeneralPlus port-8080 RTSP server: UDP-only transport (TCP rejected).
+            // With a supported SD card (≤64 GB) the camera's CPU is not throttled by
+            // SD I/O, so UDP delivery is reliable.
+            // max_delay=0  — disables the RTP jitter-buffer 500 ms timer that was forcing
+            //                "max delay reached / missed N packets" drops on every frame.
+            // buffer_size  — 4 MB SO_RCVBUF so the kernel can absorb brief bursts while
+            //                FFmpeg processes the previous packet (no pthread circular
+            //                buffer in this IjkPlayer build).
+            // probesize=4096 / stimeout=-1 — match official Viidure app (U6/c.java).
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "rtsp_transport", "udp")
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "buffer_size",    "4194304") // 4 MB UDP socket buffer
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "max_delay",      "0")       // disable jitter-buffer forced ejection
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "stimeout",       "-1")      // infinite socket timeout
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize",      "4096")    // 4 KB — RTSP DESCRIBE provides stream info
+            setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC,  "skip_loop_filter", 48L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec",             1L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 1L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared",      1L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "packet-buffering",       0L)
+        }
+    }
+
+    DisposableEffect(url) {
+        // IjkPlayer uses native FFmpeg sockets which bypass Android's boundNetwork Java
+        // socket factory.  bindProcessToNetwork forces the kernel to route all sockets
+        // (including native ones) through the dashcam WiFi interface.
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        cm?.bindProcessToNetwork(GeneralplusSession.getBoundNetwork())
+        onDispose {
+            Log.d("MediaScreen", "VideoPlayerOverlay dispose — releasing IjkPlayer")
+            ijkPlayer.stop()
+            ijkPlayer.release()
+            cm?.bindProcessToNetwork(null)
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
+        AndroidView(
+            factory = { ctx ->
+                SurfaceView(ctx).also { sv ->
+                    sv.holder.addCallback(object : SurfaceHolder.Callback {
+                        override fun surfaceCreated(holder: SurfaceHolder) {
+                            Log.d("MediaScreen", "VideoPlayerOverlay surfaceCreated — $url")
+                            try {
+                                ijkPlayer.setDisplay(holder)
+                                ijkPlayer.dataSource = url
+                                ijkPlayer.setOnPreparedListener { mp ->
+                                    bufferingState.value = false
+                                    mp.start()
+                                }
+                                ijkPlayer.setOnInfoListener { _, what, _ ->
+                                    when (what) {
+                                        IjkMediaPlayer.MEDIA_INFO_BUFFERING_START -> bufferingState.value = true
+                                        IjkMediaPlayer.MEDIA_INFO_BUFFERING_END   -> bufferingState.value = false
+                                    }
+                                    false
+                                }
+                                ijkPlayer.setOnErrorListener { _, what, extra ->
+                                    Log.e("MediaScreen", "IjkPlayer error what=$what extra=$extra")
+                                    bufferingState.value = false
+                                    false
+                                }
+                                ijkPlayer.prepareAsync()
+                            } catch (e: Exception) {
+                                Log.e("MediaScreen", "IjkPlayer setup failed: ${e.message}")
+                            }
+                        }
+
+                        override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {}
+
+                        override fun surfaceDestroyed(holder: SurfaceHolder) {
+                            Log.d("MediaScreen", "VideoPlayerOverlay surfaceDestroyed")
+                            ijkPlayer.stop()
+                            ijkPlayer.setDisplay(null)
+                        }
+                    })
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        if (bufferingState.value) {
+            CircularProgressIndicator(
+                color    = ColorPrimary,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        }
+
+        IconButton(
+            onClick  = onDismiss,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(8.dp)
+        ) {
+            Icon(
+                imageVector        = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Close",
+                tint               = Color.White
+            )
+        }
+    }
+}

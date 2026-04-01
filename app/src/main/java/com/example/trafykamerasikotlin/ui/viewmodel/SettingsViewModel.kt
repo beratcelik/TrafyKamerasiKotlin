@@ -8,6 +8,7 @@ import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.SettingItem
 import com.example.trafykamerasikotlin.data.settings.EeasytechSettingsRepository
+import com.example.trafykamerasikotlin.data.settings.GeneralplusSettingsRepository
 import com.example.trafykamerasikotlin.data.settings.HiDvrSettingsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,6 +51,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private var loadedForDevice: DeviceInfo? = null
     private var eeasyRepo: EeasytechSettingsRepository? = null
     private var hiDvrRepo: HiDvrSettingsRepository? = null
+    private var generalplusRepo: GeneralplusSettingsRepository? = null
 
     /**
      * Loads all settings from the camera. Idempotent — won't reload if already
@@ -104,17 +106,32 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     /**
-     * Executes an action-type item (Format SD Card, About Camera, etc.).
-     * Only valid for HiDVR devices. Shows Applying overlay while in-flight.
+     * Executes an action-type item (Format SD Card, Factory Reset, etc.).
+     * Shows Applying overlay while in-flight.
      */
     fun triggerAction(key: String) {
         val device = loadedForDevice ?: return
         val current = currentItems() ?: return
         _uiState.update { SettingsUiState.Applying(current) }
         viewModelScope.launch {
-            val result = getHiDvrRepo().executeAction(device.protocol.deviceIp, key)
-            _uiState.update { SettingsUiState.Loaded(current) }
-            _actionFeedback.update { result ?: "Action failed — check device connection." }
+            when (device.protocol) {
+                ChipsetProtocol.GENERALPLUS -> {
+                    val ok = getGeneralplusRepo().triggerAction(device.protocol.deviceIp, key)
+                    _uiState.update { SettingsUiState.Loaded(current) }
+                    _actionFeedback.update {
+                        if (ok) when (key) {
+                            "format"     -> "SD card formatting started. Camera will be ready in a moment."
+                            "reset.cgi?" -> "Factory reset initiated. Camera will restart."
+                            else          -> "Done."
+                        } else "Action failed — check device connection."
+                    }
+                }
+                else -> {
+                    val result = getHiDvrRepo().executeAction(device.protocol.deviceIp, key)
+                    _uiState.update { SettingsUiState.Loaded(current) }
+                    _actionFeedback.update { result ?: "Action failed — check device connection." }
+                }
+            }
         }
     }
 
@@ -125,10 +142,21 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         val device = loadedForDevice ?: return
         _wifiDialog.update { WifiDialogState.Loading }
         viewModelScope.launch {
-            val settings = getHiDvrRepo().getWifiSettings(device.protocol.deviceIp)
-            _wifiDialog.update {
-                if (settings != null) WifiDialogState.Loaded(settings.ssid, settings.password)
-                else WifiDialogState.Error
+            when (device.protocol) {
+                ChipsetProtocol.GENERALPLUS -> {
+                    val settings = getGeneralplusRepo().getWifiSettings(device.protocol.deviceIp)
+                    _wifiDialog.update {
+                        if (settings != null) WifiDialogState.Loaded(settings.ssid, settings.password)
+                        else WifiDialogState.Error
+                    }
+                }
+                else -> {
+                    val settings = getHiDvrRepo().getWifiSettings(device.protocol.deviceIp)
+                    _wifiDialog.update {
+                        if (settings != null) WifiDialogState.Loaded(settings.ssid, settings.password)
+                        else WifiDialogState.Error
+                    }
+                }
             }
         }
     }
@@ -139,7 +167,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         val current = (_wifiDialog.value as? WifiDialogState.Loaded) ?: return
         _wifiDialog.update { WifiDialogState.Saving }
         viewModelScope.launch {
-            val ok = getHiDvrRepo().setWifiPassword(device.protocol.deviceIp, ssid, newPassword)
+            val ok = when (device.protocol) {
+                ChipsetProtocol.GENERALPLUS ->
+                    getGeneralplusRepo().setWifiPassword(device.protocol.deviceIp, newPassword)
+                else ->
+                    getHiDvrRepo().setWifiPassword(device.protocol.deviceIp, ssid, newPassword)
+            }
             _wifiDialog.update {
                 if (ok) WifiDialogState.Loaded(current.ssid, newPassword)
                 else WifiDialogState.Error
@@ -172,17 +205,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     // ── Repository dispatch ────────────────────────────────────────────────
 
     private suspend fun fetchAll(device: DeviceInfo): List<SettingItem>? =
-        if (device.protocol == ChipsetProtocol.EEASYTECH) {
-            getEeasyRepo().fetchAll(device.protocol.deviceIp)
-        } else {
-            getHiDvrRepo().fetchAll(device.protocol.deviceIp)
+        when (device.protocol) {
+            ChipsetProtocol.EEASYTECH   -> getEeasyRepo().fetchAll(device.protocol.deviceIp)
+            ChipsetProtocol.GENERALPLUS -> getGeneralplusRepo().fetchAll(device.protocol.deviceIp)
+            else                        -> getHiDvrRepo().fetchAll(device.protocol.deviceIp)
         }
 
     private suspend fun applySetting(device: DeviceInfo, key: String, value: String): Boolean =
-        if (device.protocol == ChipsetProtocol.EEASYTECH) {
-            getEeasyRepo().applySetting(device.protocol.deviceIp, key, value)
-        } else {
-            getHiDvrRepo().applySetting(device.protocol.deviceIp, key, value)
+        when (device.protocol) {
+            ChipsetProtocol.EEASYTECH   -> getEeasyRepo().applySetting(device.protocol.deviceIp, key, value)
+            ChipsetProtocol.GENERALPLUS -> getGeneralplusRepo().applySetting(device.protocol.deviceIp, key, value)
+            else                        -> getHiDvrRepo().applySetting(device.protocol.deviceIp, key, value)
         }
 
     private fun getEeasyRepo(): EeasytechSettingsRepository =
@@ -190,6 +223,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private fun getHiDvrRepo(): HiDvrSettingsRepository =
         hiDvrRepo ?: HiDvrSettingsRepository().also { hiDvrRepo = it }
+
+    private fun getGeneralplusRepo(): GeneralplusSettingsRepository =
+        generalplusRepo ?: GeneralplusSettingsRepository().also { generalplusRepo = it }
 
     // ── Helpers ────────────────────────────────────────────────────────────
 

@@ -12,6 +12,7 @@ import com.example.trafykamerasikotlin.data.handshake.DashcamHandshakeManager
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.FailureReason
 import com.example.trafykamerasikotlin.data.model.HandshakeResult
+import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
 import com.example.trafykamerasikotlin.data.network.WifiIpProvider
 import com.example.trafykamerasikotlin.data.wifi.DashcamWifiManager
@@ -134,6 +135,7 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         Log.i(TAG, "disconnect() called")
         wifiManager.release()
         DashcamHttpClient.bindToNetwork(null)
+        GeneralplusSession.bindToNetwork(null)
         _connectedNetwork.update { null }
         _uiState.update { DashcamUiState.Idle }
     }
@@ -150,7 +152,10 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         when (val result = wifiManager.connectToDashcam(ssid)) {
             is DashcamWifiManager.ConnectResult.Success -> {
                 _connectedNetwork.update { result.network }
-                result.network?.let { DashcamHttpClient.bindToNetwork(it) }
+                result.network?.let {
+                    DashcamHttpClient.bindToNetwork(it)
+                    GeneralplusSession.bindToNetwork(it)
+                }
                 proceedWithHandshake(result.network)
             }
             is DashcamWifiManager.ConnectResult.Failure -> {

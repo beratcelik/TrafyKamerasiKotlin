@@ -17,4 +17,5 @@ local.properties
 # Large APK files and decompiled sources
 *.apk
 golook-jadx/
+viidure-jadx/
 app/src/main/res/golook-jadx/

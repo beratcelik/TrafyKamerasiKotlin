@@ -22,8 +22,11 @@ class DashcamHandshakeManager(
         private const val TAG = "Trafy.HandshakeMgr"
     }
 
-    // Fallback order matches HandShakeManager.java int[] protocols = {1,2,3,4,5,6}
+    // GeneralplusHandshakeHandler is first because it has a unique IP subnet (192.168.25.x)
+    // and is the primary handler for that range. All other handlers use HTTP and fall back
+    // naturally when their target IP is unreachable.
     private val allHandlers: List<HandshakeHandler> = listOf(
+        GeneralplusHandshakeHandler(),
         HiDvrHandshakeHandler(),
         MstarHandshakeHandler(),
         MstarHzHandshakeHandler(),
@@ -52,29 +55,35 @@ class DashcamHandshakeManager(
 
         val primary = allHandlers.firstOrNull { it.protocol == primaryProtocol }
 
-        // Try primary first
-        if (primary != null) {
-            Log.i(TAG, "Trying primary handler: ${primary.protocol}")
-            val result = primary.handshake(clientIp)
-            if (result != null) {
-                Log.i(TAG, "Primary handler SUCCESS: ${result.protocol.displayName} | model=${result.model} | version=${result.softwareVersion}")
-                return HandshakeResult.Success(result)
+        // If the IP prefix unambiguously identifies a protocol, try ONLY that handler.
+        // Fallbacks are pointless — every other camera IP is on a different subnet and
+        // will be unreachable from the phone's current WiFi address.
+        if (primaryProtocol != null) {
+            if (primary != null) {
+                Log.i(TAG, "Trying primary handler: ${primary.protocol}")
+                val result = primary.handshake(clientIp)
+                if (result != null) {
+                    Log.i(TAG, "Primary handler SUCCESS: ${result.protocol.displayName} | model=${result.model} | version=${result.softwareVersion}")
+                    return HandshakeResult.Success(result)
+                }
+                Log.w(TAG, "Primary handler FAILED: ${primary.protocol} — not trying fallbacks (protocol is known)")
+            } else {
+                Log.w(TAG, "No handler registered for detected protocol $primaryProtocol")
             }
-            Log.w(TAG, "Primary handler FAILED: ${primary.protocol}")
-        } else {
-            Log.w(TAG, "No primary handler for protocol $primaryProtocol, going straight to fallback")
+            Log.e(TAG, "Known protocol $primaryProtocol failed — returning ALL_PROTOCOLS_FAILED")
+            return HandshakeResult.Failure(FailureReason.ALL_PROTOCOLS_FAILED)
         }
 
-        // Fallback: try remaining handlers in order
+        // Unknown IP prefix — try all handlers in order as a last resort
+        Log.w(TAG, "Unknown IP prefix, trying all handlers as fallback")
         for (handler in allHandlers) {
-            if (handler.protocol == primaryProtocol) continue
-            Log.i(TAG, "Trying fallback handler: ${handler.protocol}")
+            Log.i(TAG, "Trying handler: ${handler.protocol}")
             val result = handler.handshake(clientIp)
             if (result != null) {
-                Log.i(TAG, "Fallback handler SUCCESS: ${result.protocol.displayName}")
+                Log.i(TAG, "Handler SUCCESS: ${result.protocol.displayName}")
                 return HandshakeResult.Success(result)
             }
-            Log.w(TAG, "Fallback handler FAILED: ${handler.protocol}")
+            Log.w(TAG, "Handler FAILED: ${handler.protocol}")
         }
 
         Log.e(TAG, "ALL protocols failed — returning ALL_PROTOCOLS_FAILED")
@@ -89,6 +98,7 @@ class DashcamHandshakeManager(
      * Source: HandShakeManager.java lines 77–105.
      */
     private fun detectPrimaryProtocol(clientIp: String): ChipsetProtocol? = when {
+        clientIp.startsWith("192.168.25.")                                 -> ChipsetProtocol.GENERALPLUS
         clientIp.startsWith("192.168.0.")                                  -> ChipsetProtocol.HI_DVR
         clientIp.startsWith("192.168.1.") && clientIp.endsWith(".254")     -> ChipsetProtocol.NOVATEK
         clientIp.startsWith("192.168.1.")                                  -> ChipsetProtocol.MSTAR

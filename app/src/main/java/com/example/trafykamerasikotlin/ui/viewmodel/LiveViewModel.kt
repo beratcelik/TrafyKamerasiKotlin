@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.trafykamerasikotlin.data.media.EeasytechLiveRepository
+import com.example.trafykamerasikotlin.data.media.GeneralplusLiveRepository
 import com.example.trafykamerasikotlin.data.media.HiDvrMediaRepository
 import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
@@ -25,6 +26,9 @@ sealed class LiveUiState {
          *  ("Camera 1", "Camera 2", …); index = switchcam value sent to the camera. */
         val cameras        : List<String> = emptyList(),
         val selectedCamera : Int          = 0,
+        /** True for GeneralPlus — uses MjpegRtspPlayer instead of IjkPlayer
+         *  (IjkPlayer's FFmpeg build lacks the MJPEG decoder). */
+        val useMjpeg       : Boolean      = false,
     ) : LiveUiState()
 }
 
@@ -37,8 +41,9 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val connectivityManager =
         application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-    private val hiDvrRepo = HiDvrMediaRepository()
-    private val eeasyRepo = EeasytechLiveRepository()
+    private val hiDvrRepo  = HiDvrMediaRepository()
+    private val eeasyRepo  = EeasytechLiveRepository()
+    private val gpLiveRepo = GeneralplusLiveRepository()
 
     private val _uiState = MutableStateFlow<LiveUiState>(LiveUiState.NotConnected)
     val uiState: StateFlow<LiveUiState> = _uiState
@@ -66,25 +71,38 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
             Log.i(TAG, "startStream: process bound to network=$network")
 
             val ip = device.protocol.deviceIp
-            if (device.protocol == ChipsetProtocol.EEASYTECH) {
-                Log.i(TAG, "startStream: Easytech entering live for $ip")
-                val camNum  = eeasyRepo.enterLive(ip)
-                val cameras = cameraLabels(camNum)
-                val rtspUrl = EeasytechLiveRepository.RTSP_URL
-                Log.i(TAG, "startStream: Easytech ready → $rtspUrl, cameras=$cameras")
-                _uiState.value = LiveUiState.Playing(
-                    rtspUrl        = rtspUrl,
-                    cameras        = cameras,
-                    selectedCamera = 0,
-                )
-            } else {
-                Log.i(TAG, "startStream: HiDVR stopping recording for $ip")
-                hiDvrRepo.stopRecording(ip)
-                delay(1_000)   // give camera time to release encoder before RTSP
-                hiDvrRepo.registerClient(ip, device.clientIp)
-                val rtspUrl = "rtsp://$ip:554/livestream/1"
-                Log.i(TAG, "startStream: HiDVR ready → $rtspUrl")
-                _uiState.value = LiveUiState.Playing(rtspUrl = rtspUrl)
+            when (device.protocol) {
+                ChipsetProtocol.GENERALPLUS -> {
+                    Log.i(TAG, "startStream: GeneralPlus entering live")
+                    gpLiveRepo.enterLive()
+                    val rtspUrl = GeneralplusLiveRepository.RTSP_URL
+                    Log.i(TAG, "startStream: GeneralPlus ready → $rtspUrl")
+                    _uiState.value = LiveUiState.Playing(
+                        rtspUrl  = rtspUrl,
+                        useMjpeg = true,
+                    )
+                }
+                ChipsetProtocol.EEASYTECH -> {
+                    Log.i(TAG, "startStream: Easytech entering live for $ip")
+                    val camNum  = eeasyRepo.enterLive(ip)
+                    val cameras = cameraLabels(camNum)
+                    val rtspUrl = EeasytechLiveRepository.RTSP_URL
+                    Log.i(TAG, "startStream: Easytech ready → $rtspUrl, cameras=$cameras")
+                    _uiState.value = LiveUiState.Playing(
+                        rtspUrl        = rtspUrl,
+                        cameras        = cameras,
+                        selectedCamera = 0,
+                    )
+                }
+                else -> {
+                    Log.i(TAG, "startStream: HiDVR stopping recording for $ip")
+                    hiDvrRepo.stopRecording(ip)
+                    delay(1_000)   // give camera time to release encoder before RTSP
+                    hiDvrRepo.registerClient(ip, device.clientIp)
+                    val rtspUrl = "rtsp://$ip:554/livestream/1"
+                    Log.i(TAG, "startStream: HiDVR ready → $rtspUrl")
+                    _uiState.value = LiveUiState.Playing(rtspUrl = rtspUrl)
+                }
             }
         }
     }
@@ -114,11 +132,13 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         Log.d(TAG, "onLeave: for ${device.protocol.deviceIp}")
         viewModelScope.launch {
             val ip = device.protocol.deviceIp
-            if (device.protocol == ChipsetProtocol.EEASYTECH) {
-                eeasyRepo.exitLive(ip)
-            } else {
-                hiDvrRepo.unregisterClient(ip, device.clientIp)
-                hiDvrRepo.startRecording(ip)
+            when (device.protocol) {
+                ChipsetProtocol.GENERALPLUS -> gpLiveRepo.exitLive()
+                ChipsetProtocol.EEASYTECH   -> eeasyRepo.exitLive(ip)
+                else -> {
+                    hiDvrRepo.unregisterClient(ip, device.clientIp)
+                    hiDvrRepo.startRecording(ip)
+                }
             }
             // Unbind AFTER exit calls complete so they still route through dashcam WiFi
             connectivityManager.bindProcessToNetwork(null)

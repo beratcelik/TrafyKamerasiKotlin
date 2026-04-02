@@ -261,23 +261,28 @@ class GeneralplusMediaRepository {
     /**
      * Prepares the camera for RTSP playback of a specific file.
      *
-     * Sequence confirmed from Viidure source (U6/c.java lines 264-268):
-     *   1. StopPlayback   — stop any active stream so RestartStreaming starts clean
-     *   2. RestartStreaming — reinitialise the camera's RTSP streaming server (~5 s)
+     * Sequence confirmed from PCAP (PCAPdroid_01_Nis_21_54_57.pcap):
+     *   1. SetMode(PLAYBACK) — ensure the camera is in playback mode (new session)
+     *   2. RestartStreaming   — reinitialise the camera's RTSP server for file playback
      *   3. StartPlayback(fileIndex) — direct the stream to the requested file
      *
-     * Camera is already in Playback mode from the fetchFiles session; no SetMode needed.
+     * IMPORTANT: No Stop(0x41) before RestartStreaming — the PCAP shows the Viidure app
+     * does NOT send Stop before playback. Sending Stop causes RestartStreaming to NAK.
+     *
+     * The GPSOCKET TCP session is held open (not closed) because the camera stops
+     * the RTSP stream when the control connection drops.  [exitPlayback] releases it.
+     *
      * Returns true if commands were sent (caller should then open [RTSP_URL]).
      */
     suspend fun preparePlayback(deviceIp: String, fileIndex: Int): Boolean {
         Log.i(TAG, "preparePlayback: fileIndex=$fileIndex")
 
-        val success = GeneralplusSession.withSession { send, sendPacket, receive ->
-            // 1. Stop any active RTSP stream (ACK or NAK both OK — we just need it stopped)
-            sendPacket(GeneralplusProtocol.buildPlaybackStop(0))
-            receive(GeneralplusProtocol.CMD_PLAYBACK_STOP)
+        val success = GeneralplusSession.withSession(holdOpen = true) { send, sendPacket, receive ->
+            // 1. Ensure camera is in Playback mode (new TCP session; mode may not persist)
+            sendPacket(GeneralplusProtocol.buildSetMode(0, GeneralplusProtocol.DEVICE_MODE_PLAYBACK))
+            receive(GeneralplusProtocol.CMD_SET_MODE)
 
-            // 2. Restart the streaming server (ACK arrives ~5 s later; READ_TIMEOUT_MS = 8 s)
+            // 2. Restart the streaming server (switches RTSP from live to file playback)
             send(GeneralplusProtocol.MODE_GENERAL, GeneralplusProtocol.CMD_RESTART_STREAMING)
             receive(GeneralplusProtocol.CMD_RESTART_STREAMING)
 
@@ -295,6 +300,9 @@ class GeneralplusMediaRepository {
     /**
      * Restores the camera to recording mode after leaving the Media screen.
      *
+     * Uses the held playback session if available (i.e. the user played a file),
+     * otherwise opens a fresh session. Always releases the held session at the end.
+     *
      * Full sequence confirmed from PCAP [164-179] and GoplusPlayerActivity.java:
      *   1. Stop(0x41)                  — stop any active RTSP file stream
      *   2. SetMode(DEVICE_MODE_RECORD) — switch device back to record mode
@@ -303,23 +311,39 @@ class GeneralplusMediaRepository {
      */
     suspend fun exitPlayback(deviceIp: String) {
         Log.i(TAG, "exitPlayback")
-        GeneralplusSession.withSession { send, sendPacket, receive ->
-            // 1. Stop active RTSP stream
-            sendPacket(GeneralplusProtocol.buildPlaybackStop(0))
-            receive(GeneralplusProtocol.CMD_PLAYBACK_STOP)
 
-            // 2. Switch to Record device mode
-            sendPacket(GeneralplusProtocol.buildSetMode(0, GeneralplusProtocol.DEVICE_MODE_RECORD))
-            receive(GeneralplusProtocol.CMD_SET_MODE)
-
-            // 3. Start recording (MODE_RECORD=0x01, cmd=0x00 — 12-byte basic command)
-            send(GeneralplusProtocol.MODE_RECORD, 0x00)
-            receive(0x00)
-
-            // 4. Restart live RTSP stream
-            send(GeneralplusProtocol.MODE_GENERAL, GeneralplusProtocol.CMD_RESTART_STREAMING)
-            receive(GeneralplusProtocol.CMD_RESTART_STREAMING)
+        // Use the held playback session if available; otherwise open a fresh one.
+        val ran = GeneralplusSession.onHeldSession { send, sendPacket, receive ->
+            sendExitCommands(send, sendPacket, receive)
         }
+        if (ran == null) {
+            GeneralplusSession.withSession { send, sendPacket, receive ->
+                sendExitCommands(send, sendPacket, receive)
+            }
+        }
+        GeneralplusSession.releaseHeldSession()
+    }
+
+    private fun sendExitCommands(
+        send: (Byte, Byte) -> Unit,
+        sendPacket: (ByteArray) -> Unit,
+        receive: (Byte) -> GeneralplusProtocol.Response?,
+    ) {
+        // 1. Stop active RTSP stream
+        sendPacket(GeneralplusProtocol.buildPlaybackStop(0))
+        receive(GeneralplusProtocol.CMD_PLAYBACK_STOP)
+
+        // 2. Switch to Record device mode
+        sendPacket(GeneralplusProtocol.buildSetMode(0, GeneralplusProtocol.DEVICE_MODE_RECORD))
+        receive(GeneralplusProtocol.CMD_SET_MODE)
+
+        // 3. Start recording (MODE_RECORD=0x01, cmd=0x00 — 12-byte basic command)
+        send(GeneralplusProtocol.MODE_RECORD, 0x00)
+        receive(0x00)
+
+        // 4. Restart live RTSP stream
+        send(GeneralplusProtocol.MODE_GENERAL, GeneralplusProtocol.CMD_RESTART_STREAMING)
+        receive(GeneralplusProtocol.CMD_RESTART_STREAMING)
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────

@@ -75,6 +75,10 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     private val _playbackUri = MutableStateFlow<String?>(null)
     val playbackUri: StateFlow<String?> = _playbackUri
 
+    /** True while the camera is being prepared for file playback (loading spinner). */
+    private val _isPreparingPlayback = MutableStateFlow(false)
+    val isPreparingPlayback: StateFlow<Boolean> = _isPreparingPlayback
+
     private var loadedDevice: DeviceInfo? = null
     private var loadJob: Job?             = null
 
@@ -227,18 +231,29 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         val fileIndex = GeneralplusMediaRepository.fileIndexOf(file.path)
         if (fileIndex < 0) return
         viewModelScope.launch {
-            val ok = gpRepo.preparePlayback(device.protocol.deviceIp, fileIndex)
-            if (ok) {
-                _playbackUri.value = GeneralplusMediaRepository.RTSP_URL
-                Log.i(TAG, "playFile: ready — emitting RTSP URL")
-            } else {
-                Log.e(TAG, "playFile: preparePlayback failed")
+            _isPreparingPlayback.value = true
+            try {
+                val ok = gpRepo.preparePlayback(device.protocol.deviceIp, fileIndex)
+                if (ok) {
+                    _playbackUri.value = GeneralplusMediaRepository.RTSP_URL
+                    Log.i(TAG, "playFile: ready — emitting RTSP URL")
+                } else {
+                    Log.e(TAG, "playFile: preparePlayback failed")
+                }
+            } finally {
+                _isPreparingPlayback.value = false
             }
         }
     }
 
-    /** Clears [playbackUri] after the caller has consumed and opened the URL. */
-    fun clearPlaybackUri() { _playbackUri.value = null }
+    /** Clears [playbackUri] and tells the camera to stop file playback. */
+    fun clearPlaybackUri() {
+        _playbackUri.value = null
+        val device = loadedDevice ?: return
+        if (device.protocol == ChipsetProtocol.GENERALPLUS) {
+            viewModelScope.launch { gpRepo.exitPlayback(device.protocol.deviceIp) }
+        }
+    }
 
     fun onLeave() {
         val device = loadedDevice ?: return

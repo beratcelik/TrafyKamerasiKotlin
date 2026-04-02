@@ -2,7 +2,6 @@ package com.example.trafykamerasikotlin.ui.screens
 
 import android.content.Context
 import android.content.Intent
-import android.net.ConnectivityManager
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -88,7 +87,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
-import tv.danmaku.ijk.media.player.IjkMediaPlayer
+import com.example.trafykamerasikotlin.data.media.MjpegRtspPlayer
 
 @Composable
 fun MediaScreen(
@@ -100,6 +99,7 @@ fun MediaScreen(
     val downloading      by viewModel.downloading.collectAsStateWithLifecycle()
     val downloadProgress by viewModel.downloadProgress.collectAsStateWithLifecycle()
     val playbackUri      by viewModel.playbackUri.collectAsStateWithLifecycle()
+    val preparingPlay    by viewModel.isPreparingPlayback.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
 
@@ -191,6 +191,17 @@ fun MediaScreen(
                     )
                 }
             }
+        }
+    }
+
+    if (preparingPlay) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.6f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator(color = ColorPrimary)
         }
     }
 
@@ -639,7 +650,9 @@ private fun playVideo(context: Context, url: String) {
 // ── In-app video player overlay ─────────────────────────────────────────────
 
 /**
- * Full-screen video overlay using IjkMediaPlayer (FFmpeg-based RTSP).
+ * Full-screen video overlay using custom MjpegRtspPlayer.
+ * IjkPlayer's FFmpeg build lacks the MJPEG decoder (codec id 7), so we use our
+ * own RFC 2435 JPEG-over-RTP reassembly player instead.
  * Shown when a GeneralPlus file is ready to stream via RTSP.
  * Dismissed by the back button or the back gesture.
  */
@@ -648,46 +661,7 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
     BackHandler(onBack = onDismiss)
 
     val bufferingState = remember { mutableStateOf(true) }
-    val context        = LocalContext.current
-
-    val ijkPlayer = remember(url) {
-        IjkMediaPlayer.loadLibrariesOnce(null)
-        IjkMediaPlayer().apply {
-            // GeneralPlus port-8080 RTSP server: UDP-only transport (TCP rejected).
-            // With a supported SD card (≤64 GB) the camera's CPU is not throttled by
-            // SD I/O, so UDP delivery is reliable.
-            // max_delay=0  — disables the RTP jitter-buffer 500 ms timer that was forcing
-            //                "max delay reached / missed N packets" drops on every frame.
-            // buffer_size  — 4 MB SO_RCVBUF so the kernel can absorb brief bursts while
-            //                FFmpeg processes the previous packet (no pthread circular
-            //                buffer in this IjkPlayer build).
-            // probesize=4096 / stimeout=-1 — match official Viidure app (U6/c.java).
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "rtsp_transport", "udp")
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "buffer_size",    "4194304") // 4 MB UDP socket buffer
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "max_delay",      "0")       // disable jitter-buffer forced ejection
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "stimeout",       "-1")      // infinite socket timeout
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize",      "4096")    // 4 KB — RTSP DESCRIBE provides stream info
-            setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC,  "skip_loop_filter", 48L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec",             1L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 1L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared",      1L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "packet-buffering",       0L)
-        }
-    }
-
-    DisposableEffect(url) {
-        // IjkPlayer uses native FFmpeg sockets which bypass Android's boundNetwork Java
-        // socket factory.  bindProcessToNetwork forces the kernel to route all sockets
-        // (including native ones) through the dashcam WiFi interface.
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        cm?.bindProcessToNetwork(GeneralplusSession.getBoundNetwork())
-        onDispose {
-            Log.d("MediaScreen", "VideoPlayerOverlay dispose — releasing IjkPlayer")
-            ijkPlayer.stop()
-            ijkPlayer.release()
-            cm?.bindProcessToNetwork(null)
-        }
-    }
+    val playerRef      = remember { mutableStateOf<MjpegRtspPlayer?>(null) }
 
     Box(
         modifier = Modifier
@@ -700,37 +674,23 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
                     sv.holder.addCallback(object : SurfaceHolder.Callback {
                         override fun surfaceCreated(holder: SurfaceHolder) {
                             Log.d("MediaScreen", "VideoPlayerOverlay surfaceCreated — $url")
-                            try {
-                                ijkPlayer.setDisplay(holder)
-                                ijkPlayer.dataSource = url
-                                ijkPlayer.setOnPreparedListener { mp ->
-                                    bufferingState.value = false
-                                    mp.start()
-                                }
-                                ijkPlayer.setOnInfoListener { _, what, _ ->
-                                    when (what) {
-                                        IjkMediaPlayer.MEDIA_INFO_BUFFERING_START -> bufferingState.value = true
-                                        IjkMediaPlayer.MEDIA_INFO_BUFFERING_END   -> bufferingState.value = false
-                                    }
-                                    false
-                                }
-                                ijkPlayer.setOnErrorListener { _, what, extra ->
-                                    Log.e("MediaScreen", "IjkPlayer error what=$what extra=$extra")
-                                    bufferingState.value = false
-                                    false
-                                }
-                                ijkPlayer.prepareAsync()
-                            } catch (e: Exception) {
-                                Log.e("MediaScreen", "IjkPlayer setup failed: ${e.message}")
+                            val player = MjpegRtspPlayer(
+                                surface = holder.surface,
+                                network = GeneralplusSession.getBoundNetwork(),
+                            )
+                            player.onFirstFrame = {
+                                bufferingState.value = false
                             }
+                            playerRef.value = player
+                            player.start(url)
                         }
 
                         override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {}
 
                         override fun surfaceDestroyed(holder: SurfaceHolder) {
                             Log.d("MediaScreen", "VideoPlayerOverlay surfaceDestroyed")
-                            ijkPlayer.stop()
-                            ijkPlayer.setDisplay(null)
+                            playerRef.value?.stop()
+                            playerRef.value = null
                         }
                     })
                 }
@@ -756,6 +716,14 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
                 contentDescription = "Close",
                 tint               = Color.White
             )
+        }
+    }
+
+    DisposableEffect(url) {
+        onDispose {
+            Log.d("MediaScreen", "VideoPlayerOverlay dispose — stopping MjpegRtspPlayer")
+            playerRef.value?.stop()
+            playerRef.value = null
         }
     }
 }

@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +42,8 @@ import com.example.trafykamerasikotlin.ui.theme.ColorNavBar
 import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorTextPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorTextSecondary
+import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
+import com.example.trafykamerasikotlin.data.media.MjpegRtspPlayer
 import com.example.trafykamerasikotlin.ui.viewmodel.LiveUiState
 import com.example.trafykamerasikotlin.ui.viewmodel.LiveViewModel
 import tv.danmaku.ijk.media.player.IjkMediaPlayer
@@ -80,7 +83,11 @@ fun LiveScreen(
                         modifier         = Modifier.weight(1f).fillMaxWidth(),
                         contentAlignment = Alignment.Center,
                     ) {
-                        RtspPlayer(rtspUrl = state.rtspUrl)
+                        if (state.useMjpeg) {
+                            MjpegLivePlayer(rtspUrl = state.rtspUrl)
+                        } else {
+                            RtspPlayer(rtspUrl = state.rtspUrl)
+                        }
                     }
                     // Camera switcher tab bar — shown only for multi-camera Easytech devices
                     if (state.cameras.size > 1) {
@@ -278,4 +285,68 @@ private fun RtspPlayer(rtspUrl: String) {
         // landscape dashcam video is never stretched to fit a portrait screen.
         modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
     )
+}
+
+// ── MJPEG RTSP player (GeneralPlus) ───────────────────────────────────────
+
+/**
+ * Plays an MJPEG-over-RTP live stream using [MjpegRtspPlayer].
+ *
+ * GeneralPlus cameras stream MJPEG (RTP payload type 26, JPEG/90000) which
+ * IjkPlayer cannot decode (its FFmpeg build omits the MJPEG codec).
+ * This composable reuses the same custom player that handles file playback.
+ */
+@Composable
+private fun MjpegLivePlayer(rtspUrl: String) {
+
+    val bufferingState = remember { mutableStateOf(true) }
+    val playerRef      = remember { mutableStateOf<MjpegRtspPlayer?>(null) }
+
+    Box(
+        modifier         = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+        contentAlignment = Alignment.Center,
+    ) {
+        AndroidView(
+            factory = { ctx ->
+                SurfaceView(ctx).also { sv ->
+                    sv.holder.addCallback(object : SurfaceHolder.Callback {
+                        override fun surfaceCreated(holder: SurfaceHolder) {
+                            Log.d(TAG, "MjpegLivePlayer surfaceCreated — $rtspUrl")
+                            val player = MjpegRtspPlayer(
+                                surface = holder.surface,
+                                network = GeneralplusSession.getBoundNetwork(),
+                            )
+                            player.onFirstFrame = { bufferingState.value = false }
+                            playerRef.value = player
+                            player.start(rtspUrl)
+                        }
+
+                        override fun surfaceChanged(
+                            holder: SurfaceHolder, format: Int, w: Int, h: Int,
+                        ) {}
+
+                        override fun surfaceDestroyed(holder: SurfaceHolder) {
+                            Log.d(TAG, "MjpegLivePlayer surfaceDestroyed — stopping")
+                            playerRef.value?.stop()
+                            playerRef.value = null
+                        }
+                    })
+                }
+            },
+            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+        )
+
+        // Buffering spinner — shown until the first JPEG frame is decoded
+        if (bufferingState.value) {
+            CircularProgressIndicator(color = ColorPrimary)
+        }
+    }
+
+    DisposableEffect(rtspUrl) {
+        onDispose {
+            Log.d(TAG, "MjpegLivePlayer dispose — stopping")
+            playerRef.value?.stop()
+            playerRef.value = null
+        }
+    }
 }

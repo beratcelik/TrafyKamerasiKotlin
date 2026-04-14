@@ -12,6 +12,8 @@ import com.example.trafykamerasikotlin.data.handshake.DashcamHandshakeManager
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.FailureReason
 import com.example.trafykamerasikotlin.data.model.HandshakeResult
+import com.example.trafykamerasikotlin.data.allwinner.AllwinnerNetwork
+import com.example.trafykamerasikotlin.data.allwinner.AllwinnerSessionHolder
 import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
 import com.example.trafykamerasikotlin.data.network.WifiIpProvider
@@ -77,8 +79,21 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
             val currentSsid = wifiManager.getCurrentDashcamSsid()
             if (currentSsid != null) {
                 Log.i(TAG, "Already on dashcam WiFi: $currentSsid — skipping scan")
+                // Bind all network clients to the Wi-Fi network explicitly. Without this, raw
+                // TCP sockets (e.g. Allwinner) are routed via cellular when mobile data is
+                // active, even though the dashcam AP is reachable over Wi-Fi.
+                val wifiNetwork = wifiManager.getCurrentWifiNetwork()
+                if (wifiNetwork != null) {
+                    Log.i(TAG, "Binding network clients to Wi-Fi network $wifiNetwork")
+                    DashcamHttpClient.bindToNetwork(wifiNetwork)
+                    GeneralplusSession.bindToNetwork(wifiNetwork)
+                    AllwinnerNetwork.bindToNetwork(wifiNetwork)
+                    _connectedNetwork.update { wifiNetwork }
+                } else {
+                    Log.w(TAG, "getCurrentWifiNetwork() returned null — proceeding unbound")
+                }
                 _uiState.update { DashcamUiState.Connecting }
-                proceedWithHandshake(network = null)
+                proceedWithHandshake(network = wifiNetwork)
                 return@launch
             }
 
@@ -136,6 +151,8 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         wifiManager.release()
         DashcamHttpClient.bindToNetwork(null)
         GeneralplusSession.bindToNetwork(null)
+        AllwinnerNetwork.bindToNetwork(null)
+        AllwinnerSessionHolder.clear()
         _connectedNetwork.update { null }
         _uiState.update { DashcamUiState.Idle }
     }
@@ -155,6 +172,7 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                 result.network?.let {
                     DashcamHttpClient.bindToNetwork(it)
                     GeneralplusSession.bindToNetwork(it)
+                    AllwinnerNetwork.bindToNetwork(it)
                 }
                 proceedWithHandshake(result.network)
             }

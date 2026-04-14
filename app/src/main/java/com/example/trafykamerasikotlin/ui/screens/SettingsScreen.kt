@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -47,6 +48,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -65,6 +68,7 @@ import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorSurface
 import com.example.trafykamerasikotlin.ui.theme.ColorTextPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorTextSecondary
+import com.example.trafykamerasikotlin.ui.viewmodel.ApnDialogState
 import com.example.trafykamerasikotlin.ui.viewmodel.SettingsUiState
 import com.example.trafykamerasikotlin.ui.viewmodel.SettingsViewModel
 import com.example.trafykamerasikotlin.ui.viewmodel.WifiDialogState
@@ -79,6 +83,7 @@ fun SettingsScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val actionFeedback by viewModel.actionFeedback.collectAsStateWithLifecycle()
     val wifiDialog by viewModel.wifiDialog.collectAsStateWithLifecycle()
+    val apnDialog by viewModel.apnDialog.collectAsStateWithLifecycle()
 
     // Trigger load when the screen appears with a connected device
     LaunchedEffect(device) {
@@ -115,6 +120,7 @@ fun SettingsScreen(
                 onSelect       = { key, value -> viewModel.apply(key, value) },
                 onAction       = { key -> viewModel.triggerAction(key) },
                 onWifiSettings = viewModel::openWifiSettings,
+                onApnDialog    = viewModel::openApnDialog,
                 onRawDump      = onRawDump
             )
 
@@ -124,6 +130,7 @@ fun SettingsScreen(
                 onSelect       = { _, _ -> },
                 onAction       = { },
                 onWifiSettings = { },
+                onApnDialog    = { },
                 onRawDump      = onRawDump
             )
 
@@ -154,6 +161,15 @@ fun SettingsScreen(
                 state     = wifiDialog,
                 onSave    = { ssid, pass -> viewModel.saveWifiPassword(ssid, pass) },
                 onDismiss = viewModel::dismissWifiDialog
+            )
+        }
+
+        // APN configuration dialog
+        if (apnDialog !is ApnDialogState.Hidden) {
+            ApnDialog(
+                state     = apnDialog,
+                onSave    = { apn, user, pass -> viewModel.saveApn(apn, user, pass) },
+                onDismiss = viewModel::dismissApnDialog
             )
         }
     }
@@ -253,6 +269,7 @@ private fun SettingsList(
     onSelect: (key: String, value: String) -> Unit,
     onAction: (key: String) -> Unit,
     onWifiSettings: () -> Unit,
+    onApnDialog: () -> Unit,
     onRawDump: () -> Unit,
 ) {
     var pendingItem by remember { mutableStateOf<SettingItem?>(null) }
@@ -273,10 +290,11 @@ private fun SettingsList(
                     enabled  = !applying,
                     onTap    = { item ->
                         when {
-                            item.options.isNotEmpty()    -> pendingItem = item
-                            item.key in DESTRUCTIVE_KEYS -> pendingDestructive = item
-                            item.key == "getwifi.cgi?"  -> onWifiSettings()
-                            else                         -> onAction(item.key)
+                            item.options.isNotEmpty()       -> pendingItem = item
+                            item.key in DESTRUCTIVE_KEYS    -> pendingDestructive = item
+                            item.key == "getwifi.cgi?"     -> onWifiSettings()
+                            item.key == "allwinner_apn"    -> onApnDialog()
+                            else                            -> onAction(item.key)
                         }
                     }
                 )
@@ -407,11 +425,12 @@ private fun SettingRow(
     enabled: Boolean,
     onTap: () -> Unit,
 ) {
-    val isAction = item.options.isEmpty()
+    val isInfo   = item.key.endsWith("__info") || item.key.endsWith("__ro")
+    val isAction = !isInfo && item.options.isEmpty()
     Row(
         modifier          = Modifier
             .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onTap)
+            .then(if (isInfo) Modifier else Modifier.clickable(enabled = enabled, onClick = onTap))
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -422,7 +441,28 @@ private fun SettingRow(
             color    = if (enabled) ColorTextPrimary else ColorTextSecondary,
             modifier = Modifier.weight(1f)
         )
-        if (isAction) {
+        if (isInfo) {
+            val value = item.currentValueLabel.ifEmpty { item.currentValue }
+            Text(
+                text  = value,
+                style = MaterialTheme.typography.bodyMedium,
+                color = ColorTextSecondary
+            )
+            if (item.key == "imei__info") {
+                val clipboard = LocalClipboardManager.current
+                IconButton(
+                    onClick  = { clipboard.setText(AnnotatedString(value)) },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector        = Icons.Filled.ContentCopy,
+                        contentDescription = "Kopyala",
+                        tint               = ColorTextSecondary,
+                        modifier           = Modifier.size(16.dp)
+                    )
+                }
+            }
+        } else if (isAction) {
             Icon(
                 imageVector        = Icons.Filled.ChevronRight,
                 contentDescription = null,
@@ -593,6 +633,103 @@ private fun WifiPasswordDialog(
         dismissButton = {
             TextButton(onClick = { if (!isLoading) onDismiss() }) {
                 Text("Cancel", color = ColorTextSecondary)
+            }
+        }
+    )
+}
+
+// ── APN configuration dialog ───────────────────────────────────────────────
+
+@Composable
+private fun ApnDialog(
+    state: ApnDialogState,
+    onSave: (apn: String, user: String, password: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val isSaving = state is ApnDialogState.Saving
+    val isError  = state is ApnDialogState.Error
+
+    val loadedState = state as? ApnDialogState.Loaded
+    var apn      by remember(loadedState) { mutableStateOf(loadedState?.apn ?: "") }
+    var user     by remember(loadedState) { mutableStateOf(loadedState?.user ?: "") }
+    var password by remember(loadedState) { mutableStateOf(loadedState?.password ?: "") }
+
+    AlertDialog(
+        onDismissRequest = { if (!isSaving) onDismiss() },
+        containerColor   = ColorSurface,
+        title = {
+            Text("APN Yapılandırması", style = MaterialTheme.typography.titleLarge, color = ColorTextPrimary)
+        },
+        text = {
+            when {
+                isSaving -> {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = ColorPrimary, modifier = Modifier.size(32.dp))
+                    }
+                }
+                isError -> {
+                    Text(
+                        "APN kaydedilemedi. Bağlantıyı kontrol edin.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = ColorTextSecondary
+                    )
+                }
+                else -> {
+                    val fieldColors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor   = ColorPrimary,
+                        unfocusedBorderColor = ColorTextSecondary,
+                        focusedTextColor     = ColorTextPrimary,
+                        unfocusedTextColor   = ColorTextPrimary,
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedTextField(
+                            value         = apn,
+                            onValueChange = { apn = it },
+                            label         = { Text("APN", color = ColorTextSecondary) },
+                            singleLine    = true,
+                            modifier      = Modifier.fillMaxWidth(),
+                            colors        = fieldColors,
+                        )
+                        OutlinedTextField(
+                            value         = user,
+                            onValueChange = { user = it },
+                            label         = { Text("Kullanıcı Adı", color = ColorTextSecondary) },
+                            singleLine    = true,
+                            modifier      = Modifier.fillMaxWidth(),
+                            colors        = fieldColors,
+                        )
+                        OutlinedTextField(
+                            value         = password,
+                            onValueChange = { password = it },
+                            label         = { Text("Şifre", color = ColorTextSecondary) },
+                            singleLine    = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            visualTransformation = PasswordVisualTransformation(),
+                            modifier      = Modifier.fillMaxWidth(),
+                            colors        = fieldColors,
+                        )
+                        Text(
+                            "APN boş bırakılabilir. Değişiklikler cihazı yeniden başlatabilir.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ColorTextSecondary
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (!isError) {
+                TextButton(
+                    onClick  = { if (!isSaving) onSave(apn, user, password) },
+                    enabled  = !isSaving
+                ) {
+                    Text("Kaydet", color = ColorPrimary)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { if (!isSaving) onDismiss() }) {
+                Text("İptal", color = ColorTextSecondary)
             }
         }
     )

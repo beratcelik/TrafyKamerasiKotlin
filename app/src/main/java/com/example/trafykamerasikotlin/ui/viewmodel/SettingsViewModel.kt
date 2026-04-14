@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.SettingItem
+import com.example.trafykamerasikotlin.data.settings.AllwinnerSettingsRepository
 import com.example.trafykamerasikotlin.data.settings.EeasytechSettingsRepository
 import com.example.trafykamerasikotlin.data.settings.GeneralplusSettingsRepository
 import com.example.trafykamerasikotlin.data.settings.HiDvrSettingsRepository
@@ -15,6 +16,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+sealed class ApnDialogState {
+    data object Hidden : ApnDialogState()
+    data class Loaded(val apn: String, val user: String, val password: String) : ApnDialogState()
+    data object Saving : ApnDialogState()
+    data object Error : ApnDialogState()
+}
 
 sealed class WifiDialogState {
     data object Hidden : WifiDialogState()
@@ -48,10 +56,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _wifiDialog = MutableStateFlow<WifiDialogState>(WifiDialogState.Hidden)
     val wifiDialog: StateFlow<WifiDialogState> = _wifiDialog.asStateFlow()
 
+    private val _apnDialog = MutableStateFlow<ApnDialogState>(ApnDialogState.Hidden)
+    val apnDialog: StateFlow<ApnDialogState> = _apnDialog.asStateFlow()
+
     private var loadedForDevice: DeviceInfo? = null
     private var eeasyRepo: EeasytechSettingsRepository? = null
     private var hiDvrRepo: HiDvrSettingsRepository? = null
     private var generalplusRepo: GeneralplusSettingsRepository? = null
+    private var allwinnerRepo: AllwinnerSettingsRepository? = null
 
     /**
      * Loads all settings from the camera. Idempotent — won't reload if already
@@ -126,6 +138,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         } else "Action failed — check device connection."
                     }
                 }
+                ChipsetProtocol.ALLWINNER_V853 -> {
+                    _uiState.update { SettingsUiState.Loaded(current) }
+                }
                 else -> {
                     val result = getHiDvrRepo().executeAction(device.protocol.deviceIp, key)
                     _uiState.update { SettingsUiState.Loaded(current) }
@@ -150,6 +165,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         else WifiDialogState.Error
                     }
                 }
+                ChipsetProtocol.ALLWINNER_V853 -> {
+                    val pair = getAllwinnerRepo().getWifiSettingsFromCache()
+                    _wifiDialog.update {
+                        if (pair != null) WifiDialogState.Loaded(pair.first, pair.second)
+                        else WifiDialogState.Error
+                    }
+                }
                 else -> {
                     val settings = getHiDvrRepo().getWifiSettings(device.protocol.deviceIp)
                     _wifiDialog.update {
@@ -170,6 +192,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             val ok = when (device.protocol) {
                 ChipsetProtocol.GENERALPLUS ->
                     getGeneralplusRepo().setWifiPassword(device.protocol.deviceIp, newPassword)
+                ChipsetProtocol.ALLWINNER_V853 ->
+                    getAllwinnerRepo().setWifiAp(device.protocol.deviceIp, ssid, newPassword)
                 else ->
                     getHiDvrRepo().setWifiPassword(device.protocol.deviceIp, ssid, newPassword)
             }
@@ -177,9 +201,34 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 if (ok) WifiDialogState.Loaded(current.ssid, newPassword)
                 else WifiDialogState.Error
             }
-            if (ok) _actionFeedback.update { "Wi-Fi password updated. Reconnect to apply the new password." }
+            if (ok) _actionFeedback.update { "Wi-Fi şifresi güncellendi. Yeni şifreyle yeniden bağlanın." }
         }
     }
+
+    /** Opens the APN configuration dialog (Allwinner only). */
+    fun openApnDialog() {
+        val device = loadedForDevice ?: return
+        if (device.protocol != ChipsetProtocol.ALLWINNER_V853) return
+        val (apn, user, pass) = getAllwinnerRepo().getApnFromCache()
+        _apnDialog.update { ApnDialogState.Loaded(apn, user, pass) }
+    }
+
+    /** Saves new APN settings to the camera (Allwinner only). */
+    fun saveApn(apn: String, user: String, password: String) {
+        val device = loadedForDevice ?: return
+        if (device.protocol != ChipsetProtocol.ALLWINNER_V853) return
+        _apnDialog.update { ApnDialogState.Saving }
+        viewModelScope.launch {
+            val ok = getAllwinnerRepo().setApn(device.protocol.deviceIp, apn, user, password)
+            _apnDialog.update {
+                if (ok) ApnDialogState.Loaded(apn, user, password)
+                else ApnDialogState.Error
+            }
+            if (ok) _actionFeedback.update { "APN güncellendi." }
+        }
+    }
+
+    fun dismissApnDialog() { _apnDialog.update { ApnDialogState.Hidden } }
 
     fun dismissWifiDialog() { _wifiDialog.update { WifiDialogState.Hidden } }
 
@@ -206,16 +255,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private suspend fun fetchAll(device: DeviceInfo): List<SettingItem>? =
         when (device.protocol) {
-            ChipsetProtocol.EEASYTECH   -> getEeasyRepo().fetchAll(device.protocol.deviceIp)
-            ChipsetProtocol.GENERALPLUS -> getGeneralplusRepo().fetchAll(device.protocol.deviceIp)
-            else                        -> getHiDvrRepo().fetchAll(device.protocol.deviceIp)
+            ChipsetProtocol.EEASYTECH      -> getEeasyRepo().fetchAll(device.protocol.deviceIp)
+            ChipsetProtocol.GENERALPLUS    -> getGeneralplusRepo().fetchAll(device.protocol.deviceIp)
+            ChipsetProtocol.ALLWINNER_V853 -> getAllwinnerRepo().fetchAll(device.protocol.deviceIp)
+            else                           -> getHiDvrRepo().fetchAll(device.protocol.deviceIp)
         }
 
     private suspend fun applySetting(device: DeviceInfo, key: String, value: String): Boolean =
         when (device.protocol) {
-            ChipsetProtocol.EEASYTECH   -> getEeasyRepo().applySetting(device.protocol.deviceIp, key, value)
-            ChipsetProtocol.GENERALPLUS -> getGeneralplusRepo().applySetting(device.protocol.deviceIp, key, value)
-            else                        -> getHiDvrRepo().applySetting(device.protocol.deviceIp, key, value)
+            ChipsetProtocol.EEASYTECH      -> getEeasyRepo().applySetting(device.protocol.deviceIp, key, value)
+            ChipsetProtocol.GENERALPLUS    -> getGeneralplusRepo().applySetting(device.protocol.deviceIp, key, value)
+            ChipsetProtocol.ALLWINNER_V853 -> getAllwinnerRepo().applySetting(device.protocol.deviceIp, key, value)
+            else                           -> getHiDvrRepo().applySetting(device.protocol.deviceIp, key, value)
         }
 
     private fun getEeasyRepo(): EeasytechSettingsRepository =
@@ -226,6 +277,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private fun getGeneralplusRepo(): GeneralplusSettingsRepository =
         generalplusRepo ?: GeneralplusSettingsRepository().also { generalplusRepo = it }
+
+    private fun getAllwinnerRepo(): AllwinnerSettingsRepository =
+        allwinnerRepo ?: AllwinnerSettingsRepository().also { allwinnerRepo = it }
 
     // ── Helpers ────────────────────────────────────────────────────────────
 

@@ -33,6 +33,7 @@ class DashcamHandshakeManager(
         SigmaStarHandshakeHandler(),
         EeasytechHandshakeHandler(),
         NovatekHandshakeHandler(),
+        AllwinnerV853HandshakeHandler(),
     )
 
     suspend fun connect(): HandshakeResult {
@@ -105,6 +106,7 @@ class DashcamHandshakeManager(
         clientIp.startsWith("192.72.1.")                                   -> ChipsetProtocol.MSTAR_HZ
         clientIp.startsWith("192.168.201.")                                -> ChipsetProtocol.SIGMA_STAR
         clientIp.startsWith("192.168.169.")                                -> ChipsetProtocol.EEASYTECH
+        clientIp.startsWith("192.168.35.")                                 -> ChipsetProtocol.ALLWINNER_V853
         else                                                               -> null
     }
 }

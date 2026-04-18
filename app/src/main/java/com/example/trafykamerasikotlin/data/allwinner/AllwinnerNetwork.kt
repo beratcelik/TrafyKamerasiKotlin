@@ -2,6 +2,7 @@ package com.example.trafykamerasikotlin.data.allwinner
 
 import android.net.Network
 import android.util.Log
+import java.net.DatagramSocket
 import java.net.InetSocketAddress
 import java.net.Socket
 
@@ -32,6 +33,16 @@ internal object AllwinnerNetwork {
         val net = boundNetwork
         val socket = if (net != null) net.socketFactory.createSocket() else Socket()
         socket.connect(InetSocketAddress(ip, port), CONNECT_TIMEOUT_MS)
+        return socket
+    }
+
+    /**
+     * Creates a UDP socket routed through the dashcam Wi-Fi network. Used by the
+     * RTP2P media transport for Allwinner file playback and download.
+     */
+    fun createDatagramSocket(): DatagramSocket {
+        val socket = DatagramSocket()
+        boundNetwork?.bindSocket(socket)
         return socket
     }
 }

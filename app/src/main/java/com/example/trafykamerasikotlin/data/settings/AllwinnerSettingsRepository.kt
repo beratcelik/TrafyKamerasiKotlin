@@ -23,14 +23,9 @@ class AllwinnerSettingsRepository {
         private const val TAG = "Trafy.AllwinnerRepo"
     }
 
-    /** Loads (or reuses) the session for [deviceIp]. Reopens if the previous one is gone. */
-    private suspend fun requireSession(deviceIp: String): AllwinnerSession? {
-        AllwinnerSessionHolder.current?.let { return it }
-        Log.i(TAG, "No cached session; opening new one @ $deviceIp")
-        val fresh = AllwinnerSession.open(deviceIp) ?: return null
-        AllwinnerSessionHolder.replace(fresh)
-        return fresh
-    }
+    /** Loads (or reuses) the session for [deviceIp]. Reopens if the previous one is dead or absent. */
+    private suspend fun requireSession(deviceIp: String): AllwinnerSession? =
+        AllwinnerSessionHolder.requireAlive(deviceIp)
 
     suspend fun fetchAll(deviceIp: String): List<SettingItem>? {
         Log.i(TAG, "fetchAll deviceIp=$deviceIp")

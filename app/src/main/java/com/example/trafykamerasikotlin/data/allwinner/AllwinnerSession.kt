@@ -8,6 +8,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 
@@ -119,6 +121,16 @@ internal class AllwinnerSession private constructor(
         return relayInternal(msg, extra)
     }
 
+    /**
+     * Sends the top-level `rtp2p` command (used to start/stop UDP media streams
+     * for recorded-file playback and live camera streams). Unlike relay sub-commands,
+     * `rtp2p` has its own cookie-matched response and is routed via [AllwinnerClient.request].
+     */
+    suspend fun rtp2p(body: JSONObject): JSONObject {
+        if (closed) throw IllegalStateException("AllwinnerSession closed")
+        return client.request("rtp2p", body)
+    }
+
     private suspend fun relayInternal(msg: String, extra: JSONObject): JSONObject {
         extra.put("msg", msg)
         extra.put("peer", deviceId)
@@ -150,6 +162,13 @@ internal class AllwinnerSession private constructor(
             while (!closed) {
                 delay(WAKEUP_INTERVAL_MS)
                 if (closed) break
+                // If the TCP socket died, don't keep firing writes into a dead pipe — mark
+                // the session closed so AllwinnerSessionHolder reopens on next use.
+                if (!client.isAlive()) {
+                    Log.w(TAG, "wakeup: client is no longer alive, closing session")
+                    close()
+                    break
+                }
                 try {
                     // Wakeup responses (if any) also have no cookie field — use sendFrame to
                     // avoid orphaned pending-cookie slots accumulating in AllwinnerClient.
@@ -164,6 +183,12 @@ internal class AllwinnerSession private constructor(
                     client.sendFrame("relay", body)
                 } catch (e: Exception) {
                     Log.w(TAG, "wakeup failed: ${e.message}")
+                    // If the send failed because the socket is now dead, stop looping.
+                    if (!client.isAlive()) {
+                        Log.w(TAG, "wakeup: client died during send, closing session")
+                        close()
+                        break
+                    }
                 }
             }
         }
@@ -176,6 +201,9 @@ internal class AllwinnerSession private constructor(
         scope.cancel()
         client.close()
     }
+
+    /** True while the session's TCP socket + reader loop are healthy. */
+    fun isAlive(): Boolean = !closed && client.isAlive()
 }
 
 /**
@@ -185,7 +213,11 @@ internal class AllwinnerSession private constructor(
  * the repository constructible the same way as `HiDvrSettingsRepository`.
  */
 internal object AllwinnerSessionHolder {
+    private const val TAG = "Trafy.Allwinner"
     @Volatile var current: AllwinnerSession? = null
+    // Serialises concurrent reconnect attempts so two simultaneous dead-session
+    // detections don't race to open two fresh sockets.
+    private val reconnectMutex = Mutex()
 
     fun replace(new: AllwinnerSession?) {
         current?.close()
@@ -195,5 +227,24 @@ internal object AllwinnerSessionHolder {
     fun clear() {
         current?.close()
         current = null
+    }
+
+    /**
+     * Returns an alive session for [deviceIp], transparently reopening if the current
+     * one is dead or absent. Call sites that used to do
+     *   `AllwinnerSessionHolder.current ?: AllwinnerSession.open(ip).also { replace(it) }`
+     * should use this instead so they get auto-reconnect on stale TCP.
+     */
+    suspend fun requireAlive(deviceIp: String): AllwinnerSession? = reconnectMutex.withLock {
+        current?.takeIf { it.isAlive() }?.let { return@withLock it }
+        val stale = current
+        if (stale != null) {
+            Log.i(TAG, "requireAlive: current session is dead — reopening")
+            stale.close()
+            current = null
+        }
+        val fresh = AllwinnerSession.open(deviceIp) ?: return@withLock null
+        current = fresh
+        fresh
     }
 }

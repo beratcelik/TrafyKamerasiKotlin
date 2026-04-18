@@ -64,8 +64,7 @@ class RawSettingsViewModel : ViewModel() {
                     } else null
                 }
                 ChipsetProtocol.ALLWINNER_V853 -> {
-                    val session = AllwinnerSessionHolder.current
-                        ?: AllwinnerSession.open(ip)?.also { AllwinnerSessionHolder.replace(it) }
+                    val session = AllwinnerSessionHolder.requireAlive(ip)
                     if (session == null) {
                         Log.e(TAG, "No Allwinner session available @ $ip")
                         null

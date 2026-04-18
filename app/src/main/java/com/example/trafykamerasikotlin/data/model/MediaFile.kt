@@ -15,4 +15,8 @@ data class MediaFile(
     val thumbnailUrl: String,
     val name: String,
     val isPhoto: Boolean,
+    // Known file size in bytes when the protocol reports it (Allwinner getvideos).
+    // Null for chipsets that don't expose size in their listing; UI falls back to
+    // indeterminate progress.
+    val sizeBytes: Long? = null,
 )

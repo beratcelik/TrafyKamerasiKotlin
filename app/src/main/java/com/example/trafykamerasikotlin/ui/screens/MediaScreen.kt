@@ -43,6 +43,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
@@ -87,7 +90,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
+import com.example.trafykamerasikotlin.data.media.AllwinnerSdInfo
 import com.example.trafykamerasikotlin.data.media.MjpegRtspPlayer
+import com.example.trafykamerasikotlin.ui.components.AllwinnerFilePlayer
 
 @Composable
 fun MediaScreen(
@@ -95,17 +100,23 @@ fun MediaScreen(
     modifier: Modifier = Modifier,
     viewModel: MediaViewModel,
 ) {
-    val uiState          by viewModel.uiState.collectAsStateWithLifecycle()
-    val downloading      by viewModel.downloading.collectAsStateWithLifecycle()
-    val downloadProgress by viewModel.downloadProgress.collectAsStateWithLifecycle()
-    val playbackUri      by viewModel.playbackUri.collectAsStateWithLifecycle()
-    val preparingPlay    by viewModel.isPreparingPlayback.collectAsStateWithLifecycle()
+    val uiState              by viewModel.uiState.collectAsStateWithLifecycle()
+    val downloading          by viewModel.downloading.collectAsStateWithLifecycle()
+    val downloadProgress     by viewModel.downloadProgress.collectAsStateWithLifecycle()
+    val playbackUri          by viewModel.playbackUri.collectAsStateWithLifecycle()
+    val preparingPlay        by viewModel.isPreparingPlayback.collectAsStateWithLifecycle()
+    val allwinnerPlaybackUri by viewModel.allwinnerPlaybackUri.collectAsStateWithLifecycle()
+    val snackbarHostState    = remember { SnackbarHostState() }
 
     val context = LocalContext.current
 
     LaunchedEffect(device) {
         if (device != null) viewModel.load(device)
         else viewModel.onLeave() // ensure playback exits if user disconnected while on tab
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.userMessages.collect { msg -> snackbarHostState.showSnackbar(msg) }
     }
 
     DisposableEffect(Unit) {
@@ -127,6 +138,8 @@ fun MediaScreen(
             color    = ColorTextPrimary,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
         )
+
+        (uiState as? MediaUiState.Loaded)?.sdInfo?.let { sd -> SdUsageRow(sd) }
 
         when (val state = uiState) {
             is MediaUiState.NotConnected -> NotConnectedMediaContent()
@@ -185,6 +198,7 @@ fun MediaScreen(
                         downloading       = downloading,
                         downloadProgress  = downloadProgress,
                         onPlay            = { viewModel.playFile(it) },
+                        onPlayAllwinner   = { viewModel.startAllwinnerStream(it) },
                         onDownload        = { viewModel.download(it) },
                         onCancelDownload  = { viewModel.cancelDownload(it) },
                         onDelete          = { viewModel.delete(it) }
@@ -208,17 +222,68 @@ fun MediaScreen(
     playbackUri?.let { uri ->
         VideoPlayerOverlay(url = uri, onDismiss = { viewModel.clearPlaybackUri() })
     }
+
+    allwinnerPlaybackUri?.let { uri ->
+        AllwinnerPlaybackOverlay(url = uri, onDismiss = { viewModel.stopAllwinnerStream() })
+    }
+
+    SnackbarHost(
+        hostState = snackbarHostState,
+        modifier  = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+        snackbar  = { data ->
+            Snackbar(
+                containerColor = ColorSurface,
+                contentColor   = ColorTextPrimary,
+            ) { Text(data.visuals.message) }
+        }
+    )
     } // Box
+}
+
+@Composable
+private fun SdUsageRow(sd: AllwinnerSdInfo) {
+    val usedBytes = (sd.totalBytes - sd.freeBytes).coerceAtLeast(0L)
+    val usedGb  = usedBytes / 1_000_000_000f
+    val totalGb = sd.totalBytes / 1_000_000_000f
+    Text(
+        text     = "SD Kart: %.1f / %.1f GB".format(usedGb, totalGb),
+        style    = MaterialTheme.typography.labelMedium,
+        color    = ColorTextSecondary,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
+private fun AllwinnerPlaybackOverlay(url: String, onDismiss: () -> Unit) {
+    BackHandler(onBack = onDismiss)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
+        AllwinnerFilePlayer(fileUri = url, modifier = Modifier.align(Alignment.Center))
+        IconButton(
+            onClick  = onDismiss,
+            modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
+        ) {
+            Icon(
+                imageVector        = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Close",
+                tint               = Color.White
+            )
+        }
+    }
 }
 
 // ── Camera grouping helpers ─────────────────────────────────────────────────
 
 /**
- * Determines the camera channel of a video file from its filename suffix.
- *   _f  → Front  (single camera or multi-camera front)
- *   _b  → Back   (rear camera)
- *   _i  → Inside (third/inside camera)
- * Files without a recognised suffix are treated as Front (single-camera devices).
+ * Determines the camera channel of a video file from its filename.
+ * Suffix rules (HiDVR / Easytech / GeneralPlus) take precedence:
+ *   _f  → Front   _b  → Back   _i  → Inside
+ * Allwinner V853 uses a leading-letter convention instead:
+ *   `F…\.ts` → Front,  `B…\.ts` → Back
+ * Files without a recognised marker are treated as Front.
  */
 private fun cameraOf(file: MediaFile): String {
     val base = file.name.substringBeforeLast('.').lowercase()
@@ -226,6 +291,9 @@ private fun cameraOf(file: MediaFile): String {
         base.endsWith("_f") -> "Front"
         base.endsWith("_b") -> "Back"
         base.endsWith("_i") -> "Inside"
+        // Allwinner: leading 'F' / 'B' on .ts segments.
+        file.name.endsWith(".ts", ignoreCase = true) && file.name.firstOrNull() == 'F' -> "Front"
+        file.name.endsWith(".ts", ignoreCase = true) && file.name.firstOrNull() == 'B' -> "Back"
         else                -> "Front"
     }
 }
@@ -338,6 +406,7 @@ private fun MediaGrid(
     downloading: Set<String>,
     downloadProgress: Map<String, DownloadState>,
     onPlay: (MediaFile) -> Unit,
+    onPlayAllwinner: (MediaFile) -> Unit,
     onDownload: (MediaFile) -> Unit,
     onCancelDownload: (String) -> Unit,
     onDelete: (MediaFile) -> Unit,
@@ -387,12 +456,17 @@ private fun MediaGrid(
                             color   = ColorPrimary,
                             onClick = {
                                 actionTarget = null
-                                if (device?.protocol == ChipsetProtocol.GENERALPLUS) {
-                                    // GP: call StartPlayback over GPSOCKET first; the ViewModel
-                                    // will emit the RTSP URL via playbackUri when ready.
-                                    onPlay(file)
-                                } else {
-                                    playVideo(context, file.httpUrl)
+                                when (device?.protocol) {
+                                    ChipsetProtocol.GENERALPLUS -> {
+                                        // GP: call StartPlayback over GPSOCKET first; the ViewModel
+                                        // will emit the RTSP URL via playbackUri when ready.
+                                        onPlay(file)
+                                    }
+                                    ChipsetProtocol.ALLWINNER_V853 -> {
+                                        // Allwinner: buffer RTP2P to a temp .ts then play via IjkPlayer.
+                                        onPlayAllwinner(file)
+                                    }
+                                    else -> playVideo(context, file.httpUrl)
                                 }
                             }
                         )
@@ -420,17 +494,20 @@ private fun MediaGrid(
                             }
                         )
                     }
-                    HorizontalDivider(color = ColorDivider, thickness = 0.5.dp)
-                    // Delete
-                    DialogActionRow(
-                        icon    = Icons.Filled.Delete,
-                        label   = "Delete",
-                        color   = Color(0xFFE53935),
-                        onClick = {
-                            actionTarget = null
-                            deleteTarget = file
-                        }
-                    )
+                    // Delete — Allwinner firmware doesn't support deletion (the OEM app
+                    // has no delete button either), so we hide the option entirely.
+                    if (device?.protocol != ChipsetProtocol.ALLWINNER_V853) {
+                        HorizontalDivider(color = ColorDivider, thickness = 0.5.dp)
+                        DialogActionRow(
+                            icon    = Icons.Filled.Delete,
+                            label   = "Delete",
+                            color   = Color(0xFFE53935),
+                            onClick = {
+                                actionTarget = null
+                                deleteTarget = file
+                            }
+                        )
+                    }
                 }
             },
             confirmButton = {},

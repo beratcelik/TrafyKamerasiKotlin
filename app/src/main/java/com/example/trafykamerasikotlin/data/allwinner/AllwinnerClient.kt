@@ -71,6 +71,7 @@ internal class AllwinnerClient private constructor(
      * Cookie is auto-generated and NOT tracked — any response must be caught via [listenForPush].
      */
     suspend fun sendFrame(cmd: String, body: JSONObject) = withContext(Dispatchers.IO) {
+        if (closed) throw java.io.IOException("AllwinnerClient closed")
         val cookie = cookieSeq.getAndIncrement()
         val jsonBytes = body.toString().toByteArray(Charsets.UTF_8)
         val header = "$cmd:$cookie".toByteArray(Charsets.UTF_8)
@@ -93,6 +94,7 @@ internal class AllwinnerClient private constructor(
         body: JSONObject,
         timeoutMs: Long = 10_000L,
     ): JSONObject {
+        if (closed) throw java.io.IOException("AllwinnerClient closed")
         val cookie = cookieSeq.getAndIncrement()
         val deferred = CompletableDeferred<JSONObject>()
         pending[cookie] = deferred
@@ -123,7 +125,15 @@ internal class AllwinnerClient private constructor(
                     handleFrame(frame)
                 }
             } catch (e: Exception) {
-                if (!closed) Log.w(TAG, "reader loop ended: ${e.message}")
+                if (!closed) {
+                    Log.w(TAG, "reader loop ended: ${e.message} — marking client closed")
+                    // The TCP peer is gone (RST, timeout, wifi blip, etc). Mark closed so
+                    // subsequent writes fail fast instead of piling up "Broken pipe" errors
+                    // against a zombie socket. AllwinnerSessionHolder.requireAlive() will
+                    // then transparently reopen the session on the next operation.
+                    closed = true
+                    try { socket.close() } catch (_: Exception) {}
+                }
                 // Fail every pending request and push listener so callers don't hang forever.
                 pending.values.forEach { it.completeExceptionally(e) }
                 pending.clear()
@@ -132,6 +142,9 @@ internal class AllwinnerClient private constructor(
             }
         }
     }
+
+    /** True while the TCP socket and reader loop are healthy. Flips to false on any I/O death. */
+    fun isAlive(): Boolean = !closed
 
     private fun handleFrame(frame: ByteArray) {
         val text = try { String(frame, Charsets.UTF_8) } catch (_: Exception) {

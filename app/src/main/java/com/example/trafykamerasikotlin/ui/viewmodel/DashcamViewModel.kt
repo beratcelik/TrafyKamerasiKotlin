@@ -194,11 +194,23 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
             is HandshakeResult.Success -> {
                 Log.i(TAG, "Handshake SUCCESS: ${result.deviceInfo}")
                 _uiState.update { DashcamUiState.Connected(result.deviceInfo) }
+                wifiManager.startWatchingConnection(network) { onConnectionLost() }
             }
             is HandshakeResult.Failure -> {
                 Log.e(TAG, "Handshake FAILURE: ${result.reason}")
                 _uiState.update { DashcamUiState.Error(result.reason) }
             }
         }
+    }
+
+    /** Invoked by [DashcamWifiManager] when the dashcam Wi-Fi disappears unexpectedly. */
+    private fun onConnectionLost() {
+        Log.w(TAG, "onConnectionLost: dashcam Wi-Fi dropped — clearing bindings")
+        DashcamHttpClient.bindToNetwork(null)
+        GeneralplusSession.bindToNetwork(null)
+        AllwinnerNetwork.bindToNetwork(null)
+        AllwinnerSessionHolder.clear()
+        _connectedNetwork.update { null }
+        _uiState.update { DashcamUiState.Error(FailureReason.CONNECTION_LOST) }
     }
 }

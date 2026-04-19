@@ -54,6 +54,12 @@ class DashcamWifiManager(private val application: Application) {
 
     @Volatile private var activeCallback: ConnectivityManager.NetworkCallback? = null
 
+    /** Callback registered via [startWatchingConnection] to detect Wi-Fi loss after connect. */
+    @Volatile private var lossWatcher: ConnectivityManager.NetworkCallback? = null
+
+    /** Listener invoked exactly once when the watched Wi-Fi network goes away. */
+    @Volatile private var connectionLostListener: (() -> Unit)? = null
+
     // ── Public API ─────────────────────────────────────────────────────────────
 
     /**
@@ -126,10 +132,12 @@ class DashcamWifiManager(private val application: Application) {
     }
 
     /**
-     * Releases any active ConnectivityManager.NetworkCallback registered during connection.
-     * Must be called when the user disconnects. No-op on API 24-28.
+     * Releases any active ConnectivityManager.NetworkCallback registered during connection
+     * AND any passive loss watcher started via [startWatchingConnection].
+     * Must be called when the user disconnects. No-op on API 24-28 for the requestNetwork callback.
      */
     fun release() {
+        stopWatchingConnection()
         val cb = activeCallback ?: return
         val cm = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         try {
@@ -139,6 +147,61 @@ class DashcamWifiManager(private val application: Application) {
             Log.w(TAG, "release: callback was already unregistered")
         }
         activeCallback = null
+    }
+
+    /**
+     * Starts observing the Wi-Fi network for loss. Call after a successful handshake.
+     * Fires [listener] exactly once when:
+     *   - the bound [boundNetwork] (API 29+ specifier path) reports onLost, OR
+     *   - the system Wi-Fi transport reports onLost (legacy / already-connected fast path).
+     *
+     * Subsequent loss events are ignored until [startWatchingConnection] is called again.
+     * Calling this again replaces any previously-registered watcher.
+     */
+    fun startWatchingConnection(boundNetwork: Network?, listener: () -> Unit) {
+        stopWatchingConnection()
+        connectionLostListener = listener
+
+        val cm = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onLost(network: Network) {
+                if (boundNetwork != null && network != boundNetwork) {
+                    // Some other Wi-Fi went away — ignore.
+                    return
+                }
+                Log.w(TAG, "startWatchingConnection: onLost network=$network — dashcam Wi-Fi dropped")
+                val l = connectionLostListener
+                connectionLostListener = null  // single-shot
+                l?.invoke()
+            }
+        }
+
+        try {
+            cm.registerNetworkCallback(request, cb)
+            lossWatcher = cb
+            Log.i(TAG, "startWatchingConnection: registered (boundNetwork=$boundNetwork)")
+        } catch (e: SecurityException) {
+            Log.e(TAG, "startWatchingConnection: SecurityException, cannot register watcher", e)
+            connectionLostListener = null
+        }
+    }
+
+    /** Cancels any active loss watcher. Idempotent. */
+    fun stopWatchingConnection() {
+        connectionLostListener = null
+        val cb = lossWatcher ?: return
+        val cm = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        try {
+            cm.unregisterNetworkCallback(cb)
+            Log.i(TAG, "stopWatchingConnection: watcher unregistered")
+        } catch (e: IllegalArgumentException) {
+            // already unregistered
+        }
+        lossWatcher = null
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────

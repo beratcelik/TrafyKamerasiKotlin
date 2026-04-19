@@ -12,4 +12,5 @@ enum class FailureReason {
     NO_DASHCAM_FOUND,
     WIFI_PERMISSION_DENIED,
     WIFI_CONNECT_FAILED,
+    CONNECTION_LOST,
 }

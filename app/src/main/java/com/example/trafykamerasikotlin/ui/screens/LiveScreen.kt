@@ -8,16 +8,29 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults.SecondaryIndicator
@@ -31,6 +44,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -40,10 +56,13 @@ import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorDivider
 import com.example.trafykamerasikotlin.ui.theme.ColorNavBar
 import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
+import com.example.trafykamerasikotlin.ui.theme.ColorSurface
 import com.example.trafykamerasikotlin.ui.theme.ColorTextPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorTextSecondary
 import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
 import com.example.trafykamerasikotlin.data.media.MjpegRtspPlayer
+import com.example.trafykamerasikotlin.ui.viewmodel.CaptureKind
+import com.example.trafykamerasikotlin.ui.viewmodel.CaptureState
 import com.example.trafykamerasikotlin.ui.viewmodel.LiveUiState
 import com.example.trafykamerasikotlin.ui.viewmodel.LiveViewModel
 import tv.danmaku.ijk.media.player.IjkMediaPlayer
@@ -57,10 +76,16 @@ fun LiveScreen(
     viewModel: LiveViewModel = viewModel(),
     modifier: Modifier = Modifier,
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val uiState        by viewModel.uiState.collectAsStateWithLifecycle()
+    val captureState   by viewModel.captureState.collectAsStateWithLifecycle()
+    val snackbarHost   = remember { SnackbarHostState() }
 
     LaunchedEffect(device) {
         if (device != null) viewModel.startStream(device, network)
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.captureMessages.collect { msg -> snackbarHost.showSnackbar(msg) }
     }
 
     DisposableEffect(Unit) {
@@ -74,9 +99,14 @@ fun LiveScreen(
         contentAlignment = Alignment.Center
     ) {
         when (val state = uiState) {
-            is LiveUiState.NotConnected -> NotConnectedPlaceholder()
-            is LiveUiState.Preparing    -> PreparingPlaceholder()
-            is LiveUiState.Playing      -> {
+            is LiveUiState.NotConnected     -> NotConnectedPlaceholder()
+            is LiveUiState.Preparing        -> PreparingPlaceholder()
+            is LiveUiState.AllwinnerCapture -> AllwinnerCaptureView(
+                captureState = captureState,
+                onPhoto      = { viewModel.capturePhoto() },
+                onVideo      = { viewModel.captureVideo() },
+            )
+            is LiveUiState.Playing -> {
                 Column(modifier = Modifier.fillMaxSize()) {
                     // Video player — centered, width-constrained, 16:9 aspect ratio
                     Box(
@@ -100,6 +130,108 @@ fun LiveScreen(
                 }
             }
         }
+
+        SnackbarHost(
+            hostState = snackbarHost,
+            modifier  = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+            snackbar  = { data ->
+                Snackbar(
+                    containerColor = ColorSurface,
+                    contentColor   = ColorTextPrimary,
+                ) { Text(data.visuals.message) }
+            }
+        )
+    }
+}
+
+// ── Allwinner remote-capture view ───────────────────────────────────────────
+
+/**
+ * Standalone Live-tab view for Allwinner V853.
+ *
+ * Shows a "live stream coming soon" placeholder for now. The remote-capture wiring
+ * (LiveViewModel.capturePhoto/captureVideo + AllwinnerCaptureRepository) is kept
+ * intact but not surfaced here because the user wants capture to trigger only
+ * over mobile-internet (cloud path), not the dashcam's Wi-Fi. When the cloud
+ * implementation lands, the buttons come back here guarded by a connectivity check.
+ */
+@Suppress("UNUSED_PARAMETER")
+@Composable
+private fun AllwinnerCaptureView(
+    captureState: CaptureState,
+    onPhoto: () -> Unit,
+    onVideo: () -> Unit,
+) {
+    Column(
+        modifier            = Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Spacer(Modifier.height(60.dp))
+        Icon(
+            imageVector        = Icons.Filled.Videocam,
+            contentDescription = null,
+            tint               = ColorTextSecondary,
+            modifier           = Modifier.size(64.dp),
+        )
+        Text(
+            text      = "Canlı Yayın Yakında",
+            style     = MaterialTheme.typography.headlineSmall,
+            color     = ColorTextPrimary,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text      = "Allwinner kameralar için canlı yayın yakında eklenecek. Kayıtlara şimdilik Media sekmesinden ulaşabilirsiniz.",
+            style     = MaterialTheme.typography.bodyMedium,
+            color     = ColorTextSecondary,
+            textAlign = TextAlign.Center,
+            modifier  = Modifier.padding(horizontal = 12.dp),
+        )
+    }
+}
+
+@Composable
+private fun CaptureButton(
+    icon: ImageVector,
+    label: String,
+    loading: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier         = Modifier
+                .size(96.dp)
+                .background(
+                    color = if (enabled) ColorPrimary else ColorPrimary.copy(alpha = 0.35f),
+                    shape = CircleShape,
+                )
+                .clickable(enabled = enabled, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (loading) {
+                CircularProgressIndicator(
+                    color       = Color.White,
+                    strokeWidth = 3.dp,
+                    modifier    = Modifier.size(42.dp),
+                )
+            } else {
+                Icon(
+                    imageVector        = icon,
+                    contentDescription = label,
+                    tint               = Color.White,
+                    modifier           = Modifier.size(42.dp),
+                )
+            }
+        }
+        Text(
+            text  = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = ColorTextPrimary,
+        )
     }
 }
 

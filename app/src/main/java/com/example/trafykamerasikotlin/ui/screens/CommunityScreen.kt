@@ -27,7 +27,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.ui.components.TrafyTopBar
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorDivider
@@ -50,14 +52,14 @@ fun CommunityScreen(
             .fillMaxSize()
             .background(ColorBackground)
     ) {
-        TrafyTopBar(title = "Community", onBack = onBack)
+        TrafyTopBar(title = stringResource(R.string.community_title), onBack = onBack)
 
         Column(
             modifier            = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
-                text  = "Join our community and stay connected with fellow Trafy users.",
+                text  = stringResource(R.string.community_body),
                 style = MaterialTheme.typography.bodyMedium,
                 color = ColorTextSecondary
             )

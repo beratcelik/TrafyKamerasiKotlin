@@ -1,5 +1,6 @@
 package com.example.trafykamerasikotlin.ui.navigation
 
+import android.content.res.Configuration
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -14,6 +15,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -61,7 +64,15 @@ fun AppNavigation() {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
-    val showBottomNav = currentDestination?.route in bottomNavRoutes
+    // Fullscreen video chrome: on the Live tab (always) and on the Media tab
+    // while a playback overlay has forced the activity into landscape, collapse
+    // the bottom nav so the video owns the whole screen. Tilting back to
+    // portrait restores everything; the overlays also handle system back.
+    val isLandscape   = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val onLiveRoute   = currentDestination?.route == BottomNavItem.Live.route
+    val onMediaRoute  = currentDestination?.route == BottomNavItem.Media.route
+    val fullscreenTab = onLiveRoute || onMediaRoute
+    val showBottomNav = currentDestination?.route in bottomNavRoutes && !(isLandscape && fullscreenTab)
 
     Scaffold(
         containerColor = ColorBackground,
@@ -79,6 +90,7 @@ fun AppNavigation() {
                         BottomNavItem.all.forEach { item ->
                             val selected =
                                 currentDestination?.hierarchy?.any { it.route == item.route } == true
+                            val label = stringResource(item.labelRes)
                             NavigationBarItem(
                                 selected = selected,
                                 onClick  = {
@@ -93,12 +105,12 @@ fun AppNavigation() {
                                 icon     = {
                                     Icon(
                                         imageVector        = item.icon,
-                                        contentDescription = item.label
+                                        contentDescription = label
                                     )
                                 },
                                 label    = {
                                     Text(
-                                        text  = item.label,
+                                        text  = label,
                                         style = MaterialTheme.typography.labelSmall
                                     )
                                 },
@@ -141,7 +153,7 @@ fun AppNavigation() {
                 LiveScreen(device = connectedDevice, network = connectedNetwork, viewModel = liveViewModel)
             }
             composable(BottomNavItem.Media.route) {
-                MediaScreen(device = connectedDevice, viewModel = mediaViewModel)
+                MediaScreen(device = connectedDevice, network = connectedNetwork, viewModel = mediaViewModel)
             }
             composable(BottomNavItem.Settings.route) {
                 SettingsScreen(

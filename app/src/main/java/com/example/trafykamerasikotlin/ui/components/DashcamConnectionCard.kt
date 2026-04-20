@@ -23,7 +23,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.ui.theme.ColorDestructive
 import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorSuccess
@@ -81,13 +83,13 @@ fun DashcamConnectionCard(
 private fun ScanningState() {
     Icon(
         imageVector        = Icons.Filled.Wifi,
-        contentDescription = "Scanning",
+        contentDescription = stringResource(R.string.connection_scanning_cd),
         tint               = ColorTextSecondary,
         modifier           = Modifier.size(52.dp)
     )
     Spacer(modifier = Modifier.height(4.dp))
     Text(
-        text      = "Scanning for Trafy Kamerası networks…",
+        text      = stringResource(R.string.connection_scanning_title),
         style     = MaterialTheme.typography.titleLarge,
         color     = ColorTextPrimary,
         textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -100,7 +102,7 @@ private fun ScanningState() {
         color       = ColorPrimary,
     )
     Text(
-        text  = "Searching for nearby Trafy Kamerası WiFi hotspots",
+        text  = stringResource(R.string.connection_scanning_body),
         style = MaterialTheme.typography.bodySmall,
         color = ColorTextSecondary
     )
@@ -113,18 +115,18 @@ private fun NetworkSelectionState(
 ) {
     Icon(
         imageVector        = Icons.Filled.Wifi,
-        contentDescription = "WiFi",
+        contentDescription = stringResource(R.string.connection_wifi_cd),
         tint               = ColorPrimary,
         modifier           = Modifier.size(52.dp)
     )
     Spacer(modifier = Modifier.height(4.dp))
     Text(
-        text  = "Multiple Trafy Kamerası devices found",
+        text  = stringResource(R.string.connection_multi_found_title),
         style = MaterialTheme.typography.titleLarge,
         color = ColorTextPrimary
     )
     Text(
-        text  = "Select which Trafy Kamerası to connect:",
+        text  = stringResource(R.string.connection_multi_found_body),
         style = MaterialTheme.typography.bodyMedium,
         color = ColorTextSecondary
     )
@@ -153,13 +155,13 @@ private fun DisconnectedState(
 ) {
     Icon(
         imageVector        = Icons.Filled.Wifi,
-        contentDescription = "WiFi",
+        contentDescription = stringResource(R.string.connection_wifi_cd),
         tint               = ColorTextSecondary,
         modifier           = Modifier.size(52.dp)
     )
     Spacer(modifier = Modifier.height(4.dp))
     Text(
-        text  = "Connect to Trafy Kamerası",
+        text  = stringResource(R.string.connection_disconnected_title),
         style = MaterialTheme.typography.titleLarge,
         color = ColorTextPrimary
     )
@@ -178,7 +180,7 @@ private fun DisconnectedState(
             )
         } else {
             Text(
-                text     = "Connect",
+                text     = stringResource(R.string.connection_button_connect),
                 style    = MaterialTheme.typography.titleMedium,
                 color    = ColorTextPrimary,
                 modifier = Modifier.padding(vertical = 4.dp)
@@ -186,7 +188,10 @@ private fun DisconnectedState(
         }
     }
     Text(
-        text  = if (isConnecting) "Connecting to Trafy Kamerası…" else "Tap to scan for nearby Trafy Kamerası networks",
+        text  = stringResource(
+            if (isConnecting) R.string.connection_connecting_hint
+            else R.string.connection_tap_hint
+        ),
         style = MaterialTheme.typography.bodySmall,
         color = ColorTextSecondary
     )
@@ -200,7 +205,7 @@ private fun ConnectedState(
 ) {
     Icon(
         imageVector        = Icons.Filled.CheckCircle,
-        contentDescription = "Connected",
+        contentDescription = stringResource(R.string.connection_connected_cd),
         tint               = ColorSuccess,
         modifier           = Modifier.size(52.dp)
     )
@@ -211,7 +216,7 @@ private fun ConnectedState(
         color = ColorTextPrimary
     )
     Text(
-        text  = "Connected",
+        text  = stringResource(R.string.connection_connected_label),
         style = MaterialTheme.typography.bodyMedium,
         color = ColorSuccess
     )
@@ -222,7 +227,7 @@ private fun ConnectedState(
         modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
     ) {
         Text(
-            text  = "Open Live View",
+            text  = stringResource(R.string.connection_button_live_view),
             style = MaterialTheme.typography.titleMedium,
             color = ColorTextPrimary,
             modifier = Modifier.padding(vertical = 4.dp)
@@ -230,7 +235,7 @@ private fun ConnectedState(
     }
     TextButton(onClick = onDisconnect) {
         Text(
-            text  = "Disconnect",
+            text  = stringResource(R.string.connection_button_disconnect),
             style = MaterialTheme.typography.bodyMedium,
             color = ColorDestructive
         )

@@ -35,10 +35,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
@@ -77,7 +79,7 @@ fun RawSettingsScreen(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text  = "Raw Settings Dump",
+                text  = stringResource(R.string.raw_title),
                 style = MaterialTheme.typography.headlineMedium,
                 color = ColorTextPrimary
             )
@@ -88,7 +90,11 @@ fun RawSettingsScreen(
                     colors  = ButtonDefaults.buttonColors(containerColor = ColorPrimary),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                 ) {
-                    Text("Copy All", color = ColorTextPrimary, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text  = stringResource(R.string.raw_copy_all),
+                        color = ColorTextPrimary,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
         }
@@ -102,7 +108,7 @@ fun RawSettingsScreen(
                     ) {
                         CircularProgressIndicator(color = ColorPrimary)
                         Text(
-                            text  = "Fetching raw settings…",
+                            text  = stringResource(R.string.raw_loading),
                             style = MaterialTheme.typography.bodyMedium,
                             color = ColorTextSecondary
                         )
@@ -123,7 +129,7 @@ fun RawSettingsScreen(
                             modifier           = Modifier.size(52.dp)
                         )
                         Text(
-                            text  = "Failed to fetch raw settings.\nMake sure the device is still connected.",
+                            text  = stringResource(R.string.raw_error),
                             style = MaterialTheme.typography.bodyMedium,
                             color = ColorTextSecondary
                         )
@@ -133,7 +139,10 @@ fun RawSettingsScreen(
                                 shape   = RoundedCornerShape(12.dp),
                                 colors  = ButtonDefaults.buttonColors(containerColor = ColorPrimary)
                             ) {
-                                Text("Retry", color = ColorTextPrimary)
+                                Text(
+                                    text  = stringResource(R.string.common_retry),
+                                    color = ColorTextPrimary
+                                )
                             }
                         }
                     }

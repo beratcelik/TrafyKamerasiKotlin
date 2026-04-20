@@ -12,7 +12,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorTextPrimary
 
@@ -31,7 +33,7 @@ fun TrafyTopBar(
         IconButton(onClick = onBack) {
             Icon(
                 imageVector        = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
+                contentDescription = stringResource(R.string.common_back_cd),
                 tint               = ColorPrimary
             )
         }

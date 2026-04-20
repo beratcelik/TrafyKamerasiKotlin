@@ -52,17 +52,21 @@ sealed class MediaUiState {
         // Non-null only for chipsets that report SD-card capacity (Allwinner).
         val sdInfo: AllwinnerSdInfo? = null,
     ) : MediaUiState()
-    data class Error(val message: String) : MediaUiState()
+    data object Error : MediaUiState()
+}
+
+/** Transient user-facing message kinds. Resolved to localized strings in MediaScreen. */
+sealed class MediaUserMessage {
+    data object PlaybackFailed : MediaUserMessage()
+    data object DownloadFailed : MediaUserMessage()
+    data object BusyPlayback   : MediaUserMessage()
+    data class  DownloadComplete(val filename: String) : MediaUserMessage()
 }
 
 class MediaViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val TAG = "Trafy.MediaVM"
-
-        const val MSG_PLAYBACK_FAILED = "Video oynatılamadı"
-        const val MSG_DOWNLOAD_FAILED = "Video indirilemedi"
-        const val MSG_BUSY_PLAYBACK   = "Önce oynatmayı kapatın"
 
         // Emit the Allwinner playback URI once we have ~512 KB or 2 s of buffered data.
         const val BUFFERED_EMIT_BYTES     = 512L * 1024L
@@ -113,9 +117,9 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     private val _allwinnerPlaybackUri = MutableStateFlow<String?>(null)
     val allwinnerPlaybackUri: StateFlow<String?> = _allwinnerPlaybackUri
 
-    /** Transient user-facing messages (Turkish) shown via Snackbar in MediaScreen. */
-    private val _userMessages = MutableSharedFlow<String>(extraBufferCapacity = 4)
-    val userMessages: SharedFlow<String> = _userMessages.asSharedFlow()
+    /** Transient user-facing message kinds; MediaScreen resolves each to a localized string. */
+    private val _userMessages = MutableSharedFlow<MediaUserMessage>(extraBufferCapacity = 4)
+    val userMessages: SharedFlow<MediaUserMessage> = _userMessages.asSharedFlow()
 
     // Allwinner playback stream lifecycle — at most one active at a time since the
     // device's RTP2P channel is single-stream (see PCAP; all observed playback was
@@ -158,7 +162,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                 _uiState.value = MediaUiState.Loaded(videos, photos, sdInfo)
             } catch (e: Exception) {
                 Log.e(TAG, "load failed: ${e.message}")
-                _uiState.value = MediaUiState.Error("Failed to load media: ${e.message}")
+                _uiState.value = MediaUiState.Error
             }
         }
     }
@@ -256,6 +260,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                 MediaScannerConnection.scanFile(
                     getApplication(), arrayOf(outFile.absolutePath), null, null
                 )
+                _userMessages.emit(MediaUserMessage.DownloadComplete(file.name))
             } catch (e: CancellationException) {
                 Log.i(TAG, "download cancelled: ${file.name}")
                 throw e                          // re-throw so the coroutine cancels properly
@@ -311,6 +316,10 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         val device = loadedDevice ?: return
         Log.d(TAG, "onLeave: for ${device.protocol.deviceIp}")
         viewModelScope.launch { leavePlayback(device) }
+        // Invalidate the cached file list so the next visit re-probes the camera.
+        // Other tabs (Live switching camera channels, Settings changing modes) can
+        // mutate device state between visits — cheaper to re-fetch than stay stale.
+        loadedDevice = null
     }
 
     // ── Repository dispatch ────────────────────────────────────────────────
@@ -381,7 +390,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         val device = loadedDevice ?: return
         if (device.protocol != ChipsetProtocol.ALLWINNER_V853) return
         if (allwinnerStreamActive) {
-            viewModelScope.launch { _userMessages.emit(MSG_BUSY_PLAYBACK) }
+            viewModelScope.launch { _userMessages.emit(MediaUserMessage.BusyPlayback) }
             return
         }
         allwinnerStreamActive = true
@@ -401,7 +410,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                     progress = null,
                 )
                 if (!ok && _allwinnerPlaybackUri.value == null) {
-                    _userMessages.emit(MSG_PLAYBACK_FAILED)
+                    _userMessages.emit(MediaUserMessage.PlaybackFailed)
                 }
             } finally {
                 // Reset the single-stream guard so the user can retry. stopAllwinnerStream
@@ -425,7 +434,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     private fun downloadAllwinner(file: MediaFile) {
         val device = loadedDevice ?: return
         if (allwinnerStreamActive) {
-            viewModelScope.launch { _userMessages.emit(MSG_BUSY_PLAYBACK) }
+            viewModelScope.launch { _userMessages.emit(MediaUserMessage.BusyPlayback) }
             return
         }
         allwinnerStreamActive = true
@@ -472,12 +481,13 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                 MediaScannerConnection.scanFile(
                     getApplication(), arrayOf(outFile.absolutePath), null, null
                 )
+                _userMessages.emit(MediaUserMessage.DownloadComplete(file.name))
             } catch (e: CancellationException) {
                 Log.i(TAG, "downloadAllwinner cancelled: ${file.name}")
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "downloadAllwinner failed: ${e.message}")
-                _userMessages.emit(MSG_DOWNLOAD_FAILED)
+                _userMessages.emit(MediaUserMessage.DownloadFailed)
             } finally {
                 _downloading.value      = _downloading.value - file.name
                 _downloadProgress.value = _downloadProgress.value - file.name

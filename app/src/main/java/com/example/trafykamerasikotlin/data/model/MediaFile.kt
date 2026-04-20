@@ -19,4 +19,9 @@ data class MediaFile(
     // Null for chipsets that don't expose size in their listing; UI falls back to
     // indeterminate progress.
     val sizeBytes: Long? = null,
+    // Camera channel derived from the source SD-card directory: "Front", "Back",
+    // "Inside", or null when unknown. Populated for chipsets whose dir-capability
+    // response unambiguously identifies the channel (dual-cam HiDVR); filename
+    // suffix rules (_f/_b/_i) are the fallback when this is null.
+    val cameraHint: String? = null,
 )

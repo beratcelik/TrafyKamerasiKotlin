@@ -82,6 +82,9 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     val captureMessages: SharedFlow<String> = _captureMessages.asSharedFlow()
 
     private var loadedDevice: DeviceInfo? = null
+    // HiDVR camera channel keys in the order the user sees them in the tab bar;
+    // each key maps to a camid via [hiDvrCamid] when we call getcamchnl.cgi.
+    private var hiDvrCameraKeys: List<String> = emptyList()
 
     // ── Public API ─────────────────────────────────────────────────────────
 
@@ -138,31 +141,65 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                     hiDvrRepo.stopRecording(ip)
                     delay(1_000)   // give camera time to release encoder before RTSP
                     hiDvrRepo.registerClient(ip, device.clientIp)
+                    val cameraKeys = hiDvrRepo.discoverCameras(ip)
+                    hiDvrRepo.selectLiveCamera(ip, hiDvrCamid(cameraKeys.first()))
+                    // Only surface the camera tab bar when there's something to switch to.
+                    val cameras = if (cameraKeys.size > 1) cameraKeys.map { hiDvrCameraLabel(it) } else emptyList()
                     val rtspUrl = "rtsp://$ip:554/livestream/1"
-                    Log.i(TAG, "startStream: HiDVR ready → $rtspUrl")
-                    _uiState.value = LiveUiState.Playing(rtspUrl = rtspUrl)
+                    Log.i(TAG, "startStream: HiDVR ready → $rtspUrl, cameras=$cameras")
+                    _uiState.value = LiveUiState.Playing(
+                        rtspUrl        = rtspUrl,
+                        cameras        = cameras,
+                        selectedCamera = 0,
+                    )
+                    hiDvrCameraKeys = cameraKeys
                 }
             }
         }
     }
 
     /**
-     * Switches the Easytech live stream to [cameraIndex].
-     * No-op for HiDVR or single-camera devices.
+     * Switches the live stream to the lens at [cameraIndex].
+     * Easytech switches via a dedicated CGI; HiDVR re-routes the /livestream/1
+     * output via getcamchnl.cgi. Other chipsets are no-ops.
      */
     fun switchCamera(cameraIndex: Int) {
         val device  = loadedDevice ?: return
-        if (device.protocol != ChipsetProtocol.EEASYTECH) return
         val current = _uiState.value as? LiveUiState.Playing ?: return
         if (cameraIndex == current.selectedCamera) return
+        val ip = device.protocol.deviceIp
         viewModelScope.launch {
-            val ok = eeasyRepo.switchCamera(device.protocol.deviceIp, cameraIndex)
+            val ok = when (device.protocol) {
+                ChipsetProtocol.EEASYTECH -> eeasyRepo.switchCamera(ip, cameraIndex)
+                ChipsetProtocol.GENERALPLUS, ChipsetProtocol.ALLWINNER_V853 -> false
+                else -> {
+                    val key = hiDvrCameraKeys.getOrNull(cameraIndex) ?: return@launch
+                    hiDvrRepo.selectLiveCamera(ip, hiDvrCamid(key))
+                }
+            }
             if (ok) {
                 Log.i(TAG, "switchCamera: now on index $cameraIndex")
                 _uiState.value = current.copy(selectedCamera = cameraIndex)
             }
         }
     }
+
+    /** Maps a HiDVR camera-channel key to the camid expected by getcamchnl.cgi. */
+    private fun hiDvrCamid(key: String): Int = when (key) {
+        "Front"  -> 0
+        "Back"   -> 1
+        "Inside" -> 2
+        else     -> 0
+    }
+
+    /** Localized label for a HiDVR camera channel — reuses the Media tab strings. */
+    private fun hiDvrCameraLabel(key: String): String = getApplication<Application>().getString(
+        when (key) {
+            "Back"   -> com.example.trafykamerasikotlin.R.string.media_tab_back
+            "Inside" -> com.example.trafykamerasikotlin.R.string.media_tab_inside
+            else     -> com.example.trafykamerasikotlin.R.string.media_tab_front
+        }
+    )
 
     fun onLeave() {
         val device = loadedDevice ?: return

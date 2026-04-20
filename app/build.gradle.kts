@@ -37,6 +37,9 @@ android {
     buildFeatures {
         compose = true
     }
+    androidResources {
+        localeFilters += listOf("en", "tr")
+    }
 }
 
 dependencies {

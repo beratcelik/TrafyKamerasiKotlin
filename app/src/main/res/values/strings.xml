@@ -1,3 +1,138 @@
 <resources>
     <string name="app_name">Trafy Kamerası</string>
+
+    <!-- Common -->
+    <string name="common_cancel">Cancel</string>
+    <string name="common_ok">OK</string>
+    <string name="common_save">Save</string>
+    <string name="common_retry">Retry</string>
+    <string name="common_apply">Apply</string>
+    <string name="common_delete">Delete</string>
+    <string name="common_confirm">Confirm</string>
+    <string name="common_back_cd">Back</string>
+    <string name="common_close_cd">Close</string>
+    <string name="common_selected_cd">Selected</string>
+    <string name="common_password_show_cd">Show password</string>
+    <string name="common_password_hide_cd">Hide password</string>
+    <string name="common_not_connected_title">Not connected</string>
+
+    <!-- Bottom navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_live">Live</string>
+    <string name="nav_media">Media</string>
+    <string name="nav_settings">Settings</string>
+    <string name="nav_more">More</string>
+
+    <!-- Home -->
+    <string name="home_tagline">Your Journey, Protected</string>
+    <string name="home_default_device_name">Dashcam</string>
+    <string name="home_shortcut_shop">Shop</string>
+    <string name="home_shortcut_community">Community</string>
+    <string name="home_shortcut_support">Support</string>
+
+    <!-- Dashcam connection card -->
+    <string name="connection_scanning_title">Scanning for Trafy Kamerası networks…</string>
+    <string name="connection_scanning_body">Searching for nearby Trafy Kamerası WiFi hotspots</string>
+    <string name="connection_multi_found_title">Multiple Trafy Kamerası devices found</string>
+    <string name="connection_multi_found_body">Select which Trafy Kamerası to connect:</string>
+    <string name="connection_disconnected_title">Connect to Trafy Kamerası</string>
+    <string name="connection_connecting_hint">Connecting to Trafy Kamerası…</string>
+    <string name="connection_tap_hint">Tap to scan for nearby Trafy Kamerası networks</string>
+    <string name="connection_button_connect">Connect</string>
+    <string name="connection_button_live_view">Open Live View</string>
+    <string name="connection_button_disconnect">Disconnect</string>
+    <string name="connection_connected_label">Connected</string>
+    <string name="connection_scanning_cd">Scanning</string>
+    <string name="connection_wifi_cd">Wi-Fi</string>
+    <string name="connection_connected_cd">Connected</string>
+
+    <!-- Live -->
+    <string name="live_view_cd">Live view</string>
+    <string name="live_not_connected_title">Live View</string>
+    <string name="live_not_connected_body">Connect to your dashcam to start streaming</string>
+    <string name="live_preparing">Preparing stream…</string>
+    <string name="live_coming_soon_title">Live stream coming soon</string>
+    <string name="live_coming_soon_body">Live streaming for Allwinner cameras is coming soon. You can still access recordings from the Media tab.</string>
+
+    <!-- Media -->
+    <string name="media_title">Media</string>
+    <string name="media_not_connected_body">Connect to your dashcam on the Home screen first</string>
+    <string name="media_loading">Loading media files…</string>
+    <string name="media_load_failed">Could not load media files</string>
+    <string name="media_empty_photos">No photos captured</string>
+    <string name="media_empty_videos">No videos recorded</string>
+    <string name="media_tab_front">Front</string>
+    <string name="media_tab_back">Back</string>
+    <string name="media_tab_inside">Inside</string>
+    <string name="media_tab_photos">Photos</string>
+    <string name="media_sd_usage_fmt">SD card: %1$.1f / %2$.1f GB</string>
+    <string name="media_action_play">Play</string>
+    <string name="media_action_view">View</string>
+    <string name="media_action_download">Download</string>
+    <string name="media_action_cancel_download">Cancel Download</string>
+    <string name="media_dialog_delete_title">Delete file?</string>
+    <string name="media_downloading_indeterminate">Downloading…</string>
+    <string name="media_download_progress_fmt">Downloading %1$d%%  •  %2$.1f MB/s</string>
+    <string name="media_download_size_fmt">%1$.1f / %2$.1f MB</string>
+    <string name="media_error_playback_failed">Video playback failed</string>
+    <string name="media_error_download_failed">Video download failed</string>
+    <string name="media_error_busy_playback">Close playback first</string>
+    <string name="media_download_complete_fmt">Saved to Downloads: %1$s</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_not_connected_body">Connect to your Trafy Kamerası on the Home screen first</string>
+    <string name="settings_loading">Loading camera settings…</string>
+    <string name="settings_load_failed">Could not load camera settings</string>
+    <string name="settings_applying">Applying setting…</string>
+    <string name="settings_raw_dump_button">Raw Settings Dump</string>
+    <string name="settings_result_title">Result</string>
+    <string name="settings_destructive_body">This action cannot be undone. Are you sure?</string>
+    <string name="settings_imei_copy_cd">Copy</string>
+
+    <!-- Settings — Wi-Fi dialog -->
+    <string name="settings_wifi_dialog_title">Wi-Fi Settings</string>
+    <string name="settings_wifi_dialog_error">Could not load Wi-Fi settings.</string>
+    <string name="settings_wifi_ssid_label">Network Name (SSID)</string>
+    <string name="settings_wifi_password_label">Password</string>
+    <string name="settings_wifi_hint">Minimum 8 characters. You\'ll need to reconnect after changing.</string>
+
+    <!-- Settings — APN dialog -->
+    <string name="settings_apn_dialog_title">APN Configuration</string>
+    <string name="settings_apn_dialog_error">APN could not be saved. Check the connection.</string>
+    <string name="settings_apn_label">APN</string>
+    <string name="settings_apn_user_label">Username</string>
+    <string name="settings_apn_password_label">Password</string>
+    <string name="settings_apn_hint">APN can be left blank. Changes may restart the device.</string>
+
+    <!-- Settings — action feedback -->
+    <string name="settings_feedback_format_ok">SD card formatting started. Camera will be ready in a moment.</string>
+    <string name="settings_feedback_reset_ok">Factory reset initiated. Camera will restart.</string>
+    <string name="settings_feedback_generic_ok">Done.</string>
+    <string name="settings_feedback_generic_fail">Action failed — check device connection.</string>
+    <string name="settings_feedback_wifi_saved">Wi-Fi password updated. Reconnect with the new password.</string>
+    <string name="settings_feedback_apn_saved">APN updated.</string>
+
+    <!-- Raw settings -->
+    <string name="raw_title">Raw Settings Dump</string>
+    <string name="raw_copy_all">Copy All</string>
+    <string name="raw_loading">Fetching raw settings…</string>
+    <string name="raw_error">Failed to fetch raw settings.\nMake sure the device is still connected.</string>
+
+    <!-- Community -->
+    <string name="community_title">Community</string>
+    <string name="community_body">Join our community and stay connected with fellow Trafy users.</string>
+
+    <!-- Shop -->
+    <string name="shop_title">Shop</string>
+    <string name="shop_section_dashcams">Dashcams</string>
+    <string name="shop_section_sd_cards">Micro SD Cards</string>
+    <string name="shop_product_view">View</string>
+
+    <!-- More -->
+    <string name="more_title">More</string>
+    <string name="more_shop_title">Shop</string>
+    <string name="more_shop_desc">Dashcams, SD cards &amp; accessories</string>
+    <string name="more_community_title">Community</string>
+    <string name="more_community_desc">Telegram, Instagram &amp; support</string>
 </resources>

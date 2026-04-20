@@ -1,0 +1,138 @@
+<resources>
+    <string name="app_name">Trafy Kamerası</string>
+
+    <!-- Ortak -->
+    <string name="common_cancel">İptal</string>
+    <string name="common_ok">Tamam</string>
+    <string name="common_save">Kaydet</string>
+    <string name="common_retry">Tekrar Dene</string>
+    <string name="common_apply">Uygula</string>
+    <string name="common_delete">Sil</string>
+    <string name="common_confirm">Onayla</string>
+    <string name="common_back_cd">Geri</string>
+    <string name="common_close_cd">Kapat</string>
+    <string name="common_selected_cd">Seçildi</string>
+    <string name="common_password_show_cd">Şifreyi göster</string>
+    <string name="common_password_hide_cd">Şifreyi gizle</string>
+    <string name="common_not_connected_title">Bağlı değil</string>
+
+    <!-- Alt menü -->
+    <string name="nav_home">Ana Sayfa</string>
+    <string name="nav_live">Canlı</string>
+    <string name="nav_media">Medya</string>
+    <string name="nav_settings">Ayarlar</string>
+    <string name="nav_more">Diğer</string>
+
+    <!-- Ana sayfa -->
+    <string name="home_tagline">Yolculuğunuz Güvende</string>
+    <string name="home_default_device_name">Araç Kamerası</string>
+    <string name="home_shortcut_shop">Mağaza</string>
+    <string name="home_shortcut_community">Topluluk</string>
+    <string name="home_shortcut_support">Destek</string>
+
+    <!-- Bağlantı kartı -->
+    <string name="connection_scanning_title">Trafy Kamerası ağları aranıyor…</string>
+    <string name="connection_scanning_body">Yakındaki Trafy Kamerası Wi-Fi noktaları aranıyor</string>
+    <string name="connection_multi_found_title">Birden fazla Trafy Kamerası bulundu</string>
+    <string name="connection_multi_found_body">Bağlanmak istediğiniz Trafy Kamerası\'nı seçin:</string>
+    <string name="connection_disconnected_title">Trafy Kamerası\'na Bağlan</string>
+    <string name="connection_connecting_hint">Trafy Kamerası\'na bağlanılıyor…</string>
+    <string name="connection_tap_hint">Yakındaki Trafy Kamerası ağlarını aramak için dokunun</string>
+    <string name="connection_button_connect">Bağlan</string>
+    <string name="connection_button_live_view">Canlı Görüntüyü Aç</string>
+    <string name="connection_button_disconnect">Bağlantıyı Kes</string>
+    <string name="connection_connected_label">Bağlandı</string>
+    <string name="connection_scanning_cd">Aranıyor</string>
+    <string name="connection_wifi_cd">Wi-Fi</string>
+    <string name="connection_connected_cd">Bağlandı</string>
+
+    <!-- Canlı -->
+    <string name="live_view_cd">Canlı görüntü</string>
+    <string name="live_not_connected_title">Canlı Görüntü</string>
+    <string name="live_not_connected_body">Yayına başlamak için araç kameranıza bağlanın</string>
+    <string name="live_preparing">Yayın hazırlanıyor…</string>
+    <string name="live_coming_soon_title">Canlı Yayın Yakında</string>
+    <string name="live_coming_soon_body">Allwinner kameralar için canlı yayın yakında eklenecek. Kayıtlara şimdilik Media sekmesinden ulaşabilirsiniz.</string>
+
+    <!-- Medya -->
+    <string name="media_title">Medya</string>
+    <string name="media_not_connected_body">Önce Ana Sayfa\'dan araç kameranıza bağlanın</string>
+    <string name="media_loading">Medya dosyaları yükleniyor…</string>
+    <string name="media_load_failed">Medya dosyaları yüklenemedi</string>
+    <string name="media_empty_photos">Henüz fotoğraf çekilmedi</string>
+    <string name="media_empty_videos">Henüz video kaydedilmedi</string>
+    <string name="media_tab_front">Ön</string>
+    <string name="media_tab_back">Arka</string>
+    <string name="media_tab_inside">İç</string>
+    <string name="media_tab_photos">Fotoğraflar</string>
+    <string name="media_sd_usage_fmt">SD Kart: %1$.1f / %2$.1f GB</string>
+    <string name="media_action_play">Oynat</string>
+    <string name="media_action_view">Görüntüle</string>
+    <string name="media_action_download">İndir</string>
+    <string name="media_action_cancel_download">İndirmeyi İptal Et</string>
+    <string name="media_dialog_delete_title">Dosya silinsin mi?</string>
+    <string name="media_downloading_indeterminate">İndiriliyor…</string>
+    <string name="media_download_progress_fmt">İndiriliyor %1$d%%  •  %2$.1f MB/s</string>
+    <string name="media_download_size_fmt">%1$.1f / %2$.1f MB</string>
+    <string name="media_error_playback_failed">Video oynatılamadı</string>
+    <string name="media_error_download_failed">Video indirilemedi</string>
+    <string name="media_error_busy_playback">Önce oynatmayı kapatın</string>
+    <string name="media_download_complete_fmt">İndirilenlere kaydedildi: %1$s</string>
+
+    <!-- Ayarlar -->
+    <string name="settings_title">Ayarlar</string>
+    <string name="settings_not_connected_body">Önce Ana Sayfa\'dan Trafy Kamerası\'na bağlanın</string>
+    <string name="settings_loading">Kamera ayarları yükleniyor…</string>
+    <string name="settings_load_failed">Kamera ayarları yüklenemedi</string>
+    <string name="settings_applying">Ayar uygulanıyor…</string>
+    <string name="settings_raw_dump_button">Ham Ayarlar Dökümü</string>
+    <string name="settings_result_title">Sonuç</string>
+    <string name="settings_destructive_body">Bu işlem geri alınamaz. Emin misiniz?</string>
+    <string name="settings_imei_copy_cd">Kopyala</string>
+
+    <!-- Ayarlar — Wi-Fi penceresi -->
+    <string name="settings_wifi_dialog_title">Wi-Fi Ayarları</string>
+    <string name="settings_wifi_dialog_error">Wi-Fi ayarları yüklenemedi.</string>
+    <string name="settings_wifi_ssid_label">Ağ Adı (SSID)</string>
+    <string name="settings_wifi_password_label">Şifre</string>
+    <string name="settings_wifi_hint">En az 8 karakter. Değiştirdikten sonra yeniden bağlanmanız gerekir.</string>
+
+    <!-- Ayarlar — APN penceresi -->
+    <string name="settings_apn_dialog_title">APN Yapılandırması</string>
+    <string name="settings_apn_dialog_error">APN kaydedilemedi. Bağlantıyı kontrol edin.</string>
+    <string name="settings_apn_label">APN</string>
+    <string name="settings_apn_user_label">Kullanıcı Adı</string>
+    <string name="settings_apn_password_label">Şifre</string>
+    <string name="settings_apn_hint">APN boş bırakılabilir. Değişiklikler cihazı yeniden başlatabilir.</string>
+
+    <!-- Ayarlar — işlem geri bildirimi -->
+    <string name="settings_feedback_format_ok">SD kart formatlama başladı. Kamera birazdan hazır olacak.</string>
+    <string name="settings_feedback_reset_ok">Fabrika ayarlarına sıfırlama başlatıldı. Kamera yeniden başlayacak.</string>
+    <string name="settings_feedback_generic_ok">Tamamlandı.</string>
+    <string name="settings_feedback_generic_fail">İşlem başarısız — cihaz bağlantısını kontrol edin.</string>
+    <string name="settings_feedback_wifi_saved">Wi-Fi şifresi güncellendi. Yeni şifreyle yeniden bağlanın.</string>
+    <string name="settings_feedback_apn_saved">APN güncellendi.</string>
+
+    <!-- Ham ayarlar -->
+    <string name="raw_title">Ham Ayarlar Dökümü</string>
+    <string name="raw_copy_all">Tümünü Kopyala</string>
+    <string name="raw_loading">Ham ayarlar getiriliyor…</string>
+    <string name="raw_error">Ham ayarlar alınamadı.\nCihazın bağlı olduğundan emin olun.</string>
+
+    <!-- Topluluk -->
+    <string name="community_title">Topluluk</string>
+    <string name="community_body">Topluluğumuza katılın ve diğer Trafy kullanıcılarıyla iletişimde kalın.</string>
+
+    <!-- Mağaza -->
+    <string name="shop_title">Mağaza</string>
+    <string name="shop_section_dashcams">Araç Kameraları</string>
+    <string name="shop_section_sd_cards">Micro SD Kartlar</string>
+    <string name="shop_product_view">İncele</string>
+
+    <!-- Diğer -->
+    <string name="more_title">Diğer</string>
+    <string name="more_shop_title">Mağaza</string>
+    <string name="more_shop_desc">Araç kameraları, SD kartlar ve aksesuarlar</string>
+    <string name="more_community_title">Topluluk</string>
+    <string name="more_community_desc">Telegram, Instagram ve destek</string>
+</resources>

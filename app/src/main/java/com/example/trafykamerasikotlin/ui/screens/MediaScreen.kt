@@ -1,8 +1,5 @@
 package com.example.trafykamerasikotlin.ui.screens
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -64,13 +62,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
+import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.MediaFile
@@ -82,6 +83,7 @@ import com.example.trafykamerasikotlin.ui.theme.ColorTextPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorTextSecondary
 import com.example.trafykamerasikotlin.ui.viewmodel.DownloadState
 import com.example.trafykamerasikotlin.ui.viewmodel.MediaUiState
+import com.example.trafykamerasikotlin.ui.viewmodel.MediaUserMessage
 import com.example.trafykamerasikotlin.ui.viewmodel.MediaViewModel
 import android.util.Log
 import android.view.SurfaceHolder
@@ -89,14 +91,22 @@ import android.view.SurfaceView
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.ui.viewinterop.AndroidView
+import android.app.Activity
+import android.content.Context
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import android.net.ConnectivityManager
+import android.net.Network
 import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
 import com.example.trafykamerasikotlin.data.media.AllwinnerSdInfo
 import com.example.trafykamerasikotlin.data.media.MjpegRtspPlayer
 import com.example.trafykamerasikotlin.ui.components.AllwinnerFilePlayer
+import tv.danmaku.ijk.media.player.IjkMediaPlayer
 
 @Composable
 fun MediaScreen(
     device: DeviceInfo?,
+    network: Network?,
     modifier: Modifier = Modifier,
     viewModel: MediaViewModel,
 ) {
@@ -116,7 +126,16 @@ fun MediaScreen(
     }
 
     LaunchedEffect(Unit) {
-        viewModel.userMessages.collect { msg -> snackbarHostState.showSnackbar(msg) }
+        viewModel.userMessages.collect { msg ->
+            val text = when (msg) {
+                MediaUserMessage.PlaybackFailed    -> context.getString(R.string.media_error_playback_failed)
+                MediaUserMessage.DownloadFailed    -> context.getString(R.string.media_error_download_failed)
+                MediaUserMessage.BusyPlayback      -> context.getString(R.string.media_error_busy_playback)
+                is MediaUserMessage.DownloadComplete ->
+                    context.getString(R.string.media_download_complete_fmt, msg.filename)
+            }
+            snackbarHostState.showSnackbar(text)
+        }
     }
 
     DisposableEffect(Unit) {
@@ -124,6 +143,11 @@ fun MediaScreen(
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
+    // In-app overlay URL for HiSilicon/Easytech/etc. HTTP file playback. GeneralPlus
+    // and Allwinner have their own VM-driven flows (playbackUri / allwinnerPlaybackUri).
+    var inAppVideoUrl by remember { mutableStateOf<String?>(null) }
+    // Full-screen photo viewer URL.
+    var inAppPhotoUrl by remember { mutableStateOf<String?>(null) }
 
     Box(modifier = modifier.fillMaxSize()) {
     Column(
@@ -133,7 +157,7 @@ fun MediaScreen(
             .windowInsetsPadding(WindowInsets.statusBars)
     ) {
         Text(
-            text     = "Media",
+            text     = stringResource(R.string.media_title),
             style    = MaterialTheme.typography.headlineMedium,
             color    = ColorTextPrimary,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
@@ -144,10 +168,7 @@ fun MediaScreen(
         when (val state = uiState) {
             is MediaUiState.NotConnected -> NotConnectedMediaContent()
             is MediaUiState.Loading      -> LoadingMediaContent()
-            is MediaUiState.Error        -> ErrorMediaContent(
-                message = state.message,
-                onRetry = { viewModel.reload() }
-            )
+            is MediaUiState.Error        -> ErrorMediaContent(onRetry = { viewModel.reload() })
             is MediaUiState.Loaded -> {
                 // Group videos by camera channel (front/back/inside) from filename suffix.
                 // Only tabs for cameras that actually have footage are shown.
@@ -179,7 +200,7 @@ fun MediaScreen(
                             selectedContentColor   = ColorPrimary,
                             unselectedContentColor = ColorTextSecondary,
                             text = {
-                                Text(text = title, style = MaterialTheme.typography.titleMedium)
+                                Text(text = cameraTabLabel(title), style = MaterialTheme.typography.titleMedium)
                             }
                         )
                     }
@@ -199,6 +220,8 @@ fun MediaScreen(
                         downloadProgress  = downloadProgress,
                         onPlay            = { viewModel.playFile(it) },
                         onPlayAllwinner   = { viewModel.startAllwinnerStream(it) },
+                        onPlayInApp       = { url -> inAppVideoUrl = url },
+                        onViewPhoto       = { url -> inAppPhotoUrl = url },
                         onDownload        = { viewModel.download(it) },
                         onCancelDownload  = { viewModel.cancelDownload(it) },
                         onDelete          = { viewModel.delete(it) }
@@ -227,6 +250,22 @@ fun MediaScreen(
         AllwinnerPlaybackOverlay(url = uri, onDismiss = { viewModel.stopAllwinnerStream() })
     }
 
+    inAppVideoUrl?.let { url ->
+        IjkVideoPlayerOverlay(
+            url       = url,
+            network   = network,
+            onDismiss = { inAppVideoUrl = null },
+        )
+    }
+
+    inAppPhotoUrl?.let { url ->
+        PhotoViewerOverlay(
+            url       = url,
+            network   = network,
+            onDismiss = { inAppPhotoUrl = null },
+        )
+    }
+
     SnackbarHost(
         hostState = snackbarHostState,
         modifier  = Modifier.align(Alignment.BottomCenter).padding(16.dp),
@@ -246,7 +285,7 @@ private fun SdUsageRow(sd: AllwinnerSdInfo) {
     val usedGb  = usedBytes / 1_000_000_000f
     val totalGb = sd.totalBytes / 1_000_000_000f
     Text(
-        text     = "SD Kart: %.1f / %.1f GB".format(usedGb, totalGb),
+        text     = stringResource(R.string.media_sd_usage_fmt, usedGb, totalGb),
         style    = MaterialTheme.typography.labelMedium,
         color    = ColorTextSecondary,
         modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
@@ -268,7 +307,7 @@ private fun AllwinnerPlaybackOverlay(url: String, onDismiss: () -> Unit) {
         ) {
             Icon(
                 imageVector        = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Close",
+                contentDescription = stringResource(R.string.common_close_cd),
                 tint               = Color.White
             )
         }
@@ -286,6 +325,10 @@ private fun AllwinnerPlaybackOverlay(url: String, onDismiss: () -> Unit) {
  * Files without a recognised marker are treated as Front.
  */
 private fun cameraOf(file: MediaFile): String {
+    // Dual-cam HiSilicon firmware tells us the channel via the source directory;
+    // honor that hint when it's set (it's authoritative — the filename may carry
+    // no suffix at all on those devices).
+    file.cameraHint?.let { return it }
     val base = file.name.substringBeforeLast('.').lowercase()
     return when {
         base.endsWith("_f") -> "Front"
@@ -300,6 +343,20 @@ private fun cameraOf(file: MediaFile): String {
 
 private fun groupVideosByCamera(videos: List<MediaFile>): Map<String, List<MediaFile>> =
     videos.groupBy { cameraOf(it) }
+
+/**
+ * Display label for a camera/photos tab. Tab keys stay ASCII internally ("Front",
+ * "Back", "Inside", "Photos") so groupVideosByCamera and tab routing continue to work
+ * regardless of locale; only the user-visible label flips.
+ */
+@Composable
+private fun cameraTabLabel(key: String): String = when (key) {
+    "Front"  -> stringResource(R.string.media_tab_front)
+    "Back"   -> stringResource(R.string.media_tab_back)
+    "Inside" -> stringResource(R.string.media_tab_inside)
+    "Photos" -> stringResource(R.string.media_tab_photos)
+    else     -> key
+}
 
 // ── State placeholders ──────────────────────────────────────────────────────
 
@@ -317,13 +374,13 @@ private fun NotConnectedMediaContent() {
                 modifier           = Modifier.size(52.dp)
             )
             Text(
-                text      = "Not connected",
+                text      = stringResource(R.string.common_not_connected_title),
                 style     = MaterialTheme.typography.titleLarge,
                 color     = ColorTextPrimary,
                 textAlign = TextAlign.Center
             )
             Text(
-                text      = "Connect to your dashcam on the Home screen first",
+                text      = stringResource(R.string.media_not_connected_body),
                 style     = MaterialTheme.typography.bodyMedium,
                 color     = ColorTextSecondary,
                 textAlign = TextAlign.Center,
@@ -342,7 +399,7 @@ private fun LoadingMediaContent() {
         ) {
             CircularProgressIndicator(color = ColorPrimary)
             Text(
-                text  = "Loading media files…",
+                text  = stringResource(R.string.media_loading),
                 style = MaterialTheme.typography.bodyMedium,
                 color = ColorTextSecondary
             )
@@ -351,7 +408,7 @@ private fun LoadingMediaContent() {
 }
 
 @Composable
-private fun ErrorMediaContent(message: String, onRetry: () -> Unit) {
+private fun ErrorMediaContent(onRetry: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -359,7 +416,7 @@ private fun ErrorMediaContent(message: String, onRetry: () -> Unit) {
             modifier            = Modifier.padding(horizontal = 32.dp)
         ) {
             Text(
-                text      = message,
+                text      = stringResource(R.string.media_load_failed),
                 style     = MaterialTheme.typography.bodyLarge,
                 color     = ColorTextPrimary,
                 textAlign = TextAlign.Center
@@ -369,7 +426,10 @@ private fun ErrorMediaContent(message: String, onRetry: () -> Unit) {
                 shape   = RoundedCornerShape(12.dp),
                 colors  = ButtonDefaults.buttonColors(containerColor = ColorPrimary)
             ) {
-                Text("Retry", color = ColorTextPrimary)
+                Text(
+                    text  = stringResource(R.string.common_retry),
+                    color = ColorTextPrimary
+                )
             }
         }
     }
@@ -389,7 +449,9 @@ private fun EmptyMediaContent(isPhoto: Boolean) {
                 modifier           = Modifier.size(48.dp)
             )
             Text(
-                text  = if (isPhoto) "No photos captured" else "No videos recorded",
+                text  = stringResource(
+                    if (isPhoto) R.string.media_empty_photos else R.string.media_empty_videos
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = ColorTextSecondary
             )
@@ -407,11 +469,12 @@ private fun MediaGrid(
     downloadProgress: Map<String, DownloadState>,
     onPlay: (MediaFile) -> Unit,
     onPlayAllwinner: (MediaFile) -> Unit,
+    onPlayInApp: (String) -> Unit,
+    onViewPhoto: (String) -> Unit,
     onDownload: (MediaFile) -> Unit,
     onCancelDownload: (String) -> Unit,
     onDelete: (MediaFile) -> Unit,
 ) {
-    val context = LocalContext.current
     var actionTarget by remember { mutableStateOf<MediaFile?>(null) }
     var deleteTarget by remember { mutableStateOf<MediaFile?>(null) }
 
@@ -448,11 +511,22 @@ private fun MediaGrid(
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    // Play
-                    if (!file.isPhoto) {
+                    // Play (video) / View (photo)
+                    if (file.isPhoto) {
+                        DialogActionRow(
+                            icon    = Icons.Filled.Photo,
+                            label   = stringResource(R.string.media_action_view),
+                            color   = ColorPrimary,
+                            onClick = {
+                                actionTarget = null
+                                onViewPhoto(file.httpUrl)
+                            }
+                        )
+                        HorizontalDivider(color = ColorDivider, thickness = 0.5.dp)
+                    } else {
                         DialogActionRow(
                             icon    = Icons.Filled.PlayArrow,
-                            label   = "Play",
+                            label   = stringResource(R.string.media_action_play),
                             color   = ColorPrimary,
                             onClick = {
                                 actionTarget = null
@@ -466,7 +540,7 @@ private fun MediaGrid(
                                         // Allwinner: buffer RTP2P to a temp .ts then play via IjkPlayer.
                                         onPlayAllwinner(file)
                                     }
-                                    else -> playVideo(context, file.httpUrl)
+                                    else -> onPlayInApp(file.httpUrl)
                                 }
                             }
                         )
@@ -476,7 +550,7 @@ private fun MediaGrid(
                     if (downloading.contains(file.name)) {
                         DialogActionRow(
                             icon    = Icons.Filled.Close,
-                            label   = "Cancel Download",
+                            label   = stringResource(R.string.media_action_cancel_download),
                             color   = Color(0xFFE53935),
                             onClick = {
                                 actionTarget = null
@@ -486,7 +560,7 @@ private fun MediaGrid(
                     } else {
                         DialogActionRow(
                             icon    = Icons.Filled.Download,
-                            label   = "Download",
+                            label   = stringResource(R.string.media_action_download),
                             color   = ColorTextPrimary,
                             onClick = {
                                 actionTarget = null
@@ -500,7 +574,7 @@ private fun MediaGrid(
                         HorizontalDivider(color = ColorDivider, thickness = 0.5.dp)
                         DialogActionRow(
                             icon    = Icons.Filled.Delete,
-                            label   = "Delete",
+                            label   = stringResource(R.string.common_delete),
                             color   = Color(0xFFE53935),
                             onClick = {
                                 actionTarget = null
@@ -513,7 +587,10 @@ private fun MediaGrid(
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { actionTarget = null }) {
-                    Text("Cancel", color = ColorTextSecondary)
+                    Text(
+                        text  = stringResource(R.string.common_cancel),
+                        color = ColorTextSecondary
+                    )
                 }
             }
         )
@@ -525,7 +602,11 @@ private fun MediaGrid(
             onDismissRequest = { deleteTarget = null },
             containerColor   = ColorSurface,
             title = {
-                Text("Delete file?", style = MaterialTheme.typography.titleMedium, color = ColorTextPrimary)
+                Text(
+                    text  = stringResource(R.string.media_dialog_delete_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = ColorTextPrimary
+                )
             },
             text = {
                 Text(
@@ -539,12 +620,18 @@ private fun MediaGrid(
                     onDelete(file)
                     deleteTarget = null
                 }) {
-                    Text("Delete", color = Color(0xFFE53935))
+                    Text(
+                        text  = stringResource(R.string.common_delete),
+                        color = Color(0xFFE53935)
+                    )
                 }
             },
             dismissButton = {
                 TextButton(onClick = { deleteTarget = null }) {
-                    Text("Cancel", color = ColorTextSecondary)
+                    Text(
+                        text  = stringResource(R.string.common_cancel),
+                        color = ColorTextSecondary
+                    )
                 }
             }
         )
@@ -632,7 +719,11 @@ private fun MediaFileCard(
             ) {
                 if (isDownloading && downloadState != null) {
                     Text(
-                        text     = "Downloading ${downloadState.pct}%  •  ${"%.1f".format(downloadState.speedMbPerSec)} MB/s",
+                        text     = stringResource(
+                            R.string.media_download_progress_fmt,
+                            downloadState.pct,
+                            downloadState.speedMbPerSec,
+                        ),
                         style    = MaterialTheme.typography.labelSmall,
                         color    = Color.White,
                         maxLines = 1,
@@ -640,7 +731,11 @@ private fun MediaFileCard(
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                     Text(
-                        text     = "${"%.1f".format(downloadState.receivedMb)} / ${"%.1f".format(downloadState.totalMb)} MB",
+                        text     = stringResource(
+                            R.string.media_download_size_fmt,
+                            downloadState.receivedMb,
+                            downloadState.totalMb,
+                        ),
                         style    = MaterialTheme.typography.labelSmall,
                         color    = Color.White.copy(alpha = 0.75f),
                         maxLines = 1,
@@ -654,7 +749,7 @@ private fun MediaFileCard(
                     )
                 } else if (isDownloading) {
                     Text(
-                        text     = "Downloading…",
+                        text     = stringResource(R.string.media_downloading_indeterminate),
                         style    = MaterialTheme.typography.labelSmall,
                         color    = Color.White,
                         maxLines = 1,
@@ -705,22 +800,6 @@ private fun formatFileName(name: String): String {
         "${base.substring(11, 13)}:${base.substring(13, 15)}:${base.substring(15, 17)}"
     } else {
         base
-    }
-}
-
-private fun playVideo(context: Context, url: String) {
-    // Use the URI directly so the RTSP scheme routes to a capable player.
-    // Do NOT use resolveActivity() — on Android 11+ it always returns null for
-    // implicit intents unless <queries> are declared in the manifest, causing
-    // startActivity to be silently skipped.
-    try {
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            }
-        )
-    } catch (_: android.content.ActivityNotFoundException) {
-        android.util.Log.w("MediaScreen", "No app available to play: $url")
     }
 }
 
@@ -790,7 +869,7 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
         ) {
             Icon(
                 imageVector        = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Close",
+                contentDescription = stringResource(R.string.common_close_cd),
                 tint               = Color.White
             )
         }
@@ -801,6 +880,216 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
             Log.d("MediaScreen", "VideoPlayerOverlay dispose — stopping MjpegRtspPlayer")
             playerRef.value?.stop()
             playerRef.value = null
+        }
+    }
+}
+
+// ── In-app HTTP video player (HiSilicon / Easytech / MStar / Novatek) ───────
+
+/**
+ * Full-screen overlay that plays an HTTP MP4/h264 URL via IjkPlayer. Used for
+ * every HiDVR-family chipset where the camera exposes recordings directly over
+ * HTTP. GeneralPlus (RTSP/MJPEG) and Allwinner (RTP2P temp file) use their own
+ * overlays upstream.
+ */
+@Composable
+private fun IjkVideoPlayerOverlay(url: String, network: Network?, onDismiss: () -> Unit) {
+    BackHandler(onBack = onDismiss)
+
+    val bufferingState = remember { mutableStateOf(true) }
+    val ctx = LocalContext.current
+
+    // Let the overlay follow the phone's physical orientation via the sensor —
+    // FULL_SENSOR ignores the system-level rotation lock, so tilting the phone
+    // rotates the video even when auto-rotate is off. Restored on dismiss.
+    DisposableEffect(Unit) {
+        val activity = ctx as? Activity
+        val previous = activity?.requestedOrientation
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        onDispose {
+            activity?.requestedOrientation = previous ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // Bind the whole process to the dashcam Wi-Fi so IjkPlayer's internal FFmpeg
+    // HTTP socket can reach 192.168.0.1. Without this, the phone's default network
+    // (cellular) is used and the connection times out. Mirrors LiveViewModel.
+    DisposableEffect(network) {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        cm.bindProcessToNetwork(network)
+        Log.i("MediaScreen", "IjkVideoPlayerOverlay: bound process to $network")
+        onDispose {
+            cm.bindProcessToNetwork(null)
+            Log.i("MediaScreen", "IjkVideoPlayerOverlay: unbound process")
+        }
+    }
+
+    val ijkPlayer = remember(url) {
+        IjkMediaPlayer.loadLibrariesOnce(null)
+        IjkMediaPlayer().apply {
+            // HTTP file playback — keep analyzeduration small so playback starts quickly.
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "analyzeduration", "100000")
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize",       "1048576")
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "fflags",          "nobuffer")
+            setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC,  "skip_loop_filter", 48L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec",             1L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 1L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared",      1L)
+        }
+    }
+
+    Box(
+        modifier         = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        // Constrain to 16:9 so the 1920x1080 dashcam footage is letterboxed on a
+        // portrait phone instead of being stretched to fill the screen.
+        AndroidView(
+            factory = { ctx ->
+                SurfaceView(ctx).also { sv ->
+                    sv.holder.addCallback(object : SurfaceHolder.Callback {
+                        override fun surfaceCreated(holder: SurfaceHolder) {
+                            Log.d("MediaScreen", "IjkVideoPlayerOverlay surfaceCreated — $url")
+                            try {
+                                ijkPlayer.setDisplay(holder)
+                                ijkPlayer.dataSource = url
+                                ijkPlayer.setOnPreparedListener { mp ->
+                                    mp.start()
+                                    bufferingState.value = false
+                                }
+                                ijkPlayer.setOnErrorListener { _, what, extra ->
+                                    Log.e("MediaScreen", "IjkVideoPlayerOverlay error what=$what extra=$extra")
+                                    false
+                                }
+                                ijkPlayer.prepareAsync()
+                            } catch (e: Exception) {
+                                Log.e("MediaScreen", "IjkVideoPlayerOverlay setup failed: ${e.message}")
+                            }
+                        }
+
+                        override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {}
+
+                        override fun surfaceDestroyed(holder: SurfaceHolder) {
+                            Log.d("MediaScreen", "IjkVideoPlayerOverlay surfaceDestroyed")
+                            ijkPlayer.stop()
+                            ijkPlayer.setDisplay(null)
+                        }
+                    })
+                }
+            },
+            modifier = Modifier
+                .then(if (isLandscape) Modifier.fillMaxHeight() else Modifier.fillMaxWidth())
+                .aspectRatio(16f / 9f)
+        )
+
+        if (bufferingState.value) {
+            CircularProgressIndicator(
+                color    = ColorPrimary,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        }
+
+        // Back arrow only in portrait — in landscape the video owns the full screen
+        // and the user dismisses via system back (BackHandler) or by tilting upright.
+        if (!isLandscape) {
+            IconButton(
+                onClick  = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp)
+            ) {
+                Icon(
+                    imageVector        = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.common_close_cd),
+                    tint               = Color.White
+                )
+            }
+        }
+    }
+
+    DisposableEffect(url) {
+        onDispose {
+            Log.d("MediaScreen", "IjkVideoPlayerOverlay dispose — releasing IjkPlayer")
+            ijkPlayer.stop()
+            ijkPlayer.release()
+        }
+    }
+}
+
+// ── In-app photo viewer ─────────────────────────────────────────────────────
+
+/**
+ * Full-screen photo overlay. Loads the image from the dashcam over HTTP using
+ * Coil and fits it inside the screen while preserving aspect. Binds the process
+ * network to the dashcam Wi-Fi so Coil's OkHttp can reach the camera even when
+ * the phone also has cellular data; follows the phone sensor so the view rotates
+ * when the user tilts the device, regardless of system rotation lock.
+ */
+@Composable
+private fun PhotoViewerOverlay(url: String, network: Network?, onDismiss: () -> Unit) {
+    BackHandler(onBack = onDismiss)
+    val ctx = LocalContext.current
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    DisposableEffect(Unit) {
+        val activity = ctx as? Activity
+        val previous = activity?.requestedOrientation
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        onDispose {
+            activity?.requestedOrientation = previous ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    DisposableEffect(network) {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        cm.bindProcessToNetwork(network)
+        onDispose { cm.bindProcessToNetwork(null) }
+    }
+
+    Box(
+        modifier         = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        SubcomposeAsyncImage(
+            model              = url,
+            contentDescription = null,
+            contentScale       = ContentScale.Fit,
+            modifier           = Modifier.fillMaxSize(),
+            loading = {
+                CircularProgressIndicator(
+                    color    = ColorPrimary,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            },
+            error = {
+                Icon(
+                    imageVector        = Icons.Filled.Photo,
+                    contentDescription = null,
+                    tint               = ColorTextSecondary,
+                    modifier           = Modifier.size(64.dp),
+                )
+            },
+        )
+
+        // Back arrow hidden in landscape for a chrome-free view; BackHandler still fires on system back.
+        if (!isLandscape) {
+            IconButton(
+                onClick  = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp),
+            ) {
+                Icon(
+                    imageVector        = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.common_close_cd),
+                    tint               = Color.White,
+                )
+            }
         }
     }
 }

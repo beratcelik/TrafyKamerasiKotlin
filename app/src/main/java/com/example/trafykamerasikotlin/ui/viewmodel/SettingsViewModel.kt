@@ -37,7 +37,22 @@ sealed class SettingsUiState {
     data object Loading : SettingsUiState()
     data class Loaded(val items: List<SettingItem>) : SettingsUiState()
     data class Applying(val items: List<SettingItem>) : SettingsUiState()
-    data class Error(val message: String) : SettingsUiState()
+    data object Error : SettingsUiState()
+}
+
+/**
+ * Action-feedback message kinds. SettingsScreen resolves each to a localized string.
+ * [Raw] is a pass-through for device-sourced strings (HiDVR action responses) which
+ * arrive already formatted from the camera and should not be translated.
+ */
+sealed class SettingsActionFeedback {
+    data object FormatOk    : SettingsActionFeedback()
+    data object ResetOk     : SettingsActionFeedback()
+    data object GenericOk   : SettingsActionFeedback()
+    data object GenericFail : SettingsActionFeedback()
+    data object WifiSaved   : SettingsActionFeedback()
+    data object ApnSaved    : SettingsActionFeedback()
+    data class  Raw(val message: String) : SettingsActionFeedback()
 }
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -50,8 +65,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
     /** Non-null while an action result (or error) should be shown to the user. */
-    private val _actionFeedback = MutableStateFlow<String?>(null)
-    val actionFeedback: StateFlow<String?> = _actionFeedback.asStateFlow()
+    private val _actionFeedback = MutableStateFlow<SettingsActionFeedback?>(null)
+    val actionFeedback: StateFlow<SettingsActionFeedback?> = _actionFeedback.asStateFlow()
 
     private val _wifiDialog = MutableStateFlow<WifiDialogState>(WifiDialogState.Hidden)
     val wifiDialog: StateFlow<WifiDialogState> = _wifiDialog.asStateFlow()
@@ -85,7 +100,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 _uiState.update { SettingsUiState.Loaded(items) }
             } else {
                 Log.e(TAG, "Failed to load settings")
-                _uiState.update { SettingsUiState.Error("Could not load camera settings") }
+                _uiState.update { SettingsUiState.Error }
             }
         }
     }
@@ -113,6 +128,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             } else {
                 Log.e(TAG, "Failed to apply $key=$newValue")
                 _uiState.update { SettingsUiState.Loaded(current) }
+                _actionFeedback.update { SettingsActionFeedback.GenericFail }
             }
         }
     }
@@ -132,10 +148,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     _uiState.update { SettingsUiState.Loaded(current) }
                     _actionFeedback.update {
                         if (ok) when (key) {
-                            "format"     -> "SD card formatting started. Camera will be ready in a moment."
-                            "reset.cgi?" -> "Factory reset initiated. Camera will restart."
-                            else          -> "Done."
-                        } else "Action failed — check device connection."
+                            "format"     -> SettingsActionFeedback.FormatOk
+                            "reset.cgi?" -> SettingsActionFeedback.ResetOk
+                            else          -> SettingsActionFeedback.GenericOk
+                        } else SettingsActionFeedback.GenericFail
                     }
                 }
                 ChipsetProtocol.ALLWINNER_V853 -> {
@@ -144,7 +160,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 else -> {
                     val result = getHiDvrRepo().executeAction(device.protocol.deviceIp, key)
                     _uiState.update { SettingsUiState.Loaded(current) }
-                    _actionFeedback.update { result ?: "Action failed — check device connection." }
+                    _actionFeedback.update {
+                        if (result != null) {
+                            val trimmed = result.trim()
+                            when {
+                                key == "format"     -> SettingsActionFeedback.FormatOk
+                                key == "reset.cgi?" -> SettingsActionFeedback.ResetOk
+                                trimmed.isEmpty()   -> SettingsActionFeedback.GenericOk
+                                else                -> SettingsActionFeedback.Raw(trimmed)
+                            }
+                        } else SettingsActionFeedback.GenericFail
+                    }
                 }
             }
         }
@@ -201,7 +227,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 if (ok) WifiDialogState.Loaded(current.ssid, newPassword)
                 else WifiDialogState.Error
             }
-            if (ok) _actionFeedback.update { "Wi-Fi şifresi güncellendi. Yeni şifreyle yeniden bağlanın." }
+            if (ok) _actionFeedback.update { SettingsActionFeedback.WifiSaved }
         }
     }
 
@@ -224,7 +250,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 if (ok) ApnDialogState.Loaded(apn, user, password)
                 else ApnDialogState.Error
             }
-            if (ok) _actionFeedback.update { "APN güncellendi." }
+            if (ok) _actionFeedback.update { SettingsActionFeedback.ApnSaved }
         }
     }
 

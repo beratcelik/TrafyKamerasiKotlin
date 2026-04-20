@@ -27,6 +27,34 @@ class HiDvrMediaRepository {
         private const val DIR_NORMAL = "norm"
         private const val DIR_EVENT  = "emr"
         private const val DIR_PHOTO  = "photo"
+
+        // Default dir set used when getdircapability.cgi is unavailable; matches the
+        // single-camera HiSilicon firmware that has always worked here.
+        private val FALLBACK_DIRS = listOf(DIR_NORMAL, DIR_EVENT, DIR_PHOTO)
+
+        // Tokens used to classify a directory name reported by getdircapability.cgi.
+        // Source: HIDevUtil.getDoubleCameraBack*/In* in the reference golook app.
+        private val BACK_TOKENS   = listOf("back_", "rear", "after")
+        private val INSIDE_TOKENS = listOf("int_", "inside")
+        private val EVENT_TOKENS  = listOf("emr", "lock", "event")
+        private val NORMAL_TOKENS = listOf("norm")
+        private val PHOTO_TOKENS  = listOf("photo")
+    }
+
+    /** Video/photo directories on the camera's SD card, grouped by camera channel. */
+    private data class DirLayout(
+        val front:  List<Pair<String, Boolean>>,  // (dir, isPhoto)
+        val back:   List<Pair<String, Boolean>>,
+        val inside: List<Pair<String, Boolean>>,
+    ) {
+        fun videoDirs():  List<Triple<String, String, Boolean>> = // (dir, hint, isPhoto=false)
+            front .filter  { !it.second }.map { Triple(it.first, "Front",  false) } +
+            back  .filter  { !it.second }.map { Triple(it.first, "Back",   false) } +
+            inside.filter  { !it.second }.map { Triple(it.first, "Inside", false) }
+        fun photoDirs(): List<Triple<String, String, Boolean>> =
+            front .filter  {  it.second }.map { Triple(it.first, "Front",  true) } +
+            back  .filter  {  it.second }.map { Triple(it.first, "Back",   true) } +
+            inside.filter  {  it.second }.map { Triple(it.first, "Inside", true) }
     }
 
     // ── Recording control ──────────────────────────────────────────────────
@@ -51,6 +79,37 @@ class HiDvrMediaRepository {
         return ok
     }
 
+    // ── Multi-camera live switching ───────────────────────────────────────
+
+    /**
+     * Camera channel keys this device exposes, always ordered Front → Back → Inside.
+     * Reuses the same `getdircapability.cgi` probe that media browsing uses: a device
+     * with `back_*` / `rear*` / `after*` directories has a rear camera wired up, and
+     * `int_*` / `inside*` directories indicate an inside camera. Returns at least
+     * `["Front"]` since every HiDVR unit has a primary lens.
+     */
+    suspend fun discoverCameras(deviceIp: String): List<String> {
+        val layout = discoverDirs(deviceIp)
+        return buildList {
+            add("Front")
+            if (layout.back.isNotEmpty())   add("Back")
+            if (layout.inside.isNotEmpty()) add("Inside")
+        }
+    }
+
+    /**
+     * Tells the camera to route the given channel onto /livestream/1.
+     * camid: 0=Front, 1=Back, 2=Inside (matches the reference golook app's convention).
+     * Callers must restart their RTSP player after this returns — the stream URL
+     * stays the same but its contents change to the selected lens.
+     */
+    suspend fun selectLiveCamera(deviceIp: String, camid: Int): Boolean {
+        val url = "http://$deviceIp$CGI/getcamchnl.cgi?&-camid=$camid"
+        val body = DashcamHttpClient.get(url)
+        Log.i(TAG, "selectLiveCamera: camid=$camid body=${body?.take(80)}")
+        return body != null
+    }
+
     suspend fun unregisterClient(deviceIp: String, clientIp: String) {
         DashcamHttpClient.probe(
             "http://$deviceIp$CGI/client.cgi?&-operation=unregister&-ip=$clientIp"
@@ -62,19 +121,28 @@ class HiDvrMediaRepository {
     // ── File listing ───────────────────────────────────────────────────────
 
     /**
-     * Fetches all video files (normal + event directories) sorted newest-first.
+     * Fetches all video files (normal + event directories, all camera channels)
+     * sorted newest-first. For dual-camera HiSilicon firmware, discovers rear/inside
+     * channel directories via getdircapability.cgi; single-camera firmware keeps
+     * the long-standing norm+emr behavior.
      */
     suspend fun fetchVideos(deviceIp: String): List<MediaFile> {
-        val normal = fetchDir(deviceIp, DIR_NORMAL, isPhoto = false)
-        val event  = fetchDir(deviceIp, DIR_EVENT,  isPhoto = false)
-        return (normal + event).sortedByDescending { it.name }
+        val layout = discoverDirs(deviceIp)
+        val all = layout.videoDirs().flatMap { (dir, hint, isPhoto) ->
+            fetchDir(deviceIp, dir, isPhoto, cameraHint = hint)
+        }
+        return all.sortedByDescending { it.name }
     }
 
     /**
-     * Fetches all photo files sorted newest-first.
+     * Fetches all photo files across every camera channel sorted newest-first.
      */
     suspend fun fetchPhotos(deviceIp: String): List<MediaFile> {
-        return fetchDir(deviceIp, DIR_PHOTO, isPhoto = true).sortedByDescending { it.name }
+        val layout = discoverDirs(deviceIp)
+        val all = layout.photoDirs().flatMap { (dir, hint, isPhoto) ->
+            fetchDir(deviceIp, dir, isPhoto, cameraHint = hint)
+        }
+        return all.sortedByDescending { it.name }
     }
 
     // ── Delete ─────────────────────────────────────────────────────────────
@@ -93,6 +161,44 @@ class HiDvrMediaRepository {
     // ── Private helpers ────────────────────────────────────────────────────
 
     /**
+     * Probes getdircapability.cgi? and classifies each reported dir into
+     * (front/back/inside) × (video/photo) buckets. Falls back to the static
+     * norm+emr+photo set when the probe fails or returns nothing usable,
+     * preserving behavior for every single-camera HiDVR already in the field.
+     */
+    private suspend fun discoverDirs(deviceIp: String): DirLayout {
+        val body = DashcamHttpClient.get("http://$deviceIp$CGI/getdircapability.cgi?")
+        val capability = body?.let { parseVarString(it, "capability") }
+        val dirs = capability
+            ?.split(',')
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            .takeUnless { it.isNullOrEmpty() }
+            ?: FALLBACK_DIRS
+        Log.i(TAG, "discoverDirs: $dirs")
+
+        val front  = mutableListOf<Pair<String, Boolean>>()
+        val back   = mutableListOf<Pair<String, Boolean>>()
+        val inside = mutableListOf<Pair<String, Boolean>>()
+        for (dir in dirs) {
+            val lower = dir.lowercase()
+            val bucket = when {
+                BACK_TOKENS.any   { lower.contains(it) } -> back
+                INSIDE_TOKENS.any { lower.contains(it) } -> inside
+                else                                     -> front
+            }
+            val isPhoto = when {
+                PHOTO_TOKENS.any { lower.contains(it) }  -> true
+                NORMAL_TOKENS.any { lower.contains(it) } -> false
+                EVENT_TOKENS.any { lower.contains(it) }  -> false
+                else -> continue  // unknown dir kind, skip so we don't mis-route
+            }
+            bucket.add(dir to isPhoto)
+        }
+        return DirLayout(front, back, inside)
+    }
+
+    /**
      * Fetches all files in one SD-card directory.
      * Two-step: first getdirfilecount (sets the active directory server-side), then getfilelist.
      */
@@ -100,6 +206,7 @@ class HiDvrMediaRepository {
         deviceIp: String,
         sdDir: String,
         isPhoto: Boolean,
+        cameraHint: String? = null,
     ): List<MediaFile> {
         val base = "http://$deviceIp$CGI"
 
@@ -110,7 +217,7 @@ class HiDvrMediaRepository {
             return emptyList()
         }
         val count = parseVarInt(countBody, "count")
-        Log.d(TAG, "dir=$sdDir count=$count")
+        Log.d(TAG, "dir=$sdDir count=$count hint=$cameraHint")
         if (count <= 0) return emptyList()
 
         // Step 2: list files — getdirfilelist.cgi uses -dir + 0-based inclusive end index
@@ -133,8 +240,18 @@ class HiDvrMediaRepository {
                     thumbnailUrl = thumbnailUrl,
                     name         = path.substringAfterLast('/'),
                     isPhoto      = isPhoto,
+                    cameraHint   = cameraHint,
                 )
             }
+    }
+
+    /** Parses `var key="value";` and returns the value, or null if not found. */
+    private fun parseVarString(body: String, key: String): String? {
+        val marker   = "var $key=\""
+        val start    = body.indexOf(marker).takeIf { it >= 0 } ?: return null
+        val valStart = start + marker.length
+        val end      = body.indexOf('"', valStart).takeIf { it >= 0 } ?: return null
+        return body.substring(valStart, end)
     }
 
     /** Parses "var count=\"5\";" and returns 5. */

@@ -38,6 +38,36 @@ class HiDvrSettingsRepository {
             "MIRROR", "WATERMARKID", "MD_SENSITIVITY", "ENC_PAYLOAD_TYPE",
             "FLIP", "Rec_Split_Time", "MEDIAMODE", "ENABLEWATERMARK", "ANTIFLICKER"
         )
+
+        /**
+         * Fallback menu used when the camera does not serve cammenu.xml.
+         * Applies to "old HiSilicon" firmware variants (e.g. Trafy Dos / HiCV610)
+         * whose SDK exposes capability CGIs per key but no aggregate menu XML.
+         * Source: HiCapabilityManager.getDefultCapabilityList() in the reference app.
+         */
+        private val DEFAULT_DROPDOWN_KEYS = listOf(
+            "MEDIAMODE", "ENC_PAYLOAD_TYPE", "AUDIO", "Rec_Split_Time",
+            "GSR_SENSITIVITY", "GSR_PARKING", "LOW_POWER_PROTECT",
+            "VOLUME", "ANTIFLICKER", "FLIP", "MIRROR",
+        )
+
+        /** Always-present action items for old-HiSilicon devices. */
+        private val DEFAULT_ACTION_KEYS = listOf(
+            "getwifi.cgi?",   // Wi-Fi dialog (intercepted in SettingsScreen)
+            "format",         // Destructive: format SD card
+            "reset.cgi?",     // Destructive: factory reset
+        )
+
+        /**
+         * Keys whose capability CGI is unreliable on old HiSilicon firmware;
+         * we hardcode the valid values instead. Source: HiDvrProtocol.getCapability().
+         */
+        private val HARDCODED_CAPABILITY = mapOf(
+            "AUDIO"             to "0,1",
+            "LOW_FPS_REC"       to "0,1",
+            "LOW_FPS_REC_TIME"  to "0,1,2,3",
+            "LOW_POWER_PROTECT" to "0,1,2",
+        )
     }
 
     // ── Public API ─────────────────────────────────────────────────────────
@@ -50,25 +80,83 @@ class HiDvrSettingsRepository {
         Log.i(TAG, "fetchAll deviceIp=$deviceIp")
 
         val xmlBody = DashcamHttpClient.get("http://$deviceIp/app/bin/cammenu.xml")
-        if (xmlBody == null) {
-            Log.e(TAG, "Failed to fetch cammenu.xml")
-            return null
+        val skeletons: List<SettingItem> = if (xmlBody != null) {
+            Log.d(TAG, "cammenu.xml received (${xmlBody.length} bytes)")
+            val parsed = parseMenuXml(xmlBody)
+            Log.i(TAG, "Parsed ${parsed.size} menu items from XML")
+            parsed
+        } else {
+            Log.w(TAG, "cammenu.xml not available — falling back to default capability list")
+            emptyList()
         }
-        Log.d(TAG, "cammenu.xml received (${xmlBody.length} bytes)")
 
-        val skeletons = parseMenuXml(xmlBody)
-        if (skeletons.isEmpty()) {
-            Log.e(TAG, "XML parsed but produced 0 items")
+        // Old-HiSilicon fallback: no cammenu.xml, probe each default key's capability CGI.
+        val items = if (skeletons.isEmpty()) fetchDefaultItems(deviceIp) else skeletons
+        if (items.isEmpty()) {
+            Log.e(TAG, "No menu items — neither cammenu.xml nor capability CGIs returned data")
             return null
         }
-        Log.i(TAG, "Parsed ${skeletons.size} menu items from XML")
 
         // Fetch current values in parallel for speed
         return coroutineScope {
-            skeletons.map { item ->
+            items.map { item ->
                 async { item.withCurrentValue(deviceIp) }
             }.awaitAll()
         }
+    }
+
+    /**
+     * Builds the settings list for old-HiSilicon firmware that doesn't serve
+     * cammenu.xml (e.g. Trafy Dos / HiCV610_*).
+     *
+     * For each dropdown key, probes getcamparamcapability.cgi / getcommparamcapability.cgi
+     * to discover valid option values; items whose capability fetch returns empty are
+     * dropped so the UI never renders un-configurable rows. Action items (Format, Reset,
+     * Wi-Fi) are always included.
+     */
+    private suspend fun fetchDefaultItems(deviceIp: String): List<SettingItem> = coroutineScope {
+        val base = "http://$deviceIp$CGI"
+
+        val dropdowns = DEFAULT_DROPDOWN_KEYS.map { key ->
+            async {
+                val raw = HARDCODED_CAPABILITY[key] ?: run {
+                    val url = if (isCamType(key)) {
+                        "$base/getcamparamcapability.cgi?&-workmode=$WORKMODE&-type=$key"
+                    } else {
+                        "$base/getcommparamcapability.cgi?&-type=$key"
+                    }
+                    DashcamHttpClient.get(url)?.let { parseVarValue(it, "capability") }
+                }
+                if (raw.isNullOrEmpty()) {
+                    Log.v(TAG, "  $key → capability empty, skipping")
+                    null
+                } else {
+                    val options = raw.split(",")
+                        .filter { it.isNotEmpty() }
+                        .map { value -> SettingOption(value, HiDvrTranslations.optionLabel(key, value, value)) }
+                    SettingItem(
+                        key               = key,
+                        title             = HiDvrTranslations.title(key, key),
+                        currentValue      = "",
+                        currentValueLabel = "",
+                        options           = options,
+                    )
+                }
+            }
+        }.awaitAll().filterNotNull()
+
+        val actions = DEFAULT_ACTION_KEYS.map { key ->
+            SettingItem(
+                key               = key,
+                title             = HiDvrTranslations.title(key, key),
+                currentValue      = "",
+                currentValueLabel = "",
+                options           = emptyList(),
+            )
+        }
+
+        Log.i(TAG, "fetchDefaultItems: ${dropdowns.size} dropdowns + ${actions.size} actions = ${dropdowns.size + actions.size} items")
+        dropdowns + actions
     }
 
     /**
@@ -88,14 +176,37 @@ class HiDvrSettingsRepository {
         } else {
             "$base/setcommparam.cgi?&-type=$key&-value=$value"
         }
-        val success = DashcamHttpClient.probe(setUrl)
-        Log.i(TAG, "Set $key=$value → success=$success")
+        // Some HiSilicon firmware returns HTTP 200 with a negative SvrFuncResult when
+        // the device logically rejects the request (unsupported value, wrong mode, etc).
+        // probe() would treat that as success; inspect the body to catch the rejection.
+        val body = DashcamHttpClient.get(setUrl)
+        val success = body != null && !isCgiFailure(body)
+        Log.i(TAG, "Set $key=$value → success=$success (body=${body?.take(80)})")
 
         // Always resume recording afterwards
         val started = DashcamHttpClient.probe("$base/workmodecmd.cgi?&-cmd=start")
         Log.d(TAG, "Start recording → $started")
 
         return success
+    }
+
+    /**
+     * Detects HiSilicon CGI logical-error responses. Example body:
+     *   SvrFuncResult="-2222"
+     *   SvrFuncResult="-1"
+     * A negative result on any `SvrFuncResult` line signals device rejection.
+     */
+    private fun isCgiFailure(body: String): Boolean {
+        val marker = "SvrFuncResult=\""
+        var idx = body.indexOf(marker)
+        while (idx >= 0) {
+            val start = idx + marker.length
+            val end = body.indexOf('"', start)
+            if (end < 0) break
+            if (body.substring(start, end).startsWith("-")) return true
+            idx = body.indexOf(marker, end)
+        }
+        return false
     }
 
     // ── Private helpers ────────────────────────────────────────────────────
@@ -120,20 +231,29 @@ class HiDvrSettingsRepository {
      */
     suspend fun getWifiSettings(deviceIp: String): WifiSettings? {
         val body = DashcamHttpClient.get("http://$deviceIp$CGI/getwifi.cgi?") ?: return null
-        val ssid = parseVarValue(body, "ssid") ?: return null
-        val password = parseVarValue(body, "password") ?: return null
-        Log.i(TAG, "getWifiSettings: ssid=$ssid password=***")
+        // Newer HiSilicon firmware exposes `var ssid="…"`; old variants (Trafy Dos /
+        // HiCV610) expose `var wifissid="…"` and omit password entirely.
+        val ssid = parseVarValue(body, "ssid")
+            ?: parseVarValue(body, "wifissid")
+            ?: return null
+        val password = parseVarValue(body, "password") ?: ""
+        Log.i(TAG, "getWifiSettings: ssid=$ssid password=${if (password.isEmpty()) "<not returned>" else "***"}")
         return WifiSettings(ssid, password)
     }
 
     /**
      * Sets a new WiFi password on the camera (keeps existing SSID).
-     * Returns true on HTTP 200.
+     * Tries the newer `setwifissid.cgi` endpoint first; falls back to the old
+     * HiSilicon `setwifi.cgi` form for firmware that rejects the newer path.
      */
     suspend fun setWifiPassword(deviceIp: String, ssid: String, newPassword: String): Boolean {
-        val url = "http://$deviceIp$CGI/setwifissid.cgi?&-ssid=$ssid&-password=$newPassword"
+        val base = "http://$deviceIp$CGI"
         Log.i(TAG, "setWifiPassword: ssid=$ssid")
-        return DashcamHttpClient.probe(url)
+        if (DashcamHttpClient.probe("$base/setwifissid.cgi?&-ssid=$ssid&-password=$newPassword")) {
+            return true
+        }
+        Log.w(TAG, "setwifissid.cgi failed — trying old-HiSilicon setwifi.cgi")
+        return DashcamHttpClient.probe("$base/setwifi.cgi?&-wifissid=$ssid&-wifikey=$newPassword")
     }
 
     data class WifiSettings(val ssid: String, val password: String)

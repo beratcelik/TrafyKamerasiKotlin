@@ -22,7 +22,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.ui.components.TrafyTopBar
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
@@ -54,7 +56,7 @@ fun ShopScreen(
             .fillMaxSize()
             .background(ColorBackground)
     ) {
-        TrafyTopBar(title = "Shop", onBack = onBack)
+        TrafyTopBar(title = stringResource(R.string.shop_title), onBack = onBack)
 
         LazyColumn(
             contentPadding = PaddingValues(start = 20.dp, top = 0.dp, end = 20.dp, bottom = 24.dp),
@@ -62,7 +64,7 @@ fun ShopScreen(
         ) {
             item {
                 Text(
-                    text     = "Dashcams",
+                    text     = stringResource(R.string.shop_section_dashcams),
                     style    = MaterialTheme.typography.titleMedium,
                     color    = ColorTextSecondary,
                     modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
@@ -73,7 +75,7 @@ fun ShopScreen(
             }
             item {
                 Text(
-                    text     = "Micro SD Cards",
+                    text     = stringResource(R.string.shop_section_sd_cards),
                     style    = MaterialTheme.typography.titleMedium,
                     color    = ColorTextSecondary,
                     modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
@@ -141,7 +143,7 @@ private fun ProductCard(product: ShopProduct) {
                     modifier = Modifier.padding(start = 12.dp)
                 ) {
                     Text(
-                        text  = "View",
+                        text  = stringResource(R.string.shop_product_view),
                         color = ColorTextPrimary,
                         style = MaterialTheme.typography.bodyMedium
                     )

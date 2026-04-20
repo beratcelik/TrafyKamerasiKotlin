@@ -49,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -58,6 +59,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.SettingItem
 import com.example.trafykamerasikotlin.data.model.SettingOption
@@ -69,6 +71,7 @@ import com.example.trafykamerasikotlin.ui.theme.ColorSurface
 import com.example.trafykamerasikotlin.ui.theme.ColorTextPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorTextSecondary
 import com.example.trafykamerasikotlin.ui.viewmodel.ApnDialogState
+import com.example.trafykamerasikotlin.ui.viewmodel.SettingsActionFeedback
 import com.example.trafykamerasikotlin.ui.viewmodel.SettingsUiState
 import com.example.trafykamerasikotlin.ui.viewmodel.SettingsViewModel
 import com.example.trafykamerasikotlin.ui.viewmodel.WifiDialogState
@@ -103,7 +106,7 @@ fun SettingsScreen(
     ) {
         // Header
         Text(
-            text     = "Settings",
+            text     = stringResource(R.string.settings_title),
             style    = MaterialTheme.typography.headlineMedium,
             color    = ColorTextPrimary,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
@@ -135,21 +138,38 @@ fun SettingsScreen(
             )
 
             is SettingsUiState.Error -> ErrorContent(
-                message   = state.message,
-                onRetry   = { if (device != null) viewModel.reload(device) }
+                onRetry = { if (device != null) viewModel.reload(device) }
             )
         }
 
         // Action result dialog (shown on top of whatever state the screen is in)
-        actionFeedback?.let { msg ->
+        actionFeedback?.let { feedback ->
+            val message = when (feedback) {
+                SettingsActionFeedback.FormatOk    -> stringResource(R.string.settings_feedback_format_ok)
+                SettingsActionFeedback.ResetOk     -> stringResource(R.string.settings_feedback_reset_ok)
+                SettingsActionFeedback.GenericOk   -> stringResource(R.string.settings_feedback_generic_ok)
+                SettingsActionFeedback.GenericFail -> stringResource(R.string.settings_feedback_generic_fail)
+                SettingsActionFeedback.WifiSaved   -> stringResource(R.string.settings_feedback_wifi_saved)
+                SettingsActionFeedback.ApnSaved    -> stringResource(R.string.settings_feedback_apn_saved)
+                is SettingsActionFeedback.Raw      -> feedback.message
+            }
             AlertDialog(
                 onDismissRequest = viewModel::clearActionFeedback,
                 containerColor   = ColorSurface,
-                title = { Text("Result", style = MaterialTheme.typography.titleLarge, color = ColorTextPrimary) },
-                text  = { Text(msg, style = MaterialTheme.typography.bodyMedium, color = ColorTextSecondary) },
+                title = {
+                    Text(
+                        text  = stringResource(R.string.settings_result_title),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = ColorTextPrimary
+                    )
+                },
+                text  = { Text(message, style = MaterialTheme.typography.bodyMedium, color = ColorTextSecondary) },
                 confirmButton = {
                     TextButton(onClick = viewModel::clearActionFeedback) {
-                        Text("OK", color = ColorPrimary)
+                        Text(
+                            text  = stringResource(R.string.common_ok),
+                            color = ColorPrimary
+                        )
                     }
                 }
             )
@@ -194,13 +214,13 @@ private fun NotConnectedContent() {
                 modifier           = Modifier.size(52.dp)
             )
             Text(
-                text      = "Not connected",
+                text      = stringResource(R.string.common_not_connected_title),
                 style     = MaterialTheme.typography.titleLarge,
                 color     = ColorTextPrimary,
                 textAlign = TextAlign.Center
             )
             Text(
-                text      = "Connect to your Trafy Kamerası on the Home screen first",
+                text      = stringResource(R.string.settings_not_connected_body),
                 style     = MaterialTheme.typography.bodyMedium,
                 color     = ColorTextSecondary,
                 textAlign = TextAlign.Center,
@@ -222,7 +242,7 @@ private fun LoadingContent() {
         ) {
             CircularProgressIndicator(color = ColorPrimary)
             Text(
-                text  = "Loading camera settings…",
+                text  = stringResource(R.string.settings_loading),
                 style = MaterialTheme.typography.bodyMedium,
                 color = ColorTextSecondary
             )
@@ -231,7 +251,7 @@ private fun LoadingContent() {
 }
 
 @Composable
-private fun ErrorContent(message: String, onRetry: () -> Unit) {
+private fun ErrorContent(onRetry: () -> Unit) {
     Box(
         modifier         = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -242,7 +262,7 @@ private fun ErrorContent(message: String, onRetry: () -> Unit) {
             modifier            = Modifier.padding(horizontal = 32.dp)
         ) {
             Text(
-                text      = message,
+                text      = stringResource(R.string.settings_load_failed),
                 style     = MaterialTheme.typography.bodyLarge,
                 color     = ColorTextPrimary,
                 textAlign = TextAlign.Center
@@ -252,7 +272,10 @@ private fun ErrorContent(message: String, onRetry: () -> Unit) {
                 shape    = RoundedCornerShape(12.dp),
                 colors   = ButtonDefaults.buttonColors(containerColor = ColorPrimary)
             ) {
-                Text("Retry", color = ColorTextPrimary)
+                Text(
+                    text  = stringResource(R.string.common_retry),
+                    color = ColorTextPrimary
+                )
             }
         }
     }
@@ -305,7 +328,7 @@ private fun SettingsList(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text  = "Raw Settings Dump",
+                        text  = stringResource(R.string.settings_raw_dump_button),
                         style = MaterialTheme.typography.bodySmall,
                         color = ColorTextSecondary
                     )
@@ -327,7 +350,7 @@ private fun SettingsList(
                 ) {
                     CircularProgressIndicator(color = ColorPrimary)
                     Text(
-                        text  = "Applying setting…",
+                        text  = stringResource(R.string.settings_applying),
                         style = MaterialTheme.typography.bodyMedium,
                         color = ColorTextPrimary
                     )
@@ -358,7 +381,7 @@ private fun SettingsList(
             },
             text = {
                 Text(
-                    "This action cannot be undone. Are you sure?",
+                    text  = stringResource(R.string.settings_destructive_body),
                     style = MaterialTheme.typography.bodyMedium,
                     color = ColorTextSecondary
                 )
@@ -368,12 +391,18 @@ private fun SettingsList(
                     onAction(item.key)
                     pendingDestructive = null
                 }) {
-                    Text("Confirm", color = ColorDestructive)
+                    Text(
+                        text  = stringResource(R.string.common_confirm),
+                        color = ColorDestructive
+                    )
                 }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDestructive = null }) {
-                    Text("Cancel", color = ColorTextSecondary)
+                    Text(
+                        text  = stringResource(R.string.common_cancel),
+                        color = ColorTextSecondary
+                    )
                 }
             }
         )
@@ -456,7 +485,7 @@ private fun SettingRow(
                 ) {
                     Icon(
                         imageVector        = Icons.Filled.ContentCopy,
-                        contentDescription = "Kopyala",
+                        contentDescription = stringResource(R.string.settings_imei_copy_cd),
                         tint               = ColorTextSecondary,
                         modifier           = Modifier.size(16.dp)
                     )
@@ -517,12 +546,18 @@ private fun OptionPickerDialog(
                     if (chosen != null) onConfirm(chosen)
                 }
             ) {
-                Text("Apply", color = ColorPrimary)
+                Text(
+                    text  = stringResource(R.string.common_apply),
+                    color = ColorPrimary
+                )
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = ColorTextSecondary)
+                Text(
+                    text  = stringResource(R.string.common_cancel),
+                    color = ColorTextSecondary
+                )
             }
         }
     )
@@ -553,7 +588,11 @@ private fun WifiPasswordDialog(
         onDismissRequest = { if (!isLoading) onDismiss() },
         containerColor   = ColorSurface,
         title = {
-            Text("Wi-Fi Settings", style = MaterialTheme.typography.titleLarge, color = ColorTextPrimary)
+            Text(
+                text  = stringResource(R.string.settings_wifi_dialog_title),
+                style = MaterialTheme.typography.titleLarge,
+                color = ColorTextPrimary
+            )
         },
         text = {
             when {
@@ -564,7 +603,7 @@ private fun WifiPasswordDialog(
                 }
                 isError -> {
                     Text(
-                        "Could not load Wi-Fi settings.",
+                        text  = stringResource(R.string.settings_wifi_dialog_error),
                         style = MaterialTheme.typography.bodyMedium,
                         color = ColorTextSecondary
                     )
@@ -575,7 +614,12 @@ private fun WifiPasswordDialog(
                             value         = ssid,
                             onValueChange = {},
                             readOnly      = true,
-                            label         = { Text("Network Name (SSID)", color = ColorTextSecondary) },
+                            label         = {
+                                Text(
+                                    text  = stringResource(R.string.settings_wifi_ssid_label),
+                                    color = ColorTextSecondary
+                                )
+                            },
                             modifier      = Modifier.fillMaxWidth(),
                             colors        = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor   = ColorPrimary,
@@ -588,7 +632,12 @@ private fun WifiPasswordDialog(
                         OutlinedTextField(
                             value         = password,
                             onValueChange = { password = it },
-                            label         = { Text("Password", color = ColorTextSecondary) },
+                            label         = {
+                                Text(
+                                    text  = stringResource(R.string.settings_wifi_password_label),
+                                    color = ColorTextSecondary
+                                )
+                            },
                             singleLine    = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             visualTransformation = if (showPassword) VisualTransformation.None
@@ -598,7 +647,10 @@ private fun WifiPasswordDialog(
                                     Icon(
                                         imageVector = if (showPassword) Icons.Filled.VisibilityOff
                                                       else Icons.Filled.Visibility,
-                                        contentDescription = if (showPassword) "Hide password" else "Show password",
+                                        contentDescription = stringResource(
+                                            if (showPassword) R.string.common_password_hide_cd
+                                            else R.string.common_password_show_cd
+                                        ),
                                         tint = ColorTextSecondary
                                     )
                                 }
@@ -612,7 +664,7 @@ private fun WifiPasswordDialog(
                             )
                         )
                         Text(
-                            "Minimum 8 characters. You'll need to reconnect after changing.",
+                            text  = stringResource(R.string.settings_wifi_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = ColorTextSecondary
                         )
@@ -626,13 +678,19 @@ private fun WifiPasswordDialog(
                     onClick  = { if (!isLoading) onSave(ssid, password) },
                     enabled  = !isLoading && password.length >= 8
                 ) {
-                    Text("Save", color = ColorPrimary)
+                    Text(
+                        text  = stringResource(R.string.common_save),
+                        color = ColorPrimary
+                    )
                 }
             }
         },
         dismissButton = {
             TextButton(onClick = { if (!isLoading) onDismiss() }) {
-                Text("Cancel", color = ColorTextSecondary)
+                Text(
+                    text  = stringResource(R.string.common_cancel),
+                    color = ColorTextSecondary
+                )
             }
         }
     )
@@ -658,7 +716,11 @@ private fun ApnDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
         containerColor   = ColorSurface,
         title = {
-            Text("APN Yapılandırması", style = MaterialTheme.typography.titleLarge, color = ColorTextPrimary)
+            Text(
+                text  = stringResource(R.string.settings_apn_dialog_title),
+                style = MaterialTheme.typography.titleLarge,
+                color = ColorTextPrimary
+            )
         },
         text = {
             when {
@@ -669,7 +731,7 @@ private fun ApnDialog(
                 }
                 isError -> {
                     Text(
-                        "APN kaydedilemedi. Bağlantıyı kontrol edin.",
+                        text  = stringResource(R.string.settings_apn_dialog_error),
                         style = MaterialTheme.typography.bodyMedium,
                         color = ColorTextSecondary
                     )
@@ -685,7 +747,12 @@ private fun ApnDialog(
                         OutlinedTextField(
                             value         = apn,
                             onValueChange = { apn = it },
-                            label         = { Text("APN", color = ColorTextSecondary) },
+                            label         = {
+                                Text(
+                                    text  = stringResource(R.string.settings_apn_label),
+                                    color = ColorTextSecondary
+                                )
+                            },
                             singleLine    = true,
                             modifier      = Modifier.fillMaxWidth(),
                             colors        = fieldColors,
@@ -693,7 +760,12 @@ private fun ApnDialog(
                         OutlinedTextField(
                             value         = user,
                             onValueChange = { user = it },
-                            label         = { Text("Kullanıcı Adı", color = ColorTextSecondary) },
+                            label         = {
+                                Text(
+                                    text  = stringResource(R.string.settings_apn_user_label),
+                                    color = ColorTextSecondary
+                                )
+                            },
                             singleLine    = true,
                             modifier      = Modifier.fillMaxWidth(),
                             colors        = fieldColors,
@@ -701,7 +773,12 @@ private fun ApnDialog(
                         OutlinedTextField(
                             value         = password,
                             onValueChange = { password = it },
-                            label         = { Text("Şifre", color = ColorTextSecondary) },
+                            label         = {
+                                Text(
+                                    text  = stringResource(R.string.settings_apn_password_label),
+                                    color = ColorTextSecondary
+                                )
+                            },
                             singleLine    = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             visualTransformation = PasswordVisualTransformation(),
@@ -709,7 +786,7 @@ private fun ApnDialog(
                             colors        = fieldColors,
                         )
                         Text(
-                            "APN boş bırakılabilir. Değişiklikler cihazı yeniden başlatabilir.",
+                            text  = stringResource(R.string.settings_apn_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = ColorTextSecondary
                         )
@@ -723,13 +800,19 @@ private fun ApnDialog(
                     onClick  = { if (!isSaving) onSave(apn, user, password) },
                     enabled  = !isSaving
                 ) {
-                    Text("Kaydet", color = ColorPrimary)
+                    Text(
+                        text  = stringResource(R.string.common_save),
+                        color = ColorPrimary
+                    )
                 }
             }
         },
         dismissButton = {
             TextButton(onClick = { if (!isSaving) onDismiss() }) {
-                Text("İptal", color = ColorTextSecondary)
+                Text(
+                    text  = stringResource(R.string.common_cancel),
+                    color = ColorTextSecondary
+                )
             }
         }
     )
@@ -757,7 +840,7 @@ private fun OptionRow(
         if (isSelected) {
             Icon(
                 imageVector        = Icons.Filled.CheckCircle,
-                contentDescription = "Selected",
+                contentDescription = stringResource(R.string.common_selected_cd),
                 tint               = ColorPrimary,
                 modifier           = Modifier.size(20.dp)
             )

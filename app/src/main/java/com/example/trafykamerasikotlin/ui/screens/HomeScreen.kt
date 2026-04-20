@@ -35,7 +35,9 @@ import com.example.trafykamerasikotlin.ui.viewmodel.DashcamUiState
 import com.example.trafykamerasikotlin.ui.viewmodel.DashcamViewModel
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.ui.components.DashcamConnectionCard
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
@@ -73,8 +75,9 @@ fun HomeScreen(
     val isConnecting    = uiState is DashcamUiState.Connecting
     val isScanning      = uiState is DashcamUiState.ScanningWifi
     val availableNets   = (uiState as? DashcamUiState.WifiFound)?.networks ?: emptyList()
+    val defaultDeviceName = stringResource(R.string.home_default_device_name)
     val deviceName      = (uiState as? DashcamUiState.Connected)?.device?.protocol?.displayName
-        ?: "Dashcam"
+        ?: defaultDeviceName
 
     Column(
         modifier = modifier
@@ -92,12 +95,12 @@ fun HomeScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(
-                text  = "Trafy Kamerası",
+                text  = stringResource(R.string.app_name),
                 style = MaterialTheme.typography.displayMedium,
                 color = ColorTextPrimary
             )
             Text(
-                text  = "Your Journey, Protected",
+                text  = stringResource(R.string.home_tagline),
                 style = MaterialTheme.typography.bodyLarge,
                 color = ColorTextSecondary
             )
@@ -138,17 +141,17 @@ private fun HomeShortcutRow(
     ) {
         HomeShortcutItem(
             icon    = Icons.Filled.ShoppingBag,
-            label   = "Shop",
+            label   = stringResource(R.string.home_shortcut_shop),
             onClick = onShopClick
         )
         HomeShortcutItem(
             icon    = Icons.Filled.Groups,
-            label   = "Community",
+            label   = stringResource(R.string.home_shortcut_community),
             onClick = onCommunityClick
         )
         HomeShortcutItem(
             icon    = Icons.Filled.SupportAgent,
-            label   = "Support",
+            label   = stringResource(R.string.home_shortcut_support),
             onClick = onSupportClick
         )
     }

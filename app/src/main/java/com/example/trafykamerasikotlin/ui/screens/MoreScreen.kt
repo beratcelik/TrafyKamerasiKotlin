@@ -31,7 +31,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorDivider
 import com.example.trafykamerasikotlin.ui.theme.ColorIconBgBlue
@@ -56,7 +58,7 @@ fun MoreScreen(
             .padding(top = 16.dp)
     ) {
         Text(
-            text  = "More",
+            text  = stringResource(R.string.more_title),
             style = MaterialTheme.typography.headlineMedium,
             color = ColorTextPrimary
         )
@@ -70,8 +72,8 @@ fun MoreScreen(
                 MoreListItem(
                     icon        = Icons.Filled.ShoppingBag,
                     iconBgColor = ColorIconBgBlue,
-                    title       = "Shop",
-                    description = "Dashcams, SD cards & accessories",
+                    title       = stringResource(R.string.more_shop_title),
+                    description = stringResource(R.string.more_shop_desc),
                     onClick     = onShopClick
                 )
                 HorizontalDivider(
@@ -82,8 +84,8 @@ fun MoreScreen(
                 MoreListItem(
                     icon        = Icons.Filled.Groups,
                     iconBgColor = ColorIconBgGreen,
-                    title       = "Community",
-                    description = "Telegram, Instagram & support",
+                    title       = stringResource(R.string.more_community_title),
+                    description = stringResource(R.string.more_community_desc),
                     onClick     = onCommunityClick
                 )
             }

@@ -37,7 +37,7 @@ class DashcamWifiManager(private val application: Application) {
         private const val TAG = "Trafy.WifiMgr"
 
         /** Case-insensitive substrings used to identify dashcam SSIDs. */
-        private val DASHCAM_KEYWORDS = listOf("cardv", "dvr", "a19")
+        private val DASHCAM_KEYWORDS = listOf("cardv", "dvr", "a19", "hicv")
 
         /** Default WPA2 passphrase for all Trafy dashcam hotspots. */
         private const val DEFAULT_PASSWORD = "12345678"

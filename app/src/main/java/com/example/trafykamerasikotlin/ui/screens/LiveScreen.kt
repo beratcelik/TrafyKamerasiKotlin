@@ -1,5 +1,8 @@
 package com.example.trafykamerasikotlin.ui.screens
 
+import android.app.Activity
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.net.Network
 import android.util.Log
 import android.view.SurfaceHolder
@@ -10,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -46,11 +50,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorDivider
@@ -79,6 +87,20 @@ fun LiveScreen(
     val uiState        by viewModel.uiState.collectAsStateWithLifecycle()
     val captureState   by viewModel.captureState.collectAsStateWithLifecycle()
     val snackbarHost   = remember { SnackbarHostState() }
+    val ctx            = LocalContext.current
+    val isLandscape    = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // While the Live tab is visible, let the activity follow the phone's sensor
+    // orientation even if system auto-rotate is locked — so tilting the phone
+    // rotates the stream into landscape. Restored when the user navigates away.
+    DisposableEffect(Unit) {
+        val activity = ctx as? Activity
+        val previous = activity?.requestedOrientation
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        onDispose {
+            activity?.requestedOrientation = previous ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
 
     LaunchedEffect(device) {
         if (device != null) viewModel.startStream(device, network)
@@ -108,19 +130,24 @@ fun LiveScreen(
             )
             is LiveUiState.Playing -> {
                 Column(modifier = Modifier.fillMaxSize()) {
-                    // Video player — centered, width-constrained, 16:9 aspect ratio
+                    // Video player — centered, width-constrained, 16:9 aspect ratio.
+                    // key(selectedCamera) forces a full player tear-down + rebuild when the
+                    // user switches cameras on chipsets that share one RTSP URL (HiDVR).
                     Box(
                         modifier         = Modifier.weight(1f).fillMaxWidth(),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (state.useMjpeg) {
-                            MjpegLivePlayer(rtspUrl = state.rtspUrl)
-                        } else {
-                            RtspPlayer(rtspUrl = state.rtspUrl)
+                        androidx.compose.runtime.key(state.selectedCamera) {
+                            if (state.useMjpeg) {
+                                MjpegLivePlayer(rtspUrl = state.rtspUrl)
+                            } else {
+                                RtspPlayer(rtspUrl = state.rtspUrl)
+                            }
                         }
                     }
-                    // Camera switcher tab bar — shown only for multi-camera Easytech devices
-                    if (state.cameras.size > 1) {
+                    // Camera switcher tab bar — shown only when multiple cameras exist
+                    // AND the user is in portrait. Landscape is a chrome-free view.
+                    if (!isLandscape && state.cameras.size > 1) {
                         CameraTabBar(
                             cameras          = state.cameras,
                             selectedCamera   = state.selectedCamera,
@@ -175,13 +202,13 @@ private fun AllwinnerCaptureView(
             modifier           = Modifier.size(64.dp),
         )
         Text(
-            text      = "Canlı Yayın Yakında",
+            text      = stringResource(R.string.live_coming_soon_title),
             style     = MaterialTheme.typography.headlineSmall,
             color     = ColorTextPrimary,
             textAlign = TextAlign.Center,
         )
         Text(
-            text      = "Allwinner kameralar için canlı yayın yakında eklenecek. Kayıtlara şimdilik Media sekmesinden ulaşabilirsiniz.",
+            text      = stringResource(R.string.live_coming_soon_body),
             style     = MaterialTheme.typography.bodyMedium,
             color     = ColorTextSecondary,
             textAlign = TextAlign.Center,
@@ -245,17 +272,17 @@ private fun NotConnectedPlaceholder() {
     ) {
         Icon(
             imageVector        = Icons.Filled.Videocam,
-            contentDescription = "Live view",
+            contentDescription = stringResource(R.string.live_view_cd),
             tint               = ColorTextSecondary,
             modifier           = Modifier.size(64.dp)
         )
         Text(
-            text  = "Live View",
+            text  = stringResource(R.string.live_not_connected_title),
             style = MaterialTheme.typography.headlineMedium,
             color = ColorTextPrimary
         )
         Text(
-            text  = "Connect to your dashcam to start streaming",
+            text  = stringResource(R.string.live_not_connected_body),
             style = MaterialTheme.typography.bodyMedium,
             color = ColorTextSecondary
         )
@@ -270,7 +297,7 @@ private fun PreparingPlaceholder() {
     ) {
         CircularProgressIndicator(color = ColorPrimary)
         Text(
-            text  = "Preparing stream…",
+            text  = stringResource(R.string.live_preparing),
             style = MaterialTheme.typography.bodyMedium,
             color = ColorTextSecondary
         )
@@ -373,6 +400,7 @@ private fun RtspPlayer(rtspUrl: String) {
         }
     }
 
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     AndroidView(
         factory = { ctx ->
             SurfaceView(ctx).also { sv ->
@@ -413,9 +441,12 @@ private fun RtspPlayer(rtspUrl: String) {
                 })
             }
         },
-        // Width fills the container; height is derived from the 16:9 ratio so the
-        // landscape dashcam video is never stretched to fit a portrait screen.
-        modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+        // Portrait: fill width, letterbox top/bottom. Landscape: fill height so the
+        // video grows into the longer axis instead of being clamped. 16:9 aspect
+        // preserved in both — no stretching of the 1920×1080 dashcam image.
+        modifier = Modifier
+            .then(if (isLandscape) Modifier.fillMaxHeight() else Modifier.fillMaxWidth())
+            .aspectRatio(16f / 9f)
     )
 }
 
@@ -433,9 +464,13 @@ private fun MjpegLivePlayer(rtspUrl: String) {
 
     val bufferingState = remember { mutableStateOf(true) }
     val playerRef      = remember { mutableStateOf<MjpegRtspPlayer?>(null) }
+    val isLandscape    = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val playerSize     = Modifier
+        .then(if (isLandscape) Modifier.fillMaxHeight() else Modifier.fillMaxWidth())
+        .aspectRatio(16f / 9f)
 
     Box(
-        modifier         = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+        modifier         = playerSize,
         contentAlignment = Alignment.Center,
     ) {
         AndroidView(
@@ -465,7 +500,7 @@ private fun MjpegLivePlayer(rtspUrl: String) {
                     })
                 }
             },
-            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+            modifier = Modifier.fillMaxSize()
         )
 
         // Buffering spinner — shown until the first JPEG frame is decoded

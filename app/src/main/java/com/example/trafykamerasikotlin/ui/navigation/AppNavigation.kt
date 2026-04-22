@@ -13,6 +13,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -40,10 +41,12 @@ import com.example.trafykamerasikotlin.ui.theme.ColorNavBar
 import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorSurfaceElevated
 import com.example.trafykamerasikotlin.ui.theme.ColorTextSecondary
+import com.example.trafykamerasikotlin.ui.components.UpdateDialog
 import com.example.trafykamerasikotlin.ui.viewmodel.DashcamUiState
 import com.example.trafykamerasikotlin.ui.viewmodel.DashcamViewModel
 import com.example.trafykamerasikotlin.ui.viewmodel.LiveViewModel
 import com.example.trafykamerasikotlin.ui.viewmodel.MediaViewModel
+import com.example.trafykamerasikotlin.ui.viewmodel.UpdateViewModel
 
 private const val ROUTE_SHOP         = "shop"
 private const val ROUTE_COMMUNITY    = "community"
@@ -57,9 +60,17 @@ fun AppNavigation() {
     val dashcamViewModel: DashcamViewModel = viewModel()
     val mediaViewModel: MediaViewModel     = viewModel()
     val liveViewModel: LiveViewModel       = viewModel()
+    val updateViewModel: UpdateViewModel   = viewModel()
     val uiState by dashcamViewModel.uiState.collectAsStateWithLifecycle()
     val connectedDevice = (uiState as? DashcamUiState.Connected)?.device
     val connectedNetwork by dashcamViewModel.connectedNetwork.collectAsStateWithLifecycle()
+    val updateState    by updateViewModel.state.collectAsStateWithLifecycle()
+    val showUpdateDialog by updateViewModel.showFeedback.collectAsStateWithLifecycle()
+
+    // Silent check at app launch; surfaces a dialog only when an update is actually available.
+    LaunchedEffect(Unit) {
+        updateViewModel.autoCheckOnStartup()
+    }
 
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -157,8 +168,10 @@ fun AppNavigation() {
             }
             composable(BottomNavItem.Settings.route) {
                 SettingsScreen(
-                    device     = connectedDevice,
-                    onRawDump  = { navController.navigate(ROUTE_RAW_SETTINGS) }
+                    device          = connectedDevice,
+                    onRawDump       = { navController.navigate(ROUTE_RAW_SETTINGS) },
+                    onCheckUpdates  = { updateViewModel.manualCheck() },
+                    appVersionName  = updateViewModel.installedVersionName,
                 )
             }
             composable(ROUTE_RAW_SETTINGS) {
@@ -176,6 +189,14 @@ fun AppNavigation() {
             composable(ROUTE_COMMUNITY) {
                 CommunityScreen(onBack = { navController.popBackStack() })
             }
+        }
+
+        if (showUpdateDialog) {
+            UpdateDialog(
+                state     = updateState,
+                onUpdate  = { updateViewModel.downloadAndInstall() },
+                onDismiss = { updateViewModel.dismiss() },
+            )
         }
     }
 }

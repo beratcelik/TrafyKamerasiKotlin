@@ -74,12 +74,15 @@ import com.example.trafykamerasikotlin.ui.viewmodel.ApnDialogState
 import com.example.trafykamerasikotlin.ui.viewmodel.SettingsActionFeedback
 import com.example.trafykamerasikotlin.ui.viewmodel.SettingsUiState
 import com.example.trafykamerasikotlin.ui.viewmodel.SettingsViewModel
+import com.example.trafykamerasikotlin.ui.viewmodel.UpdateViewModel
 import com.example.trafykamerasikotlin.ui.viewmodel.WifiDialogState
 
 @Composable
 fun SettingsScreen(
     device: DeviceInfo?,
     onRawDump: () -> Unit = {},
+    onCheckUpdates: () -> Unit = {},
+    appVersionName: String = "",
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = viewModel(),
 ) {
@@ -113,7 +116,10 @@ fun SettingsScreen(
         )
 
         when (val state = uiState) {
-            is SettingsUiState.NotConnected -> NotConnectedContent()
+            is SettingsUiState.NotConnected -> NotConnectedContent(
+                onCheckUpdates = onCheckUpdates,
+                versionName    = appVersionName,
+            )
 
             is SettingsUiState.Loading -> LoadingContent()
 
@@ -124,7 +130,9 @@ fun SettingsScreen(
                 onAction       = { key -> viewModel.triggerAction(key) },
                 onWifiSettings = viewModel::openWifiSettings,
                 onApnDialog    = viewModel::openApnDialog,
-                onRawDump      = onRawDump
+                onRawDump      = onRawDump,
+                onCheckUpdates = onCheckUpdates,
+                appVersionName = appVersionName,
             )
 
             is SettingsUiState.Applying -> SettingsList(
@@ -134,7 +142,9 @@ fun SettingsScreen(
                 onAction       = { },
                 onWifiSettings = { },
                 onApnDialog    = { },
-                onRawDump      = onRawDump
+                onRawDump      = onRawDump,
+                onCheckUpdates = onCheckUpdates,
+                appVersionName = appVersionName,
             )
 
             is SettingsUiState.Error -> ErrorContent(
@@ -198,7 +208,10 @@ fun SettingsScreen(
 // ── State sub-screens ──────────────────────────────────────────────────────
 
 @Composable
-private fun NotConnectedContent() {
+private fun NotConnectedContent(
+    onCheckUpdates: () -> Unit,
+    versionName: String,
+) {
     Box(
         modifier         = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -226,6 +239,20 @@ private fun NotConnectedContent() {
                 textAlign = TextAlign.Center,
                 modifier  = Modifier.padding(horizontal = 40.dp)
             )
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onCheckUpdates) {
+                Text(
+                    text  = stringResource(R.string.settings_check_updates),
+                    color = ColorPrimary,
+                )
+            }
+            if (versionName.isNotBlank()) {
+                Text(
+                    text  = stringResource(R.string.settings_version_fmt, versionName),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ColorTextSecondary,
+                )
+            }
         }
     }
 }
@@ -294,6 +321,8 @@ private fun SettingsList(
     onWifiSettings: () -> Unit,
     onApnDialog: () -> Unit,
     onRawDump: () -> Unit,
+    onCheckUpdates: () -> Unit,
+    appVersionName: String,
 ) {
     var pendingItem by remember { mutableStateOf<SettingItem?>(null) }
     var pendingDestructive by remember { mutableStateOf<SettingItem?>(null) }
@@ -320,6 +349,13 @@ private fun SettingsList(
                             else                            -> onAction(item.key)
                         }
                     }
+                )
+            }
+            item {
+                AppUpdateCard(
+                    versionName    = appVersionName,
+                    onCheckUpdates = onCheckUpdates,
+                    enabled        = !applying,
                 )
             }
             item {
@@ -446,6 +482,57 @@ private fun itemsIndexed(
     content: @Composable (Int, SettingItem) -> Unit,
 ) {
     items.forEachIndexed { index, item -> content(index, item) }
+}
+
+@Composable
+private fun AppUpdateCard(
+    versionName: String,
+    onCheckUpdates: () -> Unit,
+    enabled: Boolean,
+) {
+    Column {
+        Text(
+            text     = stringResource(R.string.settings_section_app),
+            style    = MaterialTheme.typography.labelLarge,
+            color    = ColorTextSecondary,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+        )
+        Card(
+            shape     = RoundedCornerShape(16.dp),
+            colors    = CardDefaults.cardColors(containerColor = ColorSurface),
+            elevation = CardDefaults.cardElevation(0.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = enabled, onClick = onCheckUpdates)
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text  = stringResource(R.string.settings_check_updates),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (enabled) ColorTextPrimary else ColorTextSecondary,
+                    )
+                    if (versionName.isNotBlank()) {
+                        Text(
+                            text  = stringResource(R.string.settings_version_fmt, versionName),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ColorTextSecondary,
+                        )
+                    }
+                }
+                Icon(
+                    imageVector        = Icons.Filled.ChevronRight,
+                    contentDescription = null,
+                    tint               = ColorTextSecondary,
+                    modifier           = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
 }
 
 @Composable

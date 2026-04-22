@@ -14,6 +14,7 @@ navigationCompose = "2.8.4"
 media3 = "1.4.1"
 libvlc = "3.6.2"
 ijkplayer = "2024.9.7.1"
+tink = "1.13.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -40,6 +41,7 @@ androidx-media3-exoplayer-rtsp = { group = "androidx.media3", name = "media3-exo
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 libvlc-all = { group = "org.videolan.android", name = "libvlc-all", version.ref = "libvlc" }
 ijkplayer = { module = "com.github.RelinRan:IJKPlayer", version.ref = "ijkplayer" }
+tink-android = { group = "com.google.crypto.tink", name = "tink-android", version.ref = "tink" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

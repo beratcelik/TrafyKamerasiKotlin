@@ -18,3 +18,13 @@ local.properties
 *.apk
 golook-jadx/
 viidure-jadx/
+
+# Release signing — NEVER commit these
+app/trafy-release.jks
+app/keystore.properties
+*.jks
+*.keystore
+
+# Per-release notes — edit these before each release, not tracked in git
+release-notes.en.txt
+release-notes.tr.txt

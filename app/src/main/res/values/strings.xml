@@ -160,4 +160,25 @@
     <string name="hidvr_opt_mute">Mute</string>
 
     <string name="hidvr_opt_minutes_fmt">%1$d min</string>
+
+    <!-- App updates -->
+    <string name="settings_section_app">App</string>
+    <string name="settings_check_updates">Check for Updates</string>
+    <string name="settings_version_fmt">Version %1$s</string>
+    <string name="update_dialog_checking_title">Checking for updates…</string>
+    <string name="update_dialog_up_to_date_title">You\'re up to date</string>
+    <string name="update_dialog_up_to_date_body">You have the latest version of the Trafy app.</string>
+    <string name="update_dialog_available_title">Update Available</string>
+    <string name="update_dialog_version_fmt">Version %1$s is ready to install.</string>
+    <string name="update_dialog_update_now">Update Now</string>
+    <string name="update_dialog_later">Later</string>
+    <string name="update_dialog_downloading_title">Downloading update…</string>
+    <string name="update_dialog_ready_title">Update downloaded</string>
+    <string name="update_dialog_ready_body">Tap install to finish updating the app.</string>
+    <string name="update_dialog_install_again">Install</string>
+    <string name="update_dialog_error_title">Update Failed</string>
+    <string name="update_dialog_error_network">Could not reach the update server. Check your internet connection and try again.</string>
+    <string name="update_dialog_error_download">The update could not be downloaded. Please try again.</string>
+    <string name="update_dialog_error_bad_signature">Update rejected: the manifest signature is invalid. This should never happen — please report it to Trafy support.</string>
+    <string name="update_dialog_error_bad_checksum">Update rejected: the downloaded file is corrupt or tampered with. Try again; if it keeps failing, contact Trafy support.</string>
 </resources>

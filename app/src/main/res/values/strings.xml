@@ -135,4 +135,29 @@
     <string name="more_shop_desc">Dashcams, SD cards &amp; accessories</string>
     <string name="more_community_title">Community</string>
     <string name="more_community_desc">Telegram, Instagram &amp; support</string>
+
+    <!-- HiDVR device settings — prototype translations. Entries here take precedence
+         over the hardcoded English map in HiDvrTranslations.kt. Extend by adding a
+         res entry below, then registering the mapping in HiDvrTranslations. -->
+    <string name="hidvr_title_mediamode">Video Resolution</string>
+    <string name="hidvr_title_audio">Audio</string>
+    <string name="hidvr_title_format">Format SD Card</string>
+    <string name="hidvr_title_reset">Restore Factory Settings</string>
+    <string name="hidvr_title_wifi_settings">Wi-Fi Settings</string>
+    <string name="hidvr_title_rec_split_time">Recording Clip Length</string>
+    <string name="hidvr_title_gsr_sensitivity">G-Sensor Sensitivity</string>
+    <string name="hidvr_title_gsr_parking">Parking Mode</string>
+    <string name="hidvr_title_low_power_protect">Low Voltage Protection</string>
+    <string name="hidvr_title_volume">Volume</string>
+    <string name="hidvr_title_flip">Flip</string>
+    <string name="hidvr_title_mirror">Mirror</string>
+
+    <string name="hidvr_opt_on">On</string>
+    <string name="hidvr_opt_off">Off</string>
+    <string name="hidvr_opt_high">High</string>
+    <string name="hidvr_opt_medium">Medium</string>
+    <string name="hidvr_opt_low">Low</string>
+    <string name="hidvr_opt_mute">Mute</string>
+
+    <string name="hidvr_opt_minutes_fmt">%1$d min</string>
 </resources>

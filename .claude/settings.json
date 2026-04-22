@@ -1,7 +1,18 @@
 {
   "permissions": {
     "allow": [
-      "Bash(find /tmp/golook-smali -type f -name *Preview*.smali -o -name *preview*.smali -o -name *Live*.smali -o -name *live*.smali)"
+      "Bash(find /tmp/golook-smali -type f -name *Preview*.smali -o -name *preview*.smali -o -name *Live*.smali -o -name *live*.smali)",
+      "Bash(magick identify *)",
+      "Read(//private/var/folders/**)",
+      "Bash(tshark -r \"/Users/beratcelik/Downloads/PCAPdroid_18_Nis_10_34_31.pcap\" -q -z conv,tcp)",
+      "Bash(tshark -r \"/Users/beratcelik/Downloads/PCAPdroid_18_Nis_10_34_31.pcap\" -q -z conv,udp)",
+      "Bash(tshark -r \"/Users/beratcelik/Downloads/PCAPdroid_18_Nis_10_34_31.pcap\" -q -z endpoints,ip)",
+      "Bash(tshark -r \"/Users/beratcelik/Downloads/PCAPdroid_18_Nis_10_34_31.pcap\" -q -z follow,tcp,ascii,0)",
+      "Bash(tshark -r \"/Users/beratcelik/Downloads/PCAPdroid_18_Nis_10_34_31.pcap\" -q -z follow,tcp,ascii,1)",
+      "Bash(tshark -r \"/Users/beratcelik/Downloads/PCAPdroid_18_Nis_10_34_31.pcap\" -Y \"http or http2\")",
+      "Bash(tshark -r \"/Users/beratcelik/Downloads/PCAPdroid_18_Nis_10_34_31.pcap\" -T fields -e frame.number -e frame.time_relative -e ip.src -e tcp.srcport -e ip.dst -e tcp.dstport -e tcp.len -Y \"tcp.stream eq 1 and tcp.len > 0\")",
+      "Bash(tshark -r \"/Users/beratcelik/Downloads/PCAPdroid_18_Nis_10_34_31.pcap\" -T fields -e frame.time_relative -e ip.src -e udp.srcport -e ip.dst -e udp.dstport -e udp.length -Y \"udp.port == 2222\")",
+      "Read(//opt/homebrew/bin/**)"
     ]
   }
 }

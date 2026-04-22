@@ -299,7 +299,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         eeasyRepo ?: EeasytechSettingsRepository().also { eeasyRepo = it }
 
     private fun getHiDvrRepo(): HiDvrSettingsRepository =
-        hiDvrRepo ?: HiDvrSettingsRepository().also { hiDvrRepo = it }
+        hiDvrRepo ?: HiDvrSettingsRepository(getApplication()).also { hiDvrRepo = it }
 
     private fun getGeneralplusRepo(): GeneralplusSettingsRepository =
         generalplusRepo ?: GeneralplusSettingsRepository().also { generalplusRepo = it }

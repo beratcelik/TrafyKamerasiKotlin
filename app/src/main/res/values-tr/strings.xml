@@ -135,4 +135,28 @@
     <string name="more_shop_desc">Araç kameraları, SD kartlar ve aksesuarlar</string>
     <string name="more_community_title">Topluluk</string>
     <string name="more_community_desc">Telegram, Instagram ve destek</string>
+
+    <!-- HiDVR cihaz ayarları — prototip çevirileri. Burada tanımlı anahtarlar
+         HiDvrTranslations.kt içindeki sabit İngilizce haritaya üstün gelir. -->
+    <string name="hidvr_title_mediamode">Video Çözünürlüğü</string>
+    <string name="hidvr_title_audio">Ses</string>
+    <string name="hidvr_title_format">SD Kartı Formatla</string>
+    <string name="hidvr_title_reset">Fabrika Ayarlarına Dön</string>
+    <string name="hidvr_title_wifi_settings">Wi-Fi Ayarları</string>
+    <string name="hidvr_title_rec_split_time">Kayıt Parça Uzunluğu</string>
+    <string name="hidvr_title_gsr_sensitivity">G-Sensör Hassasiyeti</string>
+    <string name="hidvr_title_gsr_parking">Park Modu</string>
+    <string name="hidvr_title_low_power_protect">Düşük Voltaj Koruması</string>
+    <string name="hidvr_title_volume">Ses Seviyesi</string>
+    <string name="hidvr_title_flip">Ters Çevir</string>
+    <string name="hidvr_title_mirror">Aynala</string>
+
+    <string name="hidvr_opt_on">Açık</string>
+    <string name="hidvr_opt_off">Kapalı</string>
+    <string name="hidvr_opt_high">Yüksek</string>
+    <string name="hidvr_opt_medium">Orta</string>
+    <string name="hidvr_opt_low">Düşük</string>
+    <string name="hidvr_opt_mute">Sessiz</string>
+
+    <string name="hidvr_opt_minutes_fmt">%1$d dk</string>
 </resources>

@@ -1,5 +1,6 @@
 package com.example.trafykamerasikotlin.data.settings
 
+import android.content.Context
 import android.util.Log
 import android.util.Xml
 import com.example.trafykamerasikotlin.data.model.SettingItem
@@ -22,7 +23,7 @@ import java.io.StringReader
  *
  * Reference: HiDvrProtocol.java, HiCapabilityManager.java
  */
-class HiDvrSettingsRepository {
+class HiDvrSettingsRepository(private val context: Context) {
 
     companion object {
         private const val TAG     = "Trafy.SettingsRepo"
@@ -36,7 +37,7 @@ class HiDvrSettingsRepository {
          */
         private val CAM_TYPE_KEYS = setOf(
             "MIRROR", "WATERMARKID", "MD_SENSITIVITY", "ENC_PAYLOAD_TYPE",
-            "FLIP", "Rec_Split_Time", "MEDIAMODE", "ENABLEWATERMARK", "ANTIFLICKER"
+            "FLIP", "Rec_Split_Time", "MEDIAMODE", "ENABLEWATERMARK"
         )
 
         /**
@@ -48,8 +49,15 @@ class HiDvrSettingsRepository {
         private val DEFAULT_DROPDOWN_KEYS = listOf(
             "MEDIAMODE", "ENC_PAYLOAD_TYPE", "AUDIO", "Rec_Split_Time",
             "GSR_SENSITIVITY", "GSR_PARKING", "LOW_POWER_PROTECT",
-            "VOLUME", "ANTIFLICKER", "FLIP", "MIRROR",
+            "VOLUME", "FLIP", "MIRROR",
         )
+
+        /**
+         * Keys we hide from the UI even if the camera advertises them.
+         * `ANTIFLICKER` is rejected by the firmware (writes are no-ops) and the OEM
+         * GoLook app never shows it — keeping it would surface a dead control.
+         */
+        private val EXCLUDED_KEYS = setOf("ANTIFLICKER")
 
         /** Always-present action items for old-HiSilicon devices. */
         private val DEFAULT_ACTION_KEYS = listOf(
@@ -82,7 +90,7 @@ class HiDvrSettingsRepository {
         val xmlBody = DashcamHttpClient.get("http://$deviceIp/app/bin/cammenu.xml")
         val skeletons: List<SettingItem> = if (xmlBody != null) {
             Log.d(TAG, "cammenu.xml received (${xmlBody.length} bytes)")
-            val parsed = parseMenuXml(xmlBody)
+            val parsed = parseMenuXml(xmlBody).filter { it.key !in EXCLUDED_KEYS }
             Log.i(TAG, "Parsed ${parsed.size} menu items from XML")
             parsed
         } else {
@@ -133,10 +141,10 @@ class HiDvrSettingsRepository {
                 } else {
                     val options = raw.split(",")
                         .filter { it.isNotEmpty() }
-                        .map { value -> SettingOption(value, HiDvrTranslations.optionLabel(key, value, value)) }
+                        .map { value -> SettingOption(value, HiDvrTranslations.optionLabel(context, key, value, value)) }
                     SettingItem(
                         key               = key,
-                        title             = HiDvrTranslations.title(key, key),
+                        title             = HiDvrTranslations.title(context, key, key),
                         currentValue      = "",
                         currentValueLabel = "",
                         options           = options,
@@ -148,7 +156,7 @@ class HiDvrSettingsRepository {
         val actions = DEFAULT_ACTION_KEYS.map { key ->
             SettingItem(
                 key               = key,
-                title             = HiDvrTranslations.title(key, key),
+                title             = HiDvrTranslations.title(context, key, key),
                 currentValue      = "",
                 currentValueLabel = "",
                 options           = emptyList(),
@@ -313,7 +321,7 @@ class HiDvrSettingsRepository {
                             val rawId    = parser.getAttributeValue(null, "id")    ?: ""
                             val rawTitle = parser.getAttributeValue(null, "title") ?: rawId
                             menuKey     = rawId
-                            menuTitle   = HiDvrTranslations.title(rawId, rawTitle)
+                            menuTitle   = HiDvrTranslations.title(context, rawId, rawTitle)
                             menuOptions.clear()
                             insideMenu  = true
                         }
@@ -321,7 +329,7 @@ class HiDvrSettingsRepository {
                             val id      = parser.getAttributeValue(null, "id")      ?: ""
                             val content = parser.getAttributeValue(null, "content") ?: id
                             if (id.isNotEmpty()) {
-                                val label = HiDvrTranslations.optionLabel(menuKey, id, content)
+                                val label = HiDvrTranslations.optionLabel(context, menuKey, id, content)
                                 menuOptions.add(SettingOption(id, label))
                             }
                         }

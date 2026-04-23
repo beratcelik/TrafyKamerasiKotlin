@@ -12,6 +12,7 @@ import com.example.trafykamerasikotlin.data.vision.ModelSource
 import com.example.trafykamerasikotlin.data.vision.ModelTelemetry
 import com.example.trafykamerasikotlin.data.vision.VehicleClass
 import com.example.trafykamerasikotlin.data.vision.ncnn.NcnnBridge
+import com.example.trafykamerasikotlin.data.vision.ncnn.NcnnDetectorSlot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -35,9 +36,9 @@ class NcnnVehicleDetector(
 
     override suspend fun initialize() {
         withContext(Dispatchers.Default) {
-            telemetry = ModelLoader.loadYolo(context, modelSource, useGpu)
+            telemetry = ModelLoader.loadYolo(context, SLOT, modelSource, useGpu)
                 ?: throw IllegalStateException(
-                    "Failed to load YOLO model: ${NcnnBridge.lastError().orEmpty()}"
+                    "Failed to load YOLO model: ${NcnnBridge.lastError(SLOT).orEmpty()}"
                 )
             Log.i(TAG, "initialized: $telemetry")
         }
@@ -45,7 +46,7 @@ class NcnnVehicleDetector(
 
     override suspend fun detect(frame: Frame): List<Detection> = withContext(Dispatchers.Default) {
         val bitmap = frame.bitmap.asArgb8888()
-        val flat = NcnnBridge.detectBitmap(bitmap, confThreshold, iouThreshold)
+        val flat = NcnnBridge.detectBitmap(SLOT, bitmap, confThreshold, iouThreshold)
         if (flat.isEmpty()) return@withContext emptyList()
 
         val out = ArrayList<Detection>(flat.size / 6)
@@ -65,7 +66,7 @@ class NcnnVehicleDetector(
     }
 
     override fun release() {
-        NcnnBridge.release()
+        NcnnBridge.release(SLOT)
         telemetry = null
     }
 
@@ -82,6 +83,7 @@ class NcnnVehicleDetector(
 
     companion object {
         private const val TAG = "Trafy.VehicleDetector"
+        private val SLOT = NcnnDetectorSlot.VEHICLE
 
         /**
          * Asset paths for the bundled YOLO detectors. Matches the layout

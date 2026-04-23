@@ -2,18 +2,24 @@
 """
 export-yolo-ncnn.py — export a YOLO detector to NCNN format and drop the
 resulting .param + .bin + labels.txt into the Android app's assets so the
-NcnnVehicleDetector can find them.
+native vision layer can find them.
 
-Default model is YOLO26n (Ultralytics 2025/2026). Pass --yolo11n for the
-documented fallback if the YOLO26 export tooling misbehaves.
+Two families of models are exportable:
+
+  - Vehicle detectors (COCO-pretrained Ultralytics YOLO). Detects cars, buses,
+    trucks, etc. The default is YOLO11n.
+  - License plate detector (morsetechlab/yolov11-license-plate-detection, nano
+    variant). Single-class `license_plate` detector. Auto-downloaded from
+    Hugging Face on first use.
 
 Usage:
-    scripts/export-yolo-ncnn.py                # YOLO26n @ 640×640
-    scripts/export-yolo-ncnn.py --yolo11n      # YOLO11n @ 640×640
-    scripts/export-yolo-ncnn.py --imgsz 416    # smaller input (live mode later)
+    scripts/export-yolo-ncnn.py                 # YOLO11n vehicle @ 640×640
+    scripts/export-yolo-ncnn.py --yolo26n       # YOLO26n (Vulkan-only; CPU backend bug)
+    scripts/export-yolo-ncnn.py --plate         # plate detector @ 640×640
+    scripts/export-yolo-ncnn.py --imgsz 416     # smaller input (live mode later)
 
 Requirements:
-    pip install ultralytics
+    pip install ultralytics huggingface_hub
 """
 
 from __future__ import annotations
@@ -61,13 +67,15 @@ def sha256_prefix(path: Path, n: int = 16) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     variant = ap.add_mutually_exclusive_group()
-    variant.add_argument("--yolo26n", dest="model", action="store_const", const="yolo26n",
-                        help="export YOLO26n (default)")
     variant.add_argument("--yolo11n", dest="model", action="store_const", const="yolo11n",
-                        help="export YOLO11n (fallback)")
+                        help="export YOLO11n vehicle detector (default)")
+    variant.add_argument("--yolo26n", dest="model", action="store_const", const="yolo26n",
+                        help="export YOLO26n vehicle detector (Vulkan-only)")
+    variant.add_argument("--plate", dest="model", action="store_const", const="plate",
+                        help="export license-plate detector (morsetechlab yolo11n-based)")
     ap.add_argument("--imgsz", type=int, default=640, help="export input size (default 640)")
     ap.add_argument("--half", action="store_true", help="export FP16 weights (smaller, marginal accuracy loss)")
-    ap.set_defaults(model="yolo26n")
+    ap.set_defaults(model="yolo11n")
     args = ap.parse_args()
 
     try:
@@ -77,9 +85,25 @@ def main() -> int:
         return 2
 
     model_name = args.model
-    weights = f"{model_name}.pt"
+    is_plate = (model_name == "plate")
+    # For the plate variant, fetch the pretrained weights from Hugging Face.
+    # Everyone else is an Ultralytics default (auto-downloaded from their CDN).
+    if is_plate:
+        try:
+            from huggingface_hub import hf_hub_download  # type: ignore
+        except ImportError:
+            print("huggingface_hub not installed. Run: pip install huggingface_hub", file=sys.stderr)
+            return 2
+        print("Downloading morsetechlab/yolov11-license-plate-detection (nano) ...")
+        weights = hf_hub_download(
+            repo_id="morsetechlab/yolov11-license-plate-detection",
+            filename="license-plate-finetune-v1n.pt",
+        )
+        print(f"  weights at: {weights}")
+    else:
+        weights = f"{model_name}.pt"
+        print(f"Loading {weights} (will auto-download if missing) ...")
 
-    print(f"Loading {weights} (will auto-download if missing) ...")
     yolo = YOLO(weights)
 
     print(f"Exporting to NCNN (imgsz={args.imgsz}, half={args.half}) ...")
@@ -109,7 +133,12 @@ def main() -> int:
 
     shutil.copyfile(param_src, param_dst)
     shutil.copyfile(bin_src, bin_dst)
-    labels_dst.write_text("\n".join(COCO_CLASSES) + "\n", encoding="utf-8")
+    # Plate detector is single-class. Vehicle detectors ship the full COCO
+    # label list so VehicleClass.fromCocoIndex() stays in sync.
+    if is_plate:
+        labels_dst.write_text("license_plate\n", encoding="utf-8")
+    else:
+        labels_dst.write_text("\n".join(COCO_CLASSES) + "\n", encoding="utf-8")
 
     print()
     print(f"Installed into {target_dir.relative_to(REPO_ROOT)}/")
@@ -123,8 +152,9 @@ def main() -> int:
     # Ultralytics leaves the intermediate NCNN export directory and the .pt
     # weights in the current working directory. We've copied what we need into
     # the app's assets; clean the scratch up so git status stays tidy.
-    scratch_dirs = [Path.cwd() / f"{model_name}_ncnn_model"]
-    scratch_files = [Path.cwd() / f"{model_name}.pt"]
+    scratch_stem = "license-plate-finetune-v1n" if is_plate else model_name
+    scratch_dirs = [Path.cwd() / f"{scratch_stem}_ncnn_model"]
+    scratch_files = [Path.cwd() / f"{scratch_stem}.pt"] if not is_plate else []
     for d in scratch_dirs:
         if d.is_dir():
             shutil.rmtree(d, ignore_errors=True)

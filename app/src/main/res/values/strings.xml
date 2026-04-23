@@ -198,14 +198,15 @@
     <string name="vision_debug_latency_header">Inference latency (ms)</string>
     <string name="vision_debug_latency_no_samples">No samples yet.</string>
     <string name="vision_debug_latency_fmt">n=%1$d • p50=%2$d • p95=%3$d • avg=%4$d • min=%5$d • max=%6$d</string>
-    <string name="vision_debug_model_header">Model</string>
+    <string name="vision_debug_model_header">Vehicle model</string>
+    <string name="vision_debug_plate_model_header">Plate model</string>
     <string name="vision_debug_model_summary_fmt">%1$.1f MB • loaded in %2$d ms • %3$s</string>
     <string name="vision_debug_state_idle">Ready. Pick a video to begin.</string>
     <string name="vision_debug_state_decoding">Decoding frame…</string>
     <string name="vision_debug_state_loading">Loading model…</string>
     <string name="vision_debug_state_inferring">Running inference…</string>
     <string name="vision_debug_state_benchmarking">Benchmarking…</string>
-    <string name="vision_debug_state_frame_fmt">%1$d detection(s) in %2$d ms</string>
+    <string name="vision_debug_state_frame_fmt">%1$d vehicle(s) in %2$d ms • %3$d plate(s)</string>
     <string name="vision_debug_state_benchmark_fmt">cold=%1$dms • p50=%2$dms • p95=%3$dms</string>
     <string name="vision_debug_state_backend_missing">Native backend unavailable — see card above.</string>
 

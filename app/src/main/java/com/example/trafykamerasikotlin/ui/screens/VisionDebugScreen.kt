@@ -64,6 +64,7 @@ fun VisionDebugScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val telemetry by viewModel.telemetry.collectAsStateWithLifecycle()
+    val plateTelemetry by viewModel.plateTelemetry.collectAsStateWithLifecycle()
     val useGpu by viewModel.useGpu.collectAsStateWithLifecycle()
     val scene by viewModel.scene.collectAsStateWithLifecycle()
     val bitmap by viewModel.currentBitmap.collectAsStateWithLifecycle()
@@ -102,7 +103,8 @@ fun VisionDebugScreen(
 
         LatencyCard(latency)
 
-        telemetry?.let { ModelTelemetryCard(it) }
+        telemetry?.let { ModelTelemetryCard(it, headerRes = R.string.vision_debug_model_header) }
+        plateTelemetry?.let { ModelTelemetryCard(it, headerRes = R.string.vision_debug_plate_model_header) }
 
         StateFooter(state)
 
@@ -247,10 +249,13 @@ private fun LatencyCard(snap: com.example.trafykamerasikotlin.data.vision.util.L
 }
 
 @Composable
-private fun ModelTelemetryCard(t: com.example.trafykamerasikotlin.data.vision.ModelTelemetry) {
+private fun ModelTelemetryCard(
+    t: com.example.trafykamerasikotlin.data.vision.ModelTelemetry,
+    headerRes: Int = R.string.vision_debug_model_header,
+) {
     SectionCard {
         Text(
-            text  = stringResource(R.string.vision_debug_model_header),
+            text  = stringResource(headerRes),
             style = MaterialTheme.typography.titleSmall,
             color = ColorTextSecondary,
         )
@@ -278,7 +283,10 @@ private fun StateFooter(state: VisionDebugState) {
         VisionDebugState.Inferring        -> ColorTextSecondary to stringResource(R.string.vision_debug_state_inferring)
         VisionDebugState.Benchmarking     -> ColorTextSecondary to stringResource(R.string.vision_debug_state_benchmarking)
         is VisionDebugState.FrameResult   ->
-            ColorSuccess to stringResource(R.string.vision_debug_state_frame_fmt, state.numDetections, state.latencyMs)
+            ColorSuccess to stringResource(
+                R.string.vision_debug_state_frame_fmt,
+                state.numDetections, state.latencyMs, state.numPlates,
+            )
         is VisionDebugState.BenchmarkDone ->
             ColorSuccess to stringResource(R.string.vision_debug_state_benchmark_fmt,
                 state.coldStartMs, state.snapshot.p50, state.snapshot.p95)

@@ -7,9 +7,12 @@ import android.util.Log
 import android.util.Size
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.trafykamerasikotlin.data.vision.Detection
 import com.example.trafykamerasikotlin.data.vision.Frame
 import com.example.trafykamerasikotlin.data.vision.ModelTelemetry
+import com.example.trafykamerasikotlin.data.vision.PlateDetection
 import com.example.trafykamerasikotlin.data.vision.TrackedScene
+import com.example.trafykamerasikotlin.data.vision.detectors.NcnnPlateDetector
 import com.example.trafykamerasikotlin.data.vision.detectors.NcnnVehicleDetector
 import com.example.trafykamerasikotlin.data.vision.frame.FileFrameSource
 import com.example.trafykamerasikotlin.data.vision.ncnn.LibLoadState
@@ -45,6 +48,9 @@ class VisionDebugViewModel(app: Application) : AndroidViewModel(app) {
     private val _telemetry = MutableStateFlow<ModelTelemetry?>(null)
     val telemetry: StateFlow<ModelTelemetry?> = _telemetry.asStateFlow()
 
+    private val _plateTelemetry = MutableStateFlow<ModelTelemetry?>(null)
+    val plateTelemetry: StateFlow<ModelTelemetry?> = _plateTelemetry.asStateFlow()
+
     private val _scene = MutableStateFlow<TrackedScene?>(null)
     val scene: StateFlow<TrackedScene?> = _scene.asStateFlow()
 
@@ -58,6 +64,7 @@ class VisionDebugViewModel(app: Application) : AndroidViewModel(app) {
 
     private val histogram = LatencyHistogram()
     private var detector: NcnnVehicleDetector? = null
+    private var plateDetector: NcnnPlateDetector? = null
 
     init {
         NcnnBridge.ensureLibLoaded()
@@ -72,6 +79,9 @@ class VisionDebugViewModel(app: Application) : AndroidViewModel(app) {
             detector?.release()
             detector = null
             _telemetry.value = null
+            plateDetector?.release()
+            plateDetector = null
+            _plateTelemetry.value = null
         }
     }
 
@@ -96,7 +106,8 @@ class VisionDebugViewModel(app: Application) : AndroidViewModel(app) {
             // cold-start: first call includes any JIT/Vulkan pipeline compilation.
             val cold = runCatching { measureTimeMillis { det.detect(synthetic) } }.getOrDefault(-1L)
             if (cold < 0) {
-                _state.value = VisionDebugState.Error("benchmark cold-start failed: ${NcnnBridge.lastError().orEmpty()}")
+                val err = NcnnBridge.lastError(com.example.trafykamerasikotlin.data.vision.ncnn.NcnnDetectorSlot.VEHICLE).orEmpty()
+                _state.value = VisionDebugState.Error("benchmark cold-start failed: $err")
                 return@launch
             }
 
@@ -133,21 +144,72 @@ class VisionDebugViewModel(app: Application) : AndroidViewModel(app) {
         _currentBitmap.value = frame.bitmap
 
         _state.value = VisionDebugState.Inferring
-        val started = System.nanoTime()
+        val startedVeh = System.nanoTime()
         val dets = runCatching { det.detect(frame) }.getOrElse {
             _state.value = VisionDebugState.Error("inference failed: ${it.message ?: "unknown"}")
             return
         }
-        val latencyMs = ((System.nanoTime() - started) / 1_000_000L).toInt()
-        histogram.record(latencyMs)
+        val vehicleLatencyMs = ((System.nanoTime() - startedVeh) / 1_000_000L).toInt()
+        histogram.record(vehicleLatencyMs)
         _latency.value = histogram.snapshot()
+
+        // Chunk 2: run plate detection inside each vehicle's bounding box.
+        // Runs only if the plate detector is initialized; failure to load
+        // doesn't break the vehicle pipeline.
+        val (plateDets, plateLatencyMs) = runPlateDetectionIfReady(frame, dets)
+
         _scene.value = TrackedScene(
             sourceFrameSize    = Size(frame.bitmap.width, frame.bitmap.height),
             detections         = dets,
             timestampNanos     = frame.timestampNanos,
-            inferenceLatencyMs = latencyMs,
+            inferenceLatencyMs = vehicleLatencyMs,
+            plates             = plateDets,
+            plateLatencyMs     = plateLatencyMs,
         )
-        _state.value = VisionDebugState.FrameResult(dets.size, latencyMs)
+        _state.value = VisionDebugState.FrameResult(dets.size, vehicleLatencyMs, plateDets?.size ?: 0)
+    }
+
+    private suspend fun runPlateDetectionIfReady(
+        frame: Frame,
+        vehicles: List<Detection>,
+    ): Pair<List<PlateDetection>?, Int?> {
+        val plateDet = ensurePlateDetectorOrLogError() ?: return null to null
+        if (vehicles.isEmpty()) return emptyList<PlateDetection>() to 0
+
+        val startedPlate = System.nanoTime()
+        val plates = mutableListOf<PlateDetection>()
+        vehicles.forEachIndexed { idx, v ->
+            val x = v.bbox.left.toInt()
+            val y = v.bbox.top.toInt()
+            val w = (v.bbox.right - v.bbox.left).toInt()
+            val h = (v.bbox.bottom - v.bbox.top).toInt()
+            plates += runCatching {
+                plateDet.detectInCrop(frame.bitmap, idx, x, y, w, h)
+            }.getOrElse {
+                Log.w(TAG, "plate detect on vehicle $idx failed", it)
+                emptyList()
+            }
+        }
+        val latencyMs = ((System.nanoTime() - startedPlate) / 1_000_000L).toInt()
+        return plates to latencyMs
+    }
+
+    private suspend fun ensurePlateDetectorOrLogError(): NcnnPlateDetector? {
+        val existing = plateDetector
+        if (existing != null && _plateTelemetry.value != null) return existing
+        val built = NcnnPlateDetector(
+            context     = getApplication(),
+            useGpu      = _useGpu.value,
+        )
+        return try {
+            built.initialize()
+            plateDetector = built
+            _plateTelemetry.value = built.modelTelemetry
+            built
+        } catch (t: Throwable) {
+            Log.w(TAG, "plate detector init failed; continuing without plates", t)
+            null
+        }
     }
 
     /** Returns null and pushes an error state when the detector can't be prepared. */
@@ -176,8 +238,9 @@ class VisionDebugViewModel(app: Application) : AndroidViewModel(app) {
             _telemetry.value = builder.modelTelemetry
             builder
         } catch (t: Throwable) {
+            val err = NcnnBridge.lastError(com.example.trafykamerasikotlin.data.vision.ncnn.NcnnDetectorSlot.VEHICLE).orEmpty()
             _state.value = VisionDebugState.Error(
-                "model load failed: ${t.message ?: "unknown"} • ${NcnnBridge.lastError().orEmpty()}"
+                "model load failed: ${t.message ?: "unknown"} • $err"
             )
             null
         }
@@ -201,6 +264,8 @@ class VisionDebugViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         detector?.release()
         detector = null
+        plateDetector?.release()
+        plateDetector = null
         super.onCleared()
     }
 
@@ -214,7 +279,7 @@ sealed class VisionDebugState {
     object Inferring : VisionDebugState()
     object Benchmarking : VisionDebugState()
     data class BenchmarkDone(val coldStartMs: Int, val snapshot: LatencyHistogram.Snapshot) : VisionDebugState()
-    data class FrameResult(val numDetections: Int, val latencyMs: Int) : VisionDebugState()
+    data class FrameResult(val numDetections: Int, val latencyMs: Int, val numPlates: Int = 0) : VisionDebugState()
     data class BackendMissing(val state: LibLoadState) : VisionDebugState()
     data class Error(val message: String) : VisionDebugState()
 }

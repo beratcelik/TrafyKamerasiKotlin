@@ -116,7 +116,7 @@ void decode_yolo_output(const ncnn::Mat& out_blob,
 
 }  // namespace
 
-YoloDetector::YoloDetector() = default;
+YoloDetector::YoloDetector(std::string debug_tag) : debug_tag_(std::move(debug_tag)) {}
 
 YoloDetector::~YoloDetector() {
     // IMPORTANT: do NOT call ncnn::destroy_gpu_instance() here.
@@ -134,22 +134,17 @@ YoloDetector::~YoloDetector() {
     net_.clear();
 }
 
-// Exposed to the file-scope one-shot diagnostics so they re-arm on each
-// load() call (e.g. when the user flips the Vulkan toggle and we rebuild
-// the detector). Without this reset we'd only ever see diagnostics from the
-// very first backend configured during a process lifetime.
-static bool s_debug_input_logged  = false;
-static bool s_debug_shape_logged  = false;
-
 bool YoloDetector::load(AAssetManager* mgr,
                         const char*    param_asset_name,
                         const char*    bin_asset_name,
-                        bool           use_gpu) {
+                        bool           use_gpu,
+                        int            target_size) {
     last_error_.clear();
     if (!mgr) { last_error_ = "null AAssetManager"; return false; }
 
-    s_debug_input_logged = false;
-    s_debug_shape_logged = false;
+    target_size_ = target_size;
+    debug_input_logged_ = false;
+    debug_shape_logged_ = false;
 
     if (use_gpu) {
         ncnn::create_gpu_instance();
@@ -197,7 +192,9 @@ bool YoloDetector::load(AAssetManager* mgr,
     }
 
     loaded_ = true;
-    LOGI("YOLO loaded: %s + %s (vulkan=%d)", param_asset_name, bin_asset_name, vulkan_active_ ? 1 : 0);
+    LOGI("[%s] loaded: %s + %s (vulkan=%d target=%d)",
+         debug_tag_.c_str(), param_asset_name, bin_asset_name,
+         vulkan_active_ ? 1 : 0, target_size_);
     return true;
 }
 
@@ -234,8 +231,8 @@ int YoloDetector::detect(const unsigned char*   rgba,
     // Log pixel stats once per (re)load so the CPU vs Vulkan flip both get
     // captured — previously static-local flags in a long-lived .so would have
     // suppressed everything after the first inference of the process.
-    if (!s_debug_input_logged) {
-        s_debug_input_logged = true;
+    if (!debug_input_logged_) {
+        debug_input_logged_ = true;
         float mn = 1e9f, mx = -1e9f, sum = 0; int n = 0;
         for (int c = 0; c < in.c; ++c) {
             const float* p = in.channel(c);
@@ -246,8 +243,8 @@ int YoloDetector::detect(const unsigned char*   rgba,
                 n++;
             }
         }
-        LOGI("YOLO input post-normalize min=%.4f max=%.4f mean=%.4f w=%d h=%d c=%d",
-             mn, mx, sum / std::max(1, n), in.w, in.h, in.c);
+        LOGI("[%s] input post-normalize min=%.4f max=%.4f mean=%.4f w=%d h=%d c=%d",
+             debug_tag_.c_str(), mn, mx, sum / std::max(1, n), in.w, in.h, in.c);
     }
 
     ncnn::Extractor ex = net_.create_extractor();
@@ -272,12 +269,12 @@ int YoloDetector::detect(const unsigned char*   rgba,
     // One-shot diagnostic: log the output tensor shape + per-channel score
     // maxima so we can see whether any class anywhere in the 8400 anchors has
     // a non-trivial score. Box rows (0-3) should have pixel coordinates; class
-    // rows (4-83) should have sigmoided scores in [0, 1]. Re-armed in load().
-    if (!s_debug_shape_logged) {
-        s_debug_shape_logged = true;
-        LOGI("YOLO output shape: w=%d h=%d c=%d d=%d dims=%d elemsize=%d",
-             out_blob.w, out_blob.h, out_blob.c, out_blob.d, out_blob.dims,
-             (int)out_blob.elemsize);
+    // rows (4+) should have sigmoided scores in [0, 1]. Re-armed in load().
+    if (!debug_shape_logged_) {
+        debug_shape_logged_ = true;
+        LOGI("[%s] output shape: w=%d h=%d c=%d d=%d dims=%d elemsize=%d",
+             debug_tag_.c_str(), out_blob.w, out_blob.h, out_blob.c, out_blob.d,
+             out_blob.dims, (int)out_blob.elemsize);
         if (out_blob.dims >= 2 && out_blob.w > 0 && out_blob.h > 0) {
             int best_cls = -1; float best_cls_score = 0.0f; int best_anchor = -1;
             for (int c = 4; c < out_blob.h; ++c) {
@@ -288,8 +285,8 @@ int YoloDetector::detect(const unsigned char*   rgba,
                     }
                 }
             }
-            LOGI("YOLO best class-score across all anchors: cls=%d anchor=%d score=%.6f",
-                 best_cls, best_anchor, best_cls_score);
+            LOGI("[%s] best class-score across all anchors: cls=%d anchor=%d score=%.6f",
+                 debug_tag_.c_str(), best_cls, best_anchor, best_cls_score);
             // Dump the box regressions for the winning anchor — this is the
             // one whose detection we care about. If it's (0,0,0,0), we've
             // confirmed the box-head is broken on this backend.
@@ -341,6 +338,7 @@ int YoloDetector::detect(const unsigned char*   rgba,
 
 std::string YoloDetector::probe() const {
     std::ostringstream ss;
+    ss << "[" << debug_tag_ << "] ";
     ss << "ncnn " << "(net ready=" << (loaded_ ? "yes" : "no") << ")";
     ss << " vulkan=" << (vulkan_active_ ? "on" : "off");
     if (vulkan_active_) {

@@ -197,14 +197,15 @@
     <string name="vision_debug_latency_header">Çıkarım gecikmesi (ms)</string>
     <string name="vision_debug_latency_no_samples">Henüz örnek yok.</string>
     <string name="vision_debug_latency_fmt">n=%1$d • p50=%2$d • p95=%3$d • ort=%4$d • min=%5$d • maks=%6$d</string>
-    <string name="vision_debug_model_header">Model</string>
+    <string name="vision_debug_model_header">Araç modeli</string>
+    <string name="vision_debug_plate_model_header">Plaka modeli</string>
     <string name="vision_debug_model_summary_fmt">%1$.1f MB • %2$d ms\'de yüklendi • %3$s</string>
     <string name="vision_debug_state_idle">Hazır. Başlamak için bir video seçin.</string>
     <string name="vision_debug_state_decoding">Kare çözümleniyor…</string>
     <string name="vision_debug_state_loading">Model yükleniyor…</string>
     <string name="vision_debug_state_inferring">Çıkarım çalışıyor…</string>
     <string name="vision_debug_state_benchmarking">Kıyaslama yapılıyor…</string>
-    <string name="vision_debug_state_frame_fmt">%1$d tespit • %2$d ms</string>
+    <string name="vision_debug_state_frame_fmt">%1$d araç • %2$d ms • %3$d plaka</string>
     <string name="vision_debug_state_benchmark_fmt">soğuk=%1$dms • p50=%2$dms • p95=%3$dms</string>
     <string name="vision_debug_state_backend_missing">Yerel çekirdek kullanılamıyor — yukarıdaki karta bakın.</string>
 

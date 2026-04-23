@@ -15,18 +15,22 @@ import com.example.trafykamerasikotlin.data.vision.TrackedScene
 /**
  * Compose primitive that draws bounding boxes + class+confidence labels on
  * top of whatever sits behind it. Stable API — reused across Chunks 2–6 once
- * plate boxes and track IDs start appearing on the same canvas.
+ * plate OCR text and track IDs start appearing on the same canvas.
  *
- * @param scene detections in source-frame coordinates
+ * Chunk 2: draws vehicle boxes (red) AND plate boxes (yellow) in one pass
+ * so they share a single coordinate transform. The scene's `plates` list
+ * is in the same original-frame coordinate space as `detections`.
+ *
+ * @param scene detections + plates in source-frame coordinates
  * @param sourceSize the dimensions of the frame the detections reference
- * @param strokeColor default red; override per-call for plates (Chunk 2 yellow), etc.
  */
 @Composable
 fun BoundingBoxOverlay(
     scene: TrackedScene?,
     sourceSize: Size,
     modifier: Modifier = Modifier,
-    strokeColor: Color = Color.Red,
+    vehicleColor: Color = Color.Red,
+    plateColor:   Color = Color.Yellow,
 ) {
     if (scene == null || sourceSize.width <= 0 || sourceSize.height <= 0) return
 
@@ -43,7 +47,10 @@ fun BoundingBoxOverlay(
         val offY = (vh - drawH) / 2f
 
         val strokePx = 2.dp.toPx()
+        val labelPx = 14.dp.toPx()
+        val plateLabelPx = 11.dp.toPx()
 
+        // Vehicles first so plates draw on top when they overlap.
         scene.detections.forEach { det ->
             val r = Rect(
                 offset = Offset(offX + det.bbox.left  * scale, offY + det.bbox.top    * scale),
@@ -53,14 +60,13 @@ fun BoundingBoxOverlay(
                 ),
             )
             drawRect(
-                color = strokeColor,
+                color = vehicleColor,
                 topLeft = r.topLeft,
                 size = r.size,
                 style = Stroke(width = strokePx),
             )
             val label = "${det.cls.name.lowercase()}  ${"%.2f".format(det.confidence)}"
             drawContext.canvas.nativeCanvas.apply {
-                val labelPx = 14.dp.toPx()
                 val paint = android.graphics.Paint().apply {
                     color = android.graphics.Color.WHITE
                     textSize = labelPx
@@ -68,6 +74,33 @@ fun BoundingBoxOverlay(
                     setShadowLayer(3f, 0f, 0f, android.graphics.Color.BLACK)
                 }
                 drawText(label, r.topLeft.x + 4f, (r.topLeft.y - 4f).coerceAtLeast(labelPx), paint)
+            }
+        }
+
+        scene.plates?.forEach { plate ->
+            val r = Rect(
+                offset = Offset(offX + plate.bbox.left  * scale, offY + plate.bbox.top    * scale),
+                size   = androidx.compose.ui.geometry.Size(
+                    width  = plate.bbox.width()  * scale,
+                    height = plate.bbox.height() * scale,
+                ),
+            )
+            drawRect(
+                color = plateColor,
+                topLeft = r.topLeft,
+                size = r.size,
+                style = Stroke(width = strokePx),
+            )
+            val label = "plate ${"%.2f".format(plate.confidence)}"
+            drawContext.canvas.nativeCanvas.apply {
+                val paint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.YELLOW
+                    textSize = plateLabelPx
+                    isAntiAlias = true
+                    setShadowLayer(3f, 0f, 0f, android.graphics.Color.BLACK)
+                }
+                drawText(label, r.topLeft.x + 2f,
+                    (r.topLeft.y + r.size.height + plateLabelPx + 2f), paint)
             }
         }
     }

@@ -3,6 +3,7 @@ package com.example.trafykamerasikotlin.data.vision
 import android.content.Context
 import android.util.Log
 import com.example.trafykamerasikotlin.data.vision.ncnn.NcnnBridge
+import com.example.trafykamerasikotlin.data.vision.ncnn.NcnnDetectorSlot
 import java.security.MessageDigest
 import kotlin.system.measureTimeMillis
 
@@ -49,8 +50,10 @@ object ModelLoader {
      */
     fun loadYolo(
         context: Context,
+        slot:    NcnnDetectorSlot,
         source:  ModelSource,
         useGpu:  Boolean,
+        targetSize: Int = 640,
     ): ModelTelemetry? {
         val lib = NcnnBridge.ensureLibLoaded()
         if (lib !is com.example.trafykamerasikotlin.data.vision.ncnn.LibLoadState.Loaded) {
@@ -59,15 +62,17 @@ object ModelLoader {
         }
 
         return when (source) {
-            is ModelSource.Assets -> loadFromAssets(context, source, useGpu)
+            is ModelSource.Assets    -> loadFromAssets(context, slot, source, useGpu, targetSize)
             is ModelSource.LocalFile -> loadFromLocalFile(source, useGpu)
         }
     }
 
     private fun loadFromAssets(
         context: Context,
+        slot:    NcnnDetectorSlot,
         source:  ModelSource.Assets,
         useGpu:  Boolean,
+        targetSize: Int,
     ): ModelTelemetry? {
         val assets = context.assets
         val (paramSize, paramSha) = assets.fingerprint(source.paramAssetPath) ?: return null.also {
@@ -79,10 +84,10 @@ object ModelLoader {
 
         var ok = false
         val elapsed = measureTimeMillis {
-            ok = NcnnBridge.loadModel(assets, source.paramAssetPath, source.binAssetPath, useGpu)
+            ok = NcnnBridge.loadModel(slot, assets, source.paramAssetPath, source.binAssetPath, useGpu, targetSize)
         }
         if (!ok) {
-            Log.e(TAG, "NcnnBridge.loadModel failed: ${NcnnBridge.lastError()}")
+            Log.e(TAG, "NcnnBridge.loadModel($slot) failed: ${NcnnBridge.lastError(slot)}")
             return null
         }
         return ModelTelemetry(

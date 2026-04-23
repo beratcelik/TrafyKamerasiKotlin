@@ -7,10 +7,11 @@ import com.example.trafykamerasikotlin.BuildConfig
 /**
  * Single point of contact between Kotlin and libtrafy_vision.so.
  *
- * Deliberately `object` (process-wide singleton) — the C++ detector instance
- * is also a singleton guarded by a mutex on the native side. Double-init is
- * guarded here too so we don't `System.loadLibrary` twice across ViewModel
- * recreates.
+ * The native layer holds **multiple** YoloDetector instances keyed by an
+ * integer slot id, so a long-lived vehicle detector and a long-lived plate
+ * detector can coexist without either swapping its loaded model per frame
+ * (which would cost ~5 seconds of Vulkan shader compilation each time).
+ * Slot ids are chosen by Kotlin callers — see [NcnnDetectorSlot].
  *
  * If the native library is unavailable (collaborator hasn't run
  * `scripts/setup-ncnn.sh` + `scripts/export-yolo-ncnn.py`), [ensureLibLoaded]
@@ -33,9 +34,6 @@ object NcnnBridge {
             val current = libState
             if (current !is LibLoadState.NotAttempted) return current
             val next = if (!BuildConfig.NCNN_PREBUILT_BUNDLED) {
-                // CMake was skipped because scripts/setup-ncnn.sh hasn't been run.
-                // Report the specific reason — distinct from "lib built but
-                // missing at runtime" so ops messages are actionable.
                 Log.w(TAG, "NCNN prebuilt blobs not bundled — native lib will not be present")
                 LibLoadState.NotBundled
             } else try {
@@ -54,51 +52,66 @@ object NcnnBridge {
     }
 
     /** Short diagnostic string for the debug screen. */
-    fun probe(): String? =
-        if (ensureLibLoaded() is LibLoadState.Loaded) nativeProbe() else null
+    fun probe(slot: NcnnDetectorSlot): String? =
+        if (ensureLibLoaded() is LibLoadState.Loaded) nativeProbe(slot.id) else null
 
     /** Load a model from the APK's assets. False on failure — see [lastError]. */
     fun loadModel(
-        assets:   AssetManager,
+        slot:       NcnnDetectorSlot,
+        assets:     AssetManager,
         paramAsset: String,
         binAsset:   String,
         useGpu:     Boolean,
+        targetSize: Int = 640,
     ): Boolean = ensureLibLoaded() is LibLoadState.Loaded &&
-        nativeLoadModel(assets, paramAsset, binAsset, useGpu)
+        nativeLoadModel(slot.id, assets, paramAsset, binAsset, useGpu, targetSize)
 
     /**
-     * Run inference. Returns raw `[cls, conf, x1, y1, x2, y2, …]` flat array
-     * in ORIGINAL frame coordinates. Empty on failure.
+     * Run inference on the given slot's loaded model. Returns raw
+     * `[cls, conf, x1, y1, x2, y2, …]` flat array in ORIGINAL bitmap
+     * coordinates. Empty on failure.
      * Bitmap MUST be [android.graphics.Bitmap.Config.ARGB_8888].
      */
     fun detectBitmap(
+        slot:   NcnnDetectorSlot,
         bitmap: android.graphics.Bitmap,
         confThreshold: Float = 0.25f,
         iouThreshold:  Float = 0.45f,
     ): FloatArray =
-        if (ensureLibLoaded() is LibLoadState.Loaded) nativeDetectBitmap(bitmap, confThreshold, iouThreshold)
+        if (ensureLibLoaded() is LibLoadState.Loaded) nativeDetectBitmap(slot.id, bitmap, confThreshold, iouThreshold)
         else floatArrayOf()
 
-    /** Last native error (empty string if none). */
-    fun lastError(): String? =
-        if (ensureLibLoaded() is LibLoadState.Loaded) nativeLastError() else null
+    /** Last native error on this slot (empty string if none). */
+    fun lastError(slot: NcnnDetectorSlot): String? =
+        if (ensureLibLoaded() is LibLoadState.Loaded) nativeLastError(slot.id) else null
 
-    fun release() {
+    fun release(slot: NcnnDetectorSlot) {
         if (libState is LibLoadState.Loaded) {
-            try { nativeRelease() } catch (t: Throwable) { Log.w(TAG, "release() ignored", t) }
+            try { nativeRelease(slot.id) } catch (t: Throwable) { Log.w(TAG, "release($slot) ignored", t) }
         }
     }
 
     // ----- JNI -----
-    @JvmStatic private external fun nativeProbe(): String
+    @JvmStatic private external fun nativeProbe(id: Int): String
     @JvmStatic private external fun nativeLoadModel(
-        assets: AssetManager, paramAsset: String, binAsset: String, useGpu: Boolean,
+        id: Int, assets: AssetManager, paramAsset: String, binAsset: String,
+        useGpu: Boolean, targetSize: Int,
     ): Boolean
     @JvmStatic private external fun nativeDetectBitmap(
-        bitmap: android.graphics.Bitmap, confThreshold: Float, iouThreshold: Float,
+        id: Int, bitmap: android.graphics.Bitmap, confThreshold: Float, iouThreshold: Float,
     ): FloatArray
-    @JvmStatic private external fun nativeLastError(): String
-    @JvmStatic private external fun nativeRelease()
+    @JvmStatic private external fun nativeLastError(id: Int): String
+    @JvmStatic private external fun nativeRelease(id: Int)
+}
+
+/**
+ * Identifies one native YoloDetector instance. Keep this list short — each
+ * slot reserves a fully-loaded model in memory (+Vulkan pipeline, ~30 MB
+ * VRAM). Match these ids with the switch in yolo_jni.cpp::tag_for_id().
+ */
+enum class NcnnDetectorSlot(val id: Int) {
+    VEHICLE(0),
+    PLATE(1),
 }
 
 /** Discrete reasons the native layer might not be callable. */

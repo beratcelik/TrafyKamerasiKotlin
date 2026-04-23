@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -101,6 +102,8 @@ import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
 import com.example.trafykamerasikotlin.data.media.AllwinnerSdInfo
 import com.example.trafykamerasikotlin.data.media.MjpegRtspPlayer
 import com.example.trafykamerasikotlin.ui.components.AllwinnerFilePlayer
+import com.example.trafykamerasikotlin.ui.components.BoundingBoxOverlay
+import com.example.trafykamerasikotlin.ui.viewmodel.LiveVisionOverlayViewModel
 import tv.danmaku.ijk.media.player.IjkMediaPlayer
 
 @Composable
@@ -819,6 +822,26 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
     val bufferingState = remember { mutableStateOf(true) }
     val playerRef      = remember { mutableStateOf<MjpegRtspPlayer?>(null) }
 
+    // AI overlay toggle (default ON). Same pattern as the live Canlı tab —
+    // debug-build-gated for now; release will move the master switch into
+    // Settings. `rememberSaveable` preserves state across rotation/config
+    // change so toggling off and rotating doesn't silently re-enable it.
+    var aiOverlayEnabled by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableStateOf(true)
+    }
+    val aiViewModel: LiveVisionOverlayViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val aiScene by aiViewModel.scene.collectAsStateWithLifecycle()
+    Log.d("MediaScreen", "VideoPlayerOverlay composed: aiOverlayEnabled=$aiOverlayEnabled url=$url")
+    // Keep the onFrame callback current without re-creating the player when
+    // the toggle flips — the SurfaceView factory only runs once.
+    val frameCount = remember { java.util.concurrent.atomic.AtomicInteger(0) }
+    val onFrameRef = remember { mutableStateOf<((android.graphics.Bitmap) -> Unit)?>(null) }
+    onFrameRef.value = if (aiOverlayEnabled) { bmp ->
+        val n = frameCount.incrementAndGet()
+        if (n <= 3 || n % 60 == 0) Log.d("MediaScreen", "VideoPlayerOverlay frame #$n → pipeline")
+        aiViewModel.onFrame(bmp)
+    } else null
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -837,6 +860,10 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
                             player.onFirstFrame = {
                                 bufferingState.value = false
                             }
+                            // Route per-frame bitmaps into the AI pipeline when
+                            // the toggle is on. Indirection via onFrameRef lets
+                            // us flip the toggle without bouncing the player.
+                            player.onFrame = { bmp -> onFrameRef.value?.invoke(bmp) }
                             playerRef.value = player
                             player.start(url)
                         }
@@ -853,6 +880,19 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
             },
             modifier = Modifier.fillMaxSize()
         )
+
+        // AI bounding-box overlay — drawn above the SurfaceView. Only rendered
+        // when the toggle is on AND we actually have a scene to show. The
+        // overlay's fit-center math mirrors the player's, so boxes align.
+        if (aiOverlayEnabled) {
+            aiScene?.let { scene ->
+                BoundingBoxOverlay(
+                    scene = scene,
+                    sourceSize = android.util.Size(scene.sourceFrameSize.width, scene.sourceFrameSize.height),
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
 
         if (bufferingState.value) {
             CircularProgressIndicator(
@@ -873,6 +913,18 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
                 tint               = Color.White
             )
         }
+
+        // AI overlay toggle — top-right, mirrors the Live tab's placement
+        // so muscle memory carries over. Debug-gated for now.
+        if (com.example.trafykamerasikotlin.BuildConfig.DEBUG) {
+            AiOverlayToggleButton(
+                enabled  = aiOverlayEnabled,
+                onToggle = { aiOverlayEnabled = !aiOverlayEnabled },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp),
+            )
+        }
     }
 
     DisposableEffect(url) {
@@ -880,6 +932,56 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
             Log.d("MediaScreen", "VideoPlayerOverlay dispose — stopping MjpegRtspPlayer")
             playerRef.value?.stop()
             playerRef.value = null
+        }
+    }
+}
+
+/**
+ * Round icon toggle for the AI overlay, sized + styled to match the one
+ * used on the Live tab. Kept private to MediaScreen; LiveScreen has its
+ * own copy so the two files stay self-contained while the UX settles.
+ * Both move to Settings for the release build.
+ */
+@Composable
+private fun AiOverlayToggleButton(
+    enabled: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    androidx.compose.foundation.layout.Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.End,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .background(
+                    color = if (enabled) ColorPrimary else ColorSurface.copy(alpha = 0.6f),
+                    shape = androidx.compose.foundation.shape.CircleShape,
+                )
+                .clickable(onClick = onToggle),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector        = Icons.Filled.CameraAlt,
+                contentDescription = stringResource(R.string.live_ai_overlay_toggle_cd),
+                tint               = if (enabled) Color.White else ColorTextSecondary,
+                modifier           = Modifier.size(20.dp),
+            )
+        }
+        if (enabled) {
+            androidx.compose.foundation.layout.Spacer(Modifier.height(6.dp))
+            Text(
+                text  = stringResource(R.string.live_ai_overlay_informational),
+                style = MaterialTheme.typography.labelSmall,
+                color = ColorTextSecondary,
+                modifier = Modifier
+                    .background(
+                        color = Color.Black.copy(alpha = 0.55f),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                    )
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
         }
     }
 }

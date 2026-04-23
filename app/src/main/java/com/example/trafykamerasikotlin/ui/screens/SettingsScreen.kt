@@ -59,6 +59,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.trafykamerasikotlin.BuildConfig
 import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.SettingItem
@@ -81,6 +82,7 @@ import com.example.trafykamerasikotlin.ui.viewmodel.WifiDialogState
 fun SettingsScreen(
     device: DeviceInfo?,
     onRawDump: () -> Unit = {},
+    onVisionDebug: () -> Unit = {},
     onCheckUpdates: () -> Unit = {},
     appVersionName: String = "",
     modifier: Modifier = Modifier,
@@ -118,6 +120,7 @@ fun SettingsScreen(
         when (val state = uiState) {
             is SettingsUiState.NotConnected -> NotConnectedContent(
                 onCheckUpdates = onCheckUpdates,
+                onVisionDebug  = onVisionDebug,
                 versionName    = appVersionName,
             )
 
@@ -131,6 +134,7 @@ fun SettingsScreen(
                 onWifiSettings = viewModel::openWifiSettings,
                 onApnDialog    = viewModel::openApnDialog,
                 onRawDump      = onRawDump,
+                onVisionDebug  = onVisionDebug,
                 onCheckUpdates = onCheckUpdates,
                 appVersionName = appVersionName,
             )
@@ -143,6 +147,7 @@ fun SettingsScreen(
                 onWifiSettings = { },
                 onApnDialog    = { },
                 onRawDump      = onRawDump,
+                onVisionDebug  = onVisionDebug,
                 onCheckUpdates = onCheckUpdates,
                 appVersionName = appVersionName,
             )
@@ -210,6 +215,7 @@ fun SettingsScreen(
 @Composable
 private fun NotConnectedContent(
     onCheckUpdates: () -> Unit,
+    onVisionDebug: () -> Unit,
     versionName: String,
 ) {
     Box(
@@ -252,6 +258,15 @@ private fun NotConnectedContent(
                     style = MaterialTheme.typography.bodySmall,
                     color = ColorTextSecondary,
                 )
+            }
+            if (BuildConfig.DEBUG) {
+                TextButton(onClick = onVisionDebug) {
+                    Text(
+                        text  = stringResource(R.string.vision_debug_entry),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ColorTextSecondary,
+                    )
+                }
             }
         }
     }
@@ -321,6 +336,7 @@ private fun SettingsList(
     onWifiSettings: () -> Unit,
     onApnDialog: () -> Unit,
     onRawDump: () -> Unit,
+    onVisionDebug: () -> Unit,
     onCheckUpdates: () -> Unit,
     appVersionName: String,
 ) {
@@ -368,6 +384,20 @@ private fun SettingsList(
                         style = MaterialTheme.typography.bodySmall,
                         color = ColorTextSecondary
                     )
+                }
+            }
+            if (BuildConfig.DEBUG) {
+                item {
+                    TextButton(
+                        onClick  = onVisionDebug,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text  = stringResource(R.string.vision_debug_entry),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ColorTextSecondary
+                        )
+                    }
                 }
             }
         }

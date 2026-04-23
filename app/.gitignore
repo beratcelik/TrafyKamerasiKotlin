@@ -1,1 +1,10 @@
 /build
+
+# Prebuilt NCNN blobs pulled by scripts/setup-ncnn.sh — regenerated on demand,
+# not suitable for git (large binary artifacts, ~25MB).
+src/main/cpp/ncnn/
+
+# YOLO model artifacts produced by scripts/export-yolo-ncnn.py. The directory
+# shape lives in the repo but the binary weights do not.
+src/main/assets/models/*/*.bin
+src/main/assets/models/*/*.param

@@ -35,6 +35,7 @@ import com.example.trafykamerasikotlin.ui.screens.MediaScreen
 import com.example.trafykamerasikotlin.ui.screens.MoreScreen
 import com.example.trafykamerasikotlin.ui.screens.SettingsScreen
 import com.example.trafykamerasikotlin.ui.screens.ShopScreen
+import com.example.trafykamerasikotlin.ui.screens.VisionDebugScreen
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorDivider
 import com.example.trafykamerasikotlin.ui.theme.ColorNavBar
@@ -51,6 +52,7 @@ import com.example.trafykamerasikotlin.ui.viewmodel.UpdateViewModel
 private const val ROUTE_SHOP         = "shop"
 private const val ROUTE_COMMUNITY    = "community"
 private const val ROUTE_RAW_SETTINGS = "raw_settings"
+private const val ROUTE_VISION_DEBUG = "vision_debug"
 
 private val bottomNavRoutes = BottomNavItem.all.map { it.route }.toSet()
 
@@ -170,12 +172,16 @@ fun AppNavigation() {
                 SettingsScreen(
                     device          = connectedDevice,
                     onRawDump       = { navController.navigate(ROUTE_RAW_SETTINGS) },
+                    onVisionDebug   = { navController.navigate(ROUTE_VISION_DEBUG) },
                     onCheckUpdates  = { updateViewModel.manualCheck() },
                     appVersionName  = updateViewModel.installedVersionName,
                 )
             }
             composable(ROUTE_RAW_SETTINGS) {
                 RawSettingsScreen(device = connectedDevice)
+            }
+            composable(ROUTE_VISION_DEBUG) {
+                VisionDebugScreen()
             }
             composable(BottomNavItem.More.route) {
                 MoreScreen(

@@ -181,4 +181,40 @@
     <string name="update_dialog_error_download">The update could not be downloaded. Please try again.</string>
     <string name="update_dialog_error_bad_signature">Update rejected: the manifest signature is invalid. This should never happen — please report it to Trafy support.</string>
     <string name="update_dialog_error_bad_checksum">Update rejected: the downloaded file is corrupt or tampered with. Try again; if it keeps failing, contact Trafy support.</string>
+
+    <!-- Vision Debug (debug builds only) -->
+    <string name="vision_debug_entry">Vision Debug (dev)</string>
+    <string name="vision_debug_title">Vision Debug</string>
+    <string name="vision_debug_backend_header">Native backend</string>
+    <string name="vision_debug_backend_ok">NCNN library loaded.</string>
+    <string name="vision_debug_backend_not_bundled">NCNN prebuilt not bundled. Run scripts/setup-ncnn.sh + scripts/export-yolo-ncnn.py, then rebuild.</string>
+    <string name="vision_debug_backend_load_failed_fmt">Native library failed to load: %1$s</string>
+    <string name="vision_debug_backend_checking">Checking native backend…</string>
+    <string name="vision_debug_pick_video">Pick Video</string>
+    <string name="vision_debug_pick_video_hint">Pick an MP4 to detect vehicles.</string>
+    <string name="vision_debug_benchmark">Benchmark</string>
+    <string name="vision_debug_vulkan_label">Vulkan (GPU)</string>
+    <string name="vision_debug_vulkan_desc">Use GPU for inference. Falls back to CPU if unavailable.</string>
+    <string name="vision_debug_latency_header">Inference latency (ms)</string>
+    <string name="vision_debug_latency_no_samples">No samples yet.</string>
+    <string name="vision_debug_latency_fmt">n=%1$d • p50=%2$d • p95=%3$d • avg=%4$d • min=%5$d • max=%6$d</string>
+    <string name="vision_debug_model_header">Model</string>
+    <string name="vision_debug_model_summary_fmt">%1$.1f MB • loaded in %2$d ms • %3$s</string>
+    <string name="vision_debug_state_idle">Ready. Pick a video to begin.</string>
+    <string name="vision_debug_state_decoding">Decoding frame…</string>
+    <string name="vision_debug_state_loading">Loading model…</string>
+    <string name="vision_debug_state_inferring">Running inference…</string>
+    <string name="vision_debug_state_benchmarking">Benchmarking…</string>
+    <string name="vision_debug_state_frame_fmt">%1$d detection(s) in %2$d ms</string>
+    <string name="vision_debug_state_benchmark_fmt">cold=%1$dms • p50=%2$dms • p95=%3$dms</string>
+    <string name="vision_debug_state_backend_missing">Native backend unavailable — see card above.</string>
+
+    <!-- Vehicle class labels (used by BoundingBoxOverlay + later chunks) -->
+    <string name="vehicle_class_person">Person</string>
+    <string name="vehicle_class_bicycle">Bicycle</string>
+    <string name="vehicle_class_car">Car</string>
+    <string name="vehicle_class_motorcycle">Motorcycle</string>
+    <string name="vehicle_class_bus">Bus</string>
+    <string name="vehicle_class_truck">Truck</string>
+    <string name="vehicle_class_unknown">Unknown</string>
 </resources>

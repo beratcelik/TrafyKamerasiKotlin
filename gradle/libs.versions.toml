@@ -15,6 +15,13 @@ media3 = "1.4.1"
 libvlc = "3.6.2"
 ijkplayer = "2024.9.7.1"
 tink = "1.13.0"
+# Native vision backend — pinned versions. The NDK version is set via
+# android.ndkVersion in app/build.gradle.kts (Gradle does not consume these
+# version-catalog entries directly for NDK or prebuilt C++ libs). These keys
+# are documentation-only, but keeping them here gives a single source of truth
+# for `scripts/setup-ncnn.sh` (NCNN_VERSION) and the NDK r28c LTS pin.
+ndk = "28.2.13676358"
+ncnn = "20260113"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }

@@ -13,6 +13,12 @@ val keystoreProperties = Properties().apply {
     }
 }
 
+// Native vision backend is opt-in: only engage CMake when setup-ncnn.sh has populated
+// the prebuilt headers + libs. Collaborators who haven't run the script still get a
+// clean build; the app surfaces a "vision backend not installed" state at runtime.
+val ncnnPrebuiltDir = file("src/main/cpp/ncnn")
+val ncnnPrebuiltAvailable = ncnnPrebuiltDir.resolve("arm64-v8a/lib/libncnn.a").exists()
+
 android {
     namespace = "com.example.trafykamerasikotlin"
     compileSdk {
@@ -20,6 +26,8 @@ android {
             minorApiLevel = 1
         }
     }
+
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "com.example.trafykamerasikotlin"
@@ -29,6 +37,12 @@ android {
         versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
+
+        buildConfigField("boolean", "NCNN_PREBUILT_BUNDLED", ncnnPrebuiltAvailable.toString())
     }
 
     signingConfigs {
@@ -58,9 +72,49 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     androidResources {
         localeFilters += listOf("en", "tr")
+        // NCNN loads .param + .bin via mmap; compressing them blocks mmap and slows load.
+        noCompress += listOf("param", "bin", "labels")
+    }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
+
+    // Only engage the C++ build when the prebuilt NCNN blobs are present
+    // (populated by scripts/setup-ncnn.sh). Keeps the repo clone → build path
+    // green for anyone who hasn't fetched binaries yet.
+    if (ncnnPrebuiltAvailable) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
+        }
+    }
+}
+
+// Verify every packaged .so has 16 KB-aligned LOAD segments. Google Play
+// requires this on Android 15+ (Nov 2025 deadline, with a May 31 2026 extension).
+// Fails the build loudly if a prebuilt dependency regresses.
+val verify16KbAlignment = tasks.register<Exec>("verify16KbAlignment") {
+    description = "Verifies all packaged native libs have 16 KB-aligned LOAD segments (Google Play requirement)"
+    group = "verification"
+    val script = rootProject.file("scripts/verify-16kb-alignment.sh")
+    val mergedLibs = layout.buildDirectory.dir("intermediates/merged_native_libs")
+    onlyIf { script.exists() && mergedLibs.get().asFile.exists() }
+    commandLine("bash", script.absolutePath, mergedLibs.get().asFile.absolutePath)
+}
+
+// Wire the check into debug and release assembly so it runs whenever native libs
+// are produced. Still a no-op for builds without prebuilts.
+afterEvaluate {
+    listOf("assembleDebug", "assembleRelease").forEach { taskName ->
+        tasks.findByName(taskName)?.finalizedBy(verify16KbAlignment)
     }
 }
 

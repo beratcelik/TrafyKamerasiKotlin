@@ -180,4 +180,40 @@
     <string name="update_dialog_error_download">Güncelleme indirilemedi. Lütfen tekrar deneyin.</string>
     <string name="update_dialog_error_bad_signature">Güncelleme reddedildi: manifest imzası geçersiz. Bu normalde olmaması gereken bir durum — lütfen Trafy destek ekibiyle iletişime geçin.</string>
     <string name="update_dialog_error_bad_checksum">Güncelleme reddedildi: indirilen dosya bozuk veya değiştirilmiş. Tekrar deneyin; sorun devam ederse Trafy destek ekibiyle iletişime geçin.</string>
+
+    <!-- Görüntü işleme hata ayıklama (yalnızca geliştirici derlemeleri) -->
+    <string name="vision_debug_entry">Görüntü Hata Ayıklama (dev)</string>
+    <string name="vision_debug_title">Görüntü Hata Ayıklama</string>
+    <string name="vision_debug_backend_header">Yerel çekirdek</string>
+    <string name="vision_debug_backend_ok">NCNN kitaplığı yüklendi.</string>
+    <string name="vision_debug_backend_not_bundled">NCNN önceden derlenmiş kitaplığı paketlenmedi. scripts/setup-ncnn.sh ve scripts/export-yolo-ncnn.py\'yi çalıştırıp yeniden derleyin.</string>
+    <string name="vision_debug_backend_load_failed_fmt">Yerel kitaplık yüklenemedi: %1$s</string>
+    <string name="vision_debug_backend_checking">Yerel çekirdek kontrol ediliyor…</string>
+    <string name="vision_debug_pick_video">Video Seç</string>
+    <string name="vision_debug_pick_video_hint">Araç tespiti için bir MP4 seçin.</string>
+    <string name="vision_debug_benchmark">Kıyaslama</string>
+    <string name="vision_debug_vulkan_label">Vulkan (GPU)</string>
+    <string name="vision_debug_vulkan_desc">Çıkarım için GPU kullan. Mevcut değilse CPU\'ya geri döner.</string>
+    <string name="vision_debug_latency_header">Çıkarım gecikmesi (ms)</string>
+    <string name="vision_debug_latency_no_samples">Henüz örnek yok.</string>
+    <string name="vision_debug_latency_fmt">n=%1$d • p50=%2$d • p95=%3$d • ort=%4$d • min=%5$d • maks=%6$d</string>
+    <string name="vision_debug_model_header">Model</string>
+    <string name="vision_debug_model_summary_fmt">%1$.1f MB • %2$d ms\'de yüklendi • %3$s</string>
+    <string name="vision_debug_state_idle">Hazır. Başlamak için bir video seçin.</string>
+    <string name="vision_debug_state_decoding">Kare çözümleniyor…</string>
+    <string name="vision_debug_state_loading">Model yükleniyor…</string>
+    <string name="vision_debug_state_inferring">Çıkarım çalışıyor…</string>
+    <string name="vision_debug_state_benchmarking">Kıyaslama yapılıyor…</string>
+    <string name="vision_debug_state_frame_fmt">%1$d tespit • %2$d ms</string>
+    <string name="vision_debug_state_benchmark_fmt">soğuk=%1$dms • p50=%2$dms • p95=%3$dms</string>
+    <string name="vision_debug_state_backend_missing">Yerel çekirdek kullanılamıyor — yukarıdaki karta bakın.</string>
+
+    <!-- Araç sınıf etiketleri -->
+    <string name="vehicle_class_person">Yaya</string>
+    <string name="vehicle_class_bicycle">Bisiklet</string>
+    <string name="vehicle_class_car">Otomobil</string>
+    <string name="vehicle_class_motorcycle">Motosiklet</string>
+    <string name="vehicle_class_bus">Otobüs</string>
+    <string name="vehicle_class_truck">Kamyon</string>
+    <string name="vehicle_class_unknown">Bilinmiyor</string>
 </resources>

@@ -28,3 +28,9 @@ app/keystore.properties
 # Per-release notes — edit these before each release, not tracked in git
 release-notes.en.txt
 release-notes.tr.txt
+
+# Ultralytics export artifacts left in the repo root by scripts/export-yolo-ncnn.py.
+# The useful output is copied into app/src/main/assets/models/; these are scratch.
+/yolo*.pt
+/yolo*_ncnn_model/
+/ultralytics-venv/

@@ -134,6 +134,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.ijkplayer)
     implementation(libs.tink.android)
+    // ONNX Runtime for the plate-OCR model (CCT-S transformer). Kept separate
+    // from the NCNN stack because the CCT's attention ops don't convert
+    // cleanly to NCNN on this version (same reason YOLO26 CPU backend breaks).
+    implementation(libs.onnxruntime.android)
     testImplementation(libs.junit)
     testImplementation("org.json:json:20231013")
     androidTestImplementation(libs.androidx.junit)

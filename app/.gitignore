@@ -8,3 +8,5 @@ src/main/cpp/ncnn/
 # shape lives in the repo but the binary weights do not.
 src/main/assets/models/*/*.bin
 src/main/assets/models/*/*.param
+# Plate-OCR ONNX is pulled by scripts/fetch-plate-ocr.py and is a ~5MB binary.
+src/main/assets/models/*/*.onnx

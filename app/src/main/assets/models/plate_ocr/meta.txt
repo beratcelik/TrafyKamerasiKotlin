@@ -1,0 +1,9 @@
+# fast-plate-ocr cct-s-v2-global metadata
+alphabet=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_
+pad_char=_
+max_plate_slots=10
+input_h=64
+input_w=128
+input_channels=3
+input_dtype=uint8
+padding_color=114,114,114

@@ -17,6 +17,7 @@ import com.example.trafykamerasikotlin.data.vision.detectors.NcnnVehicleDetector
 import com.example.trafykamerasikotlin.data.vision.frame.FileFrameSource
 import com.example.trafykamerasikotlin.data.vision.ncnn.LibLoadState
 import com.example.trafykamerasikotlin.data.vision.ncnn.NcnnBridge
+import com.example.trafykamerasikotlin.data.vision.ocr.OnnxPlateOcr
 import com.example.trafykamerasikotlin.data.vision.util.LatencyHistogram
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,6 +66,7 @@ class VisionDebugViewModel(app: Application) : AndroidViewModel(app) {
     private val histogram = LatencyHistogram()
     private var detector: NcnnVehicleDetector? = null
     private var plateDetector: NcnnPlateDetector? = null
+    private var plateOcr: OnnxPlateOcr? = null
 
     init {
         NcnnBridge.ensureLibLoaded()
@@ -177,21 +179,60 @@ class VisionDebugViewModel(app: Application) : AndroidViewModel(app) {
         if (vehicles.isEmpty()) return emptyList<PlateDetection>() to 0
 
         val startedPlate = System.nanoTime()
-        val plates = mutableListOf<PlateDetection>()
+        val rawPlates = mutableListOf<PlateDetection>()
         vehicles.forEachIndexed { idx, v ->
             val x = v.bbox.left.toInt()
             val y = v.bbox.top.toInt()
             val w = (v.bbox.right - v.bbox.left).toInt()
             val h = (v.bbox.bottom - v.bbox.top).toInt()
-            plates += runCatching {
+            rawPlates += runCatching {
                 plateDet.detectInCrop(frame.bitmap, idx, x, y, w, h)
             }.getOrElse {
                 Log.w(TAG, "plate detect on vehicle $idx failed", it)
                 emptyList()
             }
         }
+
+        // Chunk 3: for every detected plate, run OCR on the plate crop.
+        // Best-effort; failure does not remove the plate box — just leaves
+        // recognition=null so the overlay shows box-without-text.
+        val ocr = ensurePlateOcrOrLogError()
+        val withText = if (ocr != null) rawPlates.map { p ->
+            val cropBmp = cropBitmap(frame.bitmap, p.bbox) ?: return@map p
+            val recog = runCatching { ocr.recognize(cropBmp) }
+                .onFailure { Log.w(TAG, "OCR failed on plate ${p.parentVehicleIndex}", it) }
+                .getOrNull()
+            cropBmp.recycle()
+            if (recog != null) p.copy(recognition = recog) else p
+        } else rawPlates
+
         val latencyMs = ((System.nanoTime() - startedPlate) / 1_000_000L).toInt()
-        return plates to latencyMs
+        return withText to latencyMs
+    }
+
+    private fun cropBitmap(src: android.graphics.Bitmap, bbox: android.graphics.RectF): android.graphics.Bitmap? {
+        val x = bbox.left.toInt().coerceIn(0, src.width - 1)
+        val y = bbox.top.toInt().coerceIn(0, src.height - 1)
+        val w = (bbox.right  - bbox.left).toInt().coerceAtLeast(1).coerceAtMost(src.width - x)
+        val h = (bbox.bottom - bbox.top ).toInt().coerceAtLeast(1).coerceAtMost(src.height - y)
+        if (w < 4 || h < 4) return null
+        val argb = if (src.config == android.graphics.Bitmap.Config.ARGB_8888) src
+            else src.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+        return android.graphics.Bitmap.createBitmap(argb, x, y, w, h)
+    }
+
+    private suspend fun ensurePlateOcrOrLogError(): OnnxPlateOcr? {
+        val existing = plateOcr
+        if (existing != null) return existing
+        val built = OnnxPlateOcr(context = getApplication())
+        return try {
+            built.initialize()
+            plateOcr = built
+            built
+        } catch (t: Throwable) {
+            Log.w(TAG, "plate OCR init failed; continuing without OCR text", t)
+            null
+        }
     }
 
     private suspend fun ensurePlateDetectorOrLogError(): NcnnPlateDetector? {
@@ -266,6 +307,8 @@ class VisionDebugViewModel(app: Application) : AndroidViewModel(app) {
         detector = null
         plateDetector?.release()
         plateDetector = null
+        plateOcr?.release()
+        plateOcr = null
         super.onCleared()
     }
 

@@ -91,7 +91,17 @@ fun BoundingBoxOverlay(
                 size = r.size,
                 style = Stroke(width = strokePx),
             )
-            val label = "plate ${"%.2f".format(plate.confidence)}"
+            // Only show OCR text when the recognizer is confident — the CCT-S
+            // model spits out random-looking characters at ~0.03–0.08 confidence
+            // on unreadable crops (uniform distribution over 37 chars is ~0.027).
+            // Showing that noise looks worse than showing no text at all.
+            // Chunk 5's multi-frame voting is what lets us raise this bar.
+            val recog = plate.recognition
+            val primary = if (recog != null && recog.isConfident(threshold = 0.30f)) {
+                "${recog.text}  ${"%.2f".format(recog.meanConfidence)}"
+            } else {
+                "plate ${"%.2f".format(plate.confidence)}"
+            }
             drawContext.canvas.nativeCanvas.apply {
                 val paint = android.graphics.Paint().apply {
                     color = android.graphics.Color.YELLOW
@@ -99,7 +109,7 @@ fun BoundingBoxOverlay(
                     isAntiAlias = true
                     setShadowLayer(3f, 0f, 0f, android.graphics.Color.BLACK)
                 }
-                drawText(label, r.topLeft.x + 2f,
+                drawText(primary, r.topLeft.x + 2f,
                     (r.topLeft.y + r.size.height + plateLabelPx + 2f), paint)
             }
         }

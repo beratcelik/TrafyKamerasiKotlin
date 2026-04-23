@@ -80,6 +80,7 @@
     <string name="media_error_download_failed">Video download failed</string>
     <string name="media_error_busy_playback">Close playback first</string>
     <string name="media_download_complete_fmt">Saved to Downloads: %1$s</string>
+    <string name="media_ai_overlay_toggle_label">AI overlay</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>
@@ -211,6 +212,20 @@
     <string name="vision_debug_state_frame_fmt">%1$d vehicle(s) in %2$d ms • %3$d plate(s)</string>
     <string name="vision_debug_state_benchmark_fmt">cold=%1$dms • p50=%2$dms • p95=%3$dms</string>
     <string name="vision_debug_state_backend_missing">Native backend unavailable — see card above.</string>
+
+    <!-- Video AI Processing (debug screen) -->
+    <string name="video_ai_entry">Video AI Processing (dev)</string>
+    <string name="video_ai_title">Video AI Processing</string>
+    <string name="video_ai_subtitle">Burn the AI overlay into any video you have on this phone.</string>
+    <string name="video_ai_explanation">Pick a video, tap Start, and a copy with vehicle + plate boxes and recognized plate text will be saved in your Downloads folder with an _ai.mp4 suffix.</string>
+    <string name="video_ai_pick">Pick Video</string>
+    <string name="video_ai_start">Start</string>
+    <string name="video_ai_state_idle">No video picked yet.</string>
+    <string name="video_ai_state_picked_fmt">Ready: %1$s</string>
+    <string name="video_ai_state_picked_hint">Tap Start to process. Processing can take several minutes for long videos.</string>
+    <string name="video_ai_state_working_fmt">Processing %1$s — %2$d%% (%3$d / %4$d frames)</string>
+    <string name="video_ai_state_done_fmt">Done. Saved %1$s (%2$d frames) to Downloads.</string>
+    <string name="video_ai_state_failed_fmt">Failed: %1$s</string>
 
     <!-- Vision Debug — Live (Chunk 4) -->
     <string name="vision_debug_live_entry">Vision Debug Live (dev)</string>

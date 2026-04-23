@@ -80,6 +80,7 @@
     <string name="media_error_download_failed">Video indirilemedi</string>
     <string name="media_error_busy_playback">Önce oynatmayı kapatın</string>
     <string name="media_download_complete_fmt">İndirilenlere kaydedildi: %1$s</string>
+    <string name="media_ai_overlay_toggle_label">AI katmanı</string>
 
     <!-- Ayarlar -->
     <string name="settings_title">Ayarlar</string>
@@ -210,6 +211,20 @@
     <string name="vision_debug_state_frame_fmt">%1$d araç • %2$d ms • %3$d plaka</string>
     <string name="vision_debug_state_benchmark_fmt">soğuk=%1$dms • p50=%2$dms • p95=%3$dms</string>
     <string name="vision_debug_state_backend_missing">Yerel çekirdek kullanılamıyor — yukarıdaki karta bakın.</string>
+
+    <!-- Video AI İşleme (dev) -->
+    <string name="video_ai_entry">Video AI İşleme (dev)</string>
+    <string name="video_ai_title">Video AI İşleme</string>
+    <string name="video_ai_subtitle">Telefonunuzdaki herhangi bir videoya AI katmanını gömün.</string>
+    <string name="video_ai_explanation">Bir video seçin, Başlat\'a dokunun; araç + plaka kutuları ve okunan plaka metni ile bir kopya İndirilenler klasörüne _ai.mp4 eki ile kaydedilir.</string>
+    <string name="video_ai_pick">Video Seç</string>
+    <string name="video_ai_start">Başlat</string>
+    <string name="video_ai_state_idle">Henüz video seçilmedi.</string>
+    <string name="video_ai_state_picked_fmt">Hazır: %1$s</string>
+    <string name="video_ai_state_picked_hint">Başlamak için Başlat\'a dokunun. Uzun videolarda birkaç dakika sürebilir.</string>
+    <string name="video_ai_state_working_fmt">İşleniyor %1$s — %%%2$d (%3$d / %4$d kare)</string>
+    <string name="video_ai_state_done_fmt">Tamam. %1$s (%2$d kare) İndirilenler\'e kaydedildi.</string>
+    <string name="video_ai_state_failed_fmt">Başarısız: %1$s</string>
 
     <!-- Görüntü Hata Ayıklama — Canlı -->
     <string name="vision_debug_live_entry">Canlı Görüntü Hata Ayıklama (dev)</string>

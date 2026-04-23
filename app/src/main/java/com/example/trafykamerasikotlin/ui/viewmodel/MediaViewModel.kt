@@ -16,6 +16,7 @@ import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.MediaFile
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
+import com.example.trafykamerasikotlin.data.video.OfflineVideoProcessor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -88,6 +89,16 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     // Currently downloading file names (to show progress in UI)
     private val _downloading = MutableStateFlow<Set<String>>(emptySet())
     val downloading: StateFlow<Set<String>> = _downloading
+
+    // User's opt-in for burning the AI overlay into downloaded files. Shared
+    // with the playback/live overlays in spirit — same product concept — but
+    // we key this flag on the Media VM because the download flow originates
+    // here. Default ON matches the live toggle's default.
+    private val _aiOverlayEnabled = MutableStateFlow(true)
+    val aiOverlayEnabled: StateFlow<Boolean> = _aiOverlayEnabled
+
+    fun toggleAiOverlay() { _aiOverlayEnabled.value = !_aiOverlayEnabled.value }
+    fun setAiOverlay(on: Boolean) { _aiOverlayEnabled.value = on }
 
     // Live DownloadState per file name; only present while a GP download is active.
     private val _downloadProgress = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
@@ -271,6 +282,111 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                 _downloadProgress.value = _downloadProgress.value - file.name
                 speedSamples.remove(file.name)
                 downloadJobs.remove(file.name)
+                if (!completed && outFile.exists()) outFile.delete()
+            }
+        }
+        downloadJobs[file.name] = job
+    }
+
+    /**
+     * Download + AI-burn variant. GeneralPlus only — other chipsets need the
+     * Chunk 4b H.264 pipeline before this can help them.
+     *
+     * Two stages reported as one bar (0–50 download, 50–100 AI processing):
+     *   1. Download the original ≥1080p AVI to app's cache dir.
+     *   2. Run [OfflineVideoProcessor] to decode → inference → re-encode as
+     *      MP4 with overlays burned into the pixels.
+     *   3. Move the MP4 into the user's Downloads folder with the original
+     *      file's base name but an .mp4 extension so the plain-download and
+     *      AI-download artifacts don't collide on disk.
+     *
+     * Downloaded AVI in cache is deleted on success or failure — the user
+     * only sees the MP4 they asked for.
+     */
+    fun downloadWithOverlay(file: MediaFile) {
+        if (_downloading.value.contains(file.name)) return
+        val device = loadedDevice ?: return
+        if (device.protocol != ChipsetProtocol.GENERALPLUS) {
+            // Fall back to the plain path for unsupported chipsets; AI burn-in
+            // requires the GP AVI parser path.
+            download(file)
+            return
+        }
+        val fileIndex = GeneralplusMediaRepository.fileIndexOf(file.path)
+        if (fileIndex < 0) { Log.w(TAG, "downloadWithOverlay: bad path ${file.path}"); return }
+
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val outputName   = file.name.substringBeforeLast('.') + ".mp4"
+        val outFile      = File(downloadsDir, outputName)
+
+        val tempAvi = File(getApplication<Application>().cacheDir, "ai_in_${file.name}")
+
+        val job = viewModelScope.launch(Dispatchers.Default) {
+            _downloading.value = _downloading.value + file.name
+            _downloadProgress.value = _downloadProgress.value + (file.name to DownloadState(0, 0f, 0f, 0f))
+            Log.i(TAG, "downloadWithOverlay: start ${file.name} → ${outFile.name}")
+            var completed = false
+            try {
+                downloadsDir.mkdirs()
+
+                // Stage 1 — download the raw AVI into cache. Map 0..100% of
+                // GP download into the 0..50% band of the combined progress.
+                val ok = gpRepo.downloadFile(
+                    device.protocol.deviceIp, fileIndex, tempAvi,
+                ) { received, total ->
+                    val halfPct = ((received * 50L) / total.coerceAtLeast(1L)).toInt().coerceIn(0, 50)
+                    _downloadProgress.value = _downloadProgress.value + (file.name to DownloadState(
+                        pct           = halfPct,
+                        receivedMb    = received / (1024f * 1024f),
+                        totalMb       = total    / (1024f * 1024f),
+                        speedMbPerSec = 0f,
+                    ))
+                }
+                if (!ok) throw Exception("GetRawData returned no data")
+
+                // Stage 2 — offline process. Map processor progress into the
+                // remaining 50–100% band.
+                val proc = OfflineVideoProcessor(context = getApplication())
+                val stateJob = launch {
+                    proc.state.collect { s ->
+                        val pct = when (s) {
+                            is OfflineVideoProcessor.State.Processing ->
+                                (50 + (s.fractionDone * 50).toInt()).coerceIn(50, 99)
+                            is OfflineVideoProcessor.State.Done -> 100
+                            is OfflineVideoProcessor.State.Failed -> -1
+                            else -> 50
+                        }
+                        if (pct >= 0) {
+                            _downloadProgress.value = _downloadProgress.value + (file.name to DownloadState(
+                                pct           = pct,
+                                receivedMb    = 0f,
+                                totalMb       = 0f,
+                                speedMbPerSec = 0f,
+                            ))
+                        }
+                    }
+                }
+                proc.process(tempAvi, outFile)
+                stateJob.cancel()
+
+                if (outFile.length() > 0L) {
+                    MediaScannerConnection.scanFile(getApplication(), arrayOf(outFile.absolutePath), null, null)
+                    _userMessages.emit(MediaUserMessage.DownloadComplete(outputName))
+                    completed = true
+                } else {
+                    throw Exception("offline processor wrote empty file")
+                }
+            } catch (e: CancellationException) {
+                Log.i(TAG, "downloadWithOverlay cancelled: ${file.name}")
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "downloadWithOverlay failed: ${e.message}")
+                _userMessages.emit(MediaUserMessage.DownloadFailed)
+            } finally {
+                _downloading.value      = _downloading.value - file.name
+                _downloadProgress.value = _downloadProgress.value - file.name
+                downloadJobs.remove(file.name)
+                try { if (tempAvi.exists()) tempAvi.delete() } catch (_: Throwable) {}
                 if (!completed && outFile.exists()) outFile.delete()
             }
         }

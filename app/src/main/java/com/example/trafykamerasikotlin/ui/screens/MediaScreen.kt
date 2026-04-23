@@ -159,12 +159,49 @@ fun MediaScreen(
             .background(ColorBackground)
             .windowInsetsPadding(WindowInsets.statusBars)
     ) {
-        Text(
-            text     = stringResource(R.string.media_title),
-            style    = MaterialTheme.typography.headlineMedium,
-            color    = ColorTextPrimary,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)
-        )
+        val aiOverlayEnabled by viewModel.aiOverlayEnabled.collectAsStateWithLifecycle()
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text  = stringResource(R.string.media_title),
+                style = MaterialTheme.typography.headlineMedium,
+                color = ColorTextPrimary,
+            )
+            // GP-only — other chipsets need the H.264 decoder path that
+            // hasn't landed yet. Debug-gated per the toggle-in-Settings plan.
+            if (device?.protocol == ChipsetProtocol.GENERALPLUS &&
+                com.example.trafykamerasikotlin.BuildConfig.DEBUG) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text  = stringResource(R.string.media_ai_overlay_toggle_label),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = ColorTextSecondary,
+                        modifier = Modifier.padding(end = 8.dp),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(
+                                color = if (aiOverlayEnabled) ColorPrimary else ColorSurface,
+                                shape = androidx.compose.foundation.shape.CircleShape,
+                            )
+                            .clickable { viewModel.toggleAiOverlay() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CameraAlt,
+                            contentDescription = stringResource(R.string.live_ai_overlay_toggle_cd),
+                            tint = if (aiOverlayEnabled) Color.White else ColorTextSecondary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+            }
+        }
 
         (uiState as? MediaUiState.Loaded)?.sdInfo?.let { sd -> SdUsageRow(sd) }
 
@@ -225,7 +262,17 @@ fun MediaScreen(
                         onPlayAllwinner   = { viewModel.startAllwinnerStream(it) },
                         onPlayInApp       = { url -> inAppVideoUrl = url },
                         onViewPhoto       = { url -> inAppPhotoUrl = url },
-                        onDownload        = { viewModel.download(it) },
+                        // Route through the burn-in flow when the AI toggle is on
+                        // AND the camera is GeneralPlus (only chipset supported
+                        // by OfflineVideoProcessor for now). Other chipsets and
+                        // the toggle-off case fall through to the plain download.
+                        onDownload        = { f ->
+                            if (aiOverlayEnabled && device?.protocol == ChipsetProtocol.GENERALPLUS) {
+                                viewModel.downloadWithOverlay(f)
+                            } else {
+                                viewModel.download(f)
+                            }
+                        },
                         onCancelDownload  = { viewModel.cancelDownload(it) },
                         onDelete          = { viewModel.delete(it) }
                     )

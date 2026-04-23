@@ -209,6 +209,20 @@
     <string name="vision_debug_state_benchmark_fmt">soğuk=%1$dms • p50=%2$dms • p95=%3$dms</string>
     <string name="vision_debug_state_backend_missing">Yerel çekirdek kullanılamıyor — yukarıdaki karta bakın.</string>
 
+    <!-- Görüntü Hata Ayıklama — Canlı -->
+    <string name="vision_debug_live_entry">Canlı Görüntü Hata Ayıklama (dev)</string>
+    <string name="vision_debug_live_title">Görüntü Hata Ayıklama — Canlı</string>
+    <string name="vision_debug_live_url_label">RTSP adresi</string>
+    <string name="vision_debug_live_connect">Bağlan</string>
+    <string name="vision_debug_live_disconnect">Bağlantıyı kes</string>
+    <string name="vision_debug_live_state_idle">Boşta. RTSP adresini yazın ve Bağlan\'a dokunun.</string>
+    <string name="vision_debug_live_state_connecting">Bağlanıyor…</string>
+    <string name="vision_debug_live_state_streaming">Yayında. AI katmanı her 3. karede çalışıyor.</string>
+    <string name="vision_debug_live_stats_fmt">kare=%1$d • çıkarım n=%2$d • p50=%3$dms • p95=%4$dms</string>
+    <string name="vision_debug_live_banner_not_connected">Bağlı kamera yok. RTSP adresini elle yazın ya da önce Ana Sayfa\'dan bağlanın.</string>
+    <string name="vision_debug_live_banner_supported_fmt">Bağlı: %1$s — destekleniyor (MJPEG/RTP).</string>
+    <string name="vision_debug_live_banner_unsupported_fmt">Bağlı: %1$s — bu hata ayıklama ekranında henüz desteklenmiyor. Yalnızca MJPEG-over-RTP (GeneralPlus) destekleniyor; diğer çipler (H.264) sonraki adımda gelecek.</string>
+
     <!-- Araç sınıf etiketleri -->
     <string name="vehicle_class_person">Yaya</string>
     <string name="vehicle_class_bicycle">Bisiklet</string>

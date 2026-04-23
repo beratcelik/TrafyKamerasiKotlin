@@ -147,13 +147,34 @@ class MjpegRtspPlayer(
     private var receiveThread: Thread? = null
     var onFirstFrame: (() -> Unit)? = null
 
+    /**
+     * Optional per-frame tap. Invoked synchronously on the receive thread
+     * with the decoded [Bitmap] BEFORE it is drawn to the surface and
+     * recycled. Callers MUST NOT retain a reference — copy with
+     * [Bitmap.copy] if you need the pixels to survive past the callback.
+     * Used by the vision pipeline to feed frames into detection/OCR.
+     */
+    var onFrame: ((Bitmap) -> Unit)? = null
+
+    /**
+     * Invoked from the receive thread with the human-readable error message
+     * when the RTSP/RTP pipeline fails (socket timeout, connect refused,
+     * malformed SDP, etc.). Lets the VisionDebug screen surface a red
+     * status instead of leaving a stale "Streaming" label up forever.
+     */
+    var onError: ((String) -> Unit)? = null
+
     fun start(url: String) {
         running = true
         receiveThread = thread(name = "MjpegRtsp") {
             try {
                 runPlayer(url)
             } catch (e: Exception) {
-                if (running) Log.e(TAG, "Player error: ${e.message}")
+                if (running) {
+                    val msg = e.message ?: e.javaClass.simpleName
+                    Log.e(TAG, "Player error: $msg")
+                    try { onError?.invoke(msg) } catch (_: Throwable) {}
+                }
             }
         }
     }
@@ -475,6 +496,15 @@ class MjpegRtspPlayer(
             return
         }
         if (frameNum <= 3) Log.d(TAG, "Frame #$frameNum: decoded ${bitmap.width}x${bitmap.height}")
+
+        // Vision pipeline tap — give consumers a chance to copy before we
+        // recycle the bitmap below. Thrown exceptions here don't kill the
+        // player; a broken vision consumer shouldn't stop the video.
+        onFrame?.let { cb ->
+            try { cb(bitmap) } catch (t: Throwable) {
+                if (frameNum <= 5) Log.w(TAG, "onFrame callback threw", t)
+            }
+        }
 
         // Render to surface
         try {

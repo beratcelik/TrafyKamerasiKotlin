@@ -210,6 +210,20 @@
     <string name="vision_debug_state_benchmark_fmt">cold=%1$dms • p50=%2$dms • p95=%3$dms</string>
     <string name="vision_debug_state_backend_missing">Native backend unavailable — see card above.</string>
 
+    <!-- Vision Debug — Live (Chunk 4) -->
+    <string name="vision_debug_live_entry">Vision Debug Live (dev)</string>
+    <string name="vision_debug_live_title">Vision Debug — Live</string>
+    <string name="vision_debug_live_url_label">RTSP URL</string>
+    <string name="vision_debug_live_connect">Connect</string>
+    <string name="vision_debug_live_disconnect">Disconnect</string>
+    <string name="vision_debug_live_state_idle">Idle. Enter RTSP URL and tap Connect.</string>
+    <string name="vision_debug_live_state_connecting">Connecting…</string>
+    <string name="vision_debug_live_state_streaming">Streaming. AI overlay running every 3rd frame.</string>
+    <string name="vision_debug_live_stats_fmt">frames=%1$d • infer n=%2$d • p50=%3$dms • p95=%4$dms</string>
+    <string name="vision_debug_live_banner_not_connected">No dashcam connected. Type an RTSP URL manually, or connect from the Home screen first.</string>
+    <string name="vision_debug_live_banner_supported_fmt">Connected: %1$s — supported (MJPEG-over-RTP).</string>
+    <string name="vision_debug_live_banner_unsupported_fmt">Connected: %1$s — NOT yet supported. This debug screen only parses MJPEG-over-RTP (GeneralPlus). Other chipsets (H.264) will come in a later chunk.</string>
+
     <!-- Vehicle class labels (used by BoundingBoxOverlay + later chunks) -->
     <string name="vehicle_class_person">Person</string>
     <string name="vehicle_class_bicycle">Bicycle</string>

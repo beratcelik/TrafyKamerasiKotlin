@@ -83,6 +83,7 @@ fun SettingsScreen(
     device: DeviceInfo?,
     onRawDump: () -> Unit = {},
     onVisionDebug: () -> Unit = {},
+    onVisionDebugLive: () -> Unit = {},
     onCheckUpdates: () -> Unit = {},
     appVersionName: String = "",
     modifier: Modifier = Modifier,
@@ -119,37 +120,40 @@ fun SettingsScreen(
 
         when (val state = uiState) {
             is SettingsUiState.NotConnected -> NotConnectedContent(
-                onCheckUpdates = onCheckUpdates,
-                onVisionDebug  = onVisionDebug,
-                versionName    = appVersionName,
+                onCheckUpdates    = onCheckUpdates,
+                onVisionDebug     = onVisionDebug,
+                onVisionDebugLive = onVisionDebugLive,
+                versionName       = appVersionName,
             )
 
             is SettingsUiState.Loading -> LoadingContent()
 
             is SettingsUiState.Loaded -> SettingsList(
-                items          = state.items,
-                applying       = false,
-                onSelect       = { key, value -> viewModel.apply(key, value) },
-                onAction       = { key -> viewModel.triggerAction(key) },
-                onWifiSettings = viewModel::openWifiSettings,
-                onApnDialog    = viewModel::openApnDialog,
-                onRawDump      = onRawDump,
-                onVisionDebug  = onVisionDebug,
-                onCheckUpdates = onCheckUpdates,
-                appVersionName = appVersionName,
+                items             = state.items,
+                applying          = false,
+                onSelect          = { key, value -> viewModel.apply(key, value) },
+                onAction          = { key -> viewModel.triggerAction(key) },
+                onWifiSettings    = viewModel::openWifiSettings,
+                onApnDialog       = viewModel::openApnDialog,
+                onRawDump         = onRawDump,
+                onVisionDebug     = onVisionDebug,
+                onVisionDebugLive = onVisionDebugLive,
+                onCheckUpdates    = onCheckUpdates,
+                appVersionName    = appVersionName,
             )
 
             is SettingsUiState.Applying -> SettingsList(
-                items          = state.items,
-                applying       = true,
-                onSelect       = { _, _ -> },
-                onAction       = { },
-                onWifiSettings = { },
-                onApnDialog    = { },
-                onRawDump      = onRawDump,
-                onVisionDebug  = onVisionDebug,
-                onCheckUpdates = onCheckUpdates,
-                appVersionName = appVersionName,
+                items             = state.items,
+                applying          = true,
+                onSelect          = { _, _ -> },
+                onAction          = { },
+                onWifiSettings    = { },
+                onApnDialog       = { },
+                onRawDump         = onRawDump,
+                onVisionDebug     = onVisionDebug,
+                onVisionDebugLive = onVisionDebugLive,
+                onCheckUpdates    = onCheckUpdates,
+                appVersionName    = appVersionName,
             )
 
             is SettingsUiState.Error -> ErrorContent(
@@ -216,6 +220,7 @@ fun SettingsScreen(
 private fun NotConnectedContent(
     onCheckUpdates: () -> Unit,
     onVisionDebug: () -> Unit,
+    onVisionDebugLive: () -> Unit,
     versionName: String,
 ) {
     Box(
@@ -263,6 +268,13 @@ private fun NotConnectedContent(
                 TextButton(onClick = onVisionDebug) {
                     Text(
                         text  = stringResource(R.string.vision_debug_entry),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ColorTextSecondary,
+                    )
+                }
+                TextButton(onClick = onVisionDebugLive) {
+                    Text(
+                        text  = stringResource(R.string.vision_debug_live_entry),
                         style = MaterialTheme.typography.bodySmall,
                         color = ColorTextSecondary,
                     )
@@ -337,6 +349,7 @@ private fun SettingsList(
     onApnDialog: () -> Unit,
     onRawDump: () -> Unit,
     onVisionDebug: () -> Unit,
+    onVisionDebugLive: () -> Unit,
     onCheckUpdates: () -> Unit,
     appVersionName: String,
 ) {
@@ -394,6 +407,18 @@ private fun SettingsList(
                     ) {
                         Text(
                             text  = stringResource(R.string.vision_debug_entry),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ColorTextSecondary
+                        )
+                    }
+                }
+                item {
+                    TextButton(
+                        onClick  = onVisionDebugLive,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text  = stringResource(R.string.vision_debug_live_entry),
                             style = MaterialTheme.typography.bodySmall,
                             color = ColorTextSecondary
                         )

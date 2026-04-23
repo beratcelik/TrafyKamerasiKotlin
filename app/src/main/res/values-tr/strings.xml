@@ -53,6 +53,8 @@
     <string name="live_preparing">Yayın hazırlanıyor…</string>
     <string name="live_coming_soon_title">Canlı Yayın Yakında</string>
     <string name="live_coming_soon_body">Allwinner kameralar için canlı yayın yakında eklenecek. Kayıtlara şimdilik Media sekmesinden ulaşabilirsiniz.</string>
+    <string name="live_ai_overlay_toggle_cd">Yapay zeka plaka katmanını aç/kapat</string>
+    <string name="live_ai_overlay_informational">AI katmanı • bilgilendirme amaçlı</string>
 
     <!-- Medya -->
     <string name="media_title">Medya</string>

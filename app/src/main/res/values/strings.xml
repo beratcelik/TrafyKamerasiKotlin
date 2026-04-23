@@ -53,6 +53,8 @@
     <string name="live_preparing">Preparing stream…</string>
     <string name="live_coming_soon_title">Live stream coming soon</string>
     <string name="live_coming_soon_body">Live streaming for Allwinner cameras is coming soon. You can still access recordings from the Media tab.</string>
+    <string name="live_ai_overlay_toggle_cd">Toggle AI plate overlay</string>
+    <string name="live_ai_overlay_informational">AI overlay • informational only</string>
 
     <!-- Media -->
     <string name="media_title">Media</string>

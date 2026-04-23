@@ -46,6 +46,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -69,10 +70,13 @@ import com.example.trafykamerasikotlin.ui.theme.ColorTextPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorTextSecondary
 import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
 import com.example.trafykamerasikotlin.data.media.MjpegRtspPlayer
+import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
+import com.example.trafykamerasikotlin.ui.components.BoundingBoxOverlay
 import com.example.trafykamerasikotlin.ui.viewmodel.CaptureKind
 import com.example.trafykamerasikotlin.ui.viewmodel.CaptureState
 import com.example.trafykamerasikotlin.ui.viewmodel.LiveUiState
 import com.example.trafykamerasikotlin.ui.viewmodel.LiveViewModel
+import com.example.trafykamerasikotlin.ui.viewmodel.LiveVisionOverlayViewModel
 import tv.danmaku.ijk.media.player.IjkMediaPlayer
 
 private const val TAG = "Trafy.LiveScreen"
@@ -89,6 +93,15 @@ fun LiveScreen(
     val snackbarHost   = remember { SnackbarHostState() }
     val ctx            = LocalContext.current
     val isLandscape    = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    // AI overlay (Chunks 1–5 vision pipeline) defaults to ON. Only the
+    // MJPEG/GeneralPlus path supports it right now — other chipsets stream
+    // H.264 which the current MjpegRtspPlayer doesn't handle. The toggle is
+    // an icon button overlaid on the video during development; release
+    // builds will move it into the Settings screen (tracked as follow-up).
+    var aiOverlayEnabled by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(true) }
+    val aiViewModel: LiveVisionOverlayViewModel = viewModel()
+    val aiScene by aiViewModel.scene.collectAsStateWithLifecycle()
 
     // While the Live tab is visible, let the activity follow the phone's sensor
     // orientation even if system auto-rotate is locked — so tilting the phone
@@ -139,10 +152,36 @@ fun LiveScreen(
                     ) {
                         androidx.compose.runtime.key(state.selectedCamera) {
                             if (state.useMjpeg) {
-                                MjpegLivePlayer(rtspUrl = state.rtspUrl)
+                                // MJPEG (GeneralPlus) is the only path the vision
+                                // pipeline can see today. AI overlay is opt-in via
+                                // the toggle; when ON, `onFrame` feeds the shared
+                                // pipeline and `overlayScene` draws boxes on top.
+                                val aiActive = aiOverlayEnabled &&
+                                    device?.protocol == ChipsetProtocol.GENERALPLUS
+                                MjpegLivePlayer(
+                                    rtspUrl = state.rtspUrl,
+                                    onFrame = if (aiActive) aiViewModel::onFrame else null,
+                                    overlayScene = if (aiActive) aiScene else null,
+                                )
                             } else {
                                 RtspPlayer(rtspUrl = state.rtspUrl)
                             }
+                        }
+                        // AI overlay toggle — small icon overlaid on the video's
+                        // top-right. Only shown for MJPEG (the chipset where the
+                        // overlay can actually do anything) and only in debug
+                        // builds per the user's direction (moves to Settings for
+                        // release). Persists across rotation via rememberSaveable.
+                        if (state.useMjpeg &&
+                            device?.protocol == ChipsetProtocol.GENERALPLUS &&
+                            com.example.trafykamerasikotlin.BuildConfig.DEBUG) {
+                            AiOverlayToggle(
+                                enabled  = aiOverlayEnabled,
+                                onToggle = { aiOverlayEnabled = !aiOverlayEnabled },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(12.dp),
+                            )
                         }
                     }
                     // Camera switcher tab bar — shown only when multiple cameras exist
@@ -460,7 +499,13 @@ private fun RtspPlayer(rtspUrl: String) {
  * This composable reuses the same custom player that handles file playback.
  */
 @Composable
-private fun MjpegLivePlayer(rtspUrl: String) {
+private fun MjpegLivePlayer(
+    rtspUrl: String,
+    /** Optional per-frame tap — used by the AI overlay to feed the vision pipeline. */
+    onFrame: ((android.graphics.Bitmap) -> Unit)? = null,
+    /** If non-null the AI bounding-box overlay is drawn on top of the player. */
+    overlayScene: com.example.trafykamerasikotlin.data.vision.TrackedScene? = null,
+) {
 
     val bufferingState = remember { mutableStateOf(true) }
     val playerRef      = remember { mutableStateOf<MjpegRtspPlayer?>(null) }
@@ -468,6 +513,10 @@ private fun MjpegLivePlayer(rtspUrl: String) {
     val playerSize     = Modifier
         .then(if (isLandscape) Modifier.fillMaxHeight() else Modifier.fillMaxWidth())
         .aspectRatio(16f / 9f)
+
+    // Keep the onFrame callback current without tearing down the player on
+    // every recomposition — the SurfaceView factory runs only once.
+    val onFrameRef = remember { mutableStateOf(onFrame) }.apply { value = onFrame }
 
     Box(
         modifier         = playerSize,
@@ -484,6 +533,9 @@ private fun MjpegLivePlayer(rtspUrl: String) {
                                 network = GeneralplusSession.getBoundNetwork(),
                             )
                             player.onFirstFrame = { bufferingState.value = false }
+                            // Read via remembered ref so toggling the AI overlay
+                            // doesn't require tearing down the player.
+                            player.onFrame = { bmp -> onFrameRef.value?.invoke(bmp) }
                             playerRef.value = player
                             player.start(rtspUrl)
                         }
@@ -503,6 +555,19 @@ private fun MjpegLivePlayer(rtspUrl: String) {
             modifier = Modifier.fillMaxSize()
         )
 
+        // Vision overlay — draws red vehicle boxes + yellow plate boxes on top
+        // of the rendered MJPEG. The overlay owns its own coordinate transform
+        // (fit-center source → view size) so it lines up with the SurfaceView's
+        // fit-center rendering of the 560×320 MJPEG stream.
+        if (overlayScene != null) {
+            val src = overlayScene.sourceFrameSize
+            BoundingBoxOverlay(
+                scene = overlayScene,
+                sourceSize = android.util.Size(src.width, src.height),
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
         // Buffering spinner — shown until the first JPEG frame is decoded
         if (bufferingState.value) {
             CircularProgressIndicator(color = ColorPrimary)
@@ -514,6 +579,64 @@ private fun MjpegLivePlayer(rtspUrl: String) {
             Log.d(TAG, "MjpegLivePlayer dispose — stopping")
             playerRef.value?.stop()
             playerRef.value = null
+        }
+    }
+}
+
+// ── AI overlay toggle (dev-only; moves to Settings for release) ────────────
+
+/**
+ * Small circular toggle rendered on top of the live video. Shows the
+ * current state at a glance:
+ *   - filled primary color + visible icon = overlay ON
+ *   - translucent surface + icon = overlay OFF
+ * When the overlay is ON we also render a one-line disclaimer so the
+ * user knows plate reads are informational, not ADAS warnings.
+ */
+@Composable
+private fun AiOverlayToggle(
+    enabled: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.End,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .background(
+                    color = if (enabled) ColorPrimary else ColorSurface.copy(alpha = 0.6f),
+                    shape = CircleShape,
+                )
+                .clickable(onClick = onToggle),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector        = Icons.Filled.CameraAlt,
+                contentDescription = stringResource(R.string.live_ai_overlay_toggle_cd),
+                tint               = if (enabled) Color.White else ColorTextSecondary,
+                modifier           = Modifier.size(20.dp),
+            )
+        }
+        if (enabled) {
+            Spacer(Modifier.height(6.dp))
+            // Informational-only disclaimer. Matches spec §9: warnings on
+            // live stream are not safety-actionable — they're a visible
+            // overlay of what the AI "sees," nothing more.
+            Text(
+                text  = stringResource(R.string.live_ai_overlay_informational),
+                style = MaterialTheme.typography.labelSmall,
+                color = ColorTextSecondary,
+                textAlign = TextAlign.End,
+                modifier = Modifier
+                    .background(
+                        color = ColorBackground.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(6.dp),
+                    )
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
         }
     }
 }

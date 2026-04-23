@@ -50,30 +50,52 @@ fun BoundingBoxOverlay(
         val labelPx = 14.dp.toPx()
         val plateLabelPx = 11.dp.toPx()
 
-        // Vehicles first so plates draw on top when they overlap.
-        scene.detections.forEach { det ->
-            val r = Rect(
-                offset = Offset(offX + det.bbox.left  * scale, offY + det.bbox.top    * scale),
-                size   = androidx.compose.ui.geometry.Size(
-                    width  = det.bbox.width()  * scale,
-                    height = det.bbox.height() * scale,
-                ),
-            )
-            drawRect(
-                color = vehicleColor,
-                topLeft = r.topLeft,
-                size = r.size,
-                style = Stroke(width = strokePx),
-            )
-            val label = "${det.cls.name.lowercase()}  ${"%.2f".format(det.confidence)}"
-            drawContext.canvas.nativeCanvas.apply {
-                val paint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.WHITE
-                    textSize = labelPx
-                    isAntiAlias = true
-                    setShadowLayer(3f, 0f, 0f, android.graphics.Color.BLACK)
+        // Vehicles first so plates draw on top when they overlap. Prefer the
+        // tracker's output when present so labels show stable track ids.
+        val trackRects = scene.tracks
+        if (trackRects != null && trackRects.isNotEmpty()) {
+            trackRects.forEach { td ->
+                val r = Rect(
+                    offset = Offset(offX + td.bbox.left * scale, offY + td.bbox.top * scale),
+                    size   = androidx.compose.ui.geometry.Size(
+                        width  = td.bbox.width()  * scale,
+                        height = td.bbox.height() * scale,
+                    ),
+                )
+                drawRect(color = vehicleColor, topLeft = r.topLeft, size = r.size,
+                         style = Stroke(width = strokePx))
+                val label = "${td.cls.name.lowercase()}#${td.trackId}  ${"%.2f".format(td.confidence)}"
+                drawContext.canvas.nativeCanvas.apply {
+                    val paint = android.graphics.Paint().apply {
+                        color = android.graphics.Color.WHITE
+                        textSize = labelPx
+                        isAntiAlias = true
+                        setShadowLayer(3f, 0f, 0f, android.graphics.Color.BLACK)
+                    }
+                    drawText(label, r.topLeft.x + 4f, (r.topLeft.y - 4f).coerceAtLeast(labelPx), paint)
                 }
-                drawText(label, r.topLeft.x + 4f, (r.topLeft.y - 4f).coerceAtLeast(labelPx), paint)
+            }
+        } else {
+            scene.detections.forEach { det ->
+                val r = Rect(
+                    offset = Offset(offX + det.bbox.left  * scale, offY + det.bbox.top    * scale),
+                    size   = androidx.compose.ui.geometry.Size(
+                        width  = det.bbox.width()  * scale,
+                        height = det.bbox.height() * scale,
+                    ),
+                )
+                drawRect(color = vehicleColor, topLeft = r.topLeft, size = r.size,
+                         style = Stroke(width = strokePx))
+                val label = "${det.cls.name.lowercase()}  ${"%.2f".format(det.confidence)}"
+                drawContext.canvas.nativeCanvas.apply {
+                    val paint = android.graphics.Paint().apply {
+                        color = android.graphics.Color.WHITE
+                        textSize = labelPx
+                        isAntiAlias = true
+                        setShadowLayer(3f, 0f, 0f, android.graphics.Color.BLACK)
+                    }
+                    drawText(label, r.topLeft.x + 4f, (r.topLeft.y - 4f).coerceAtLeast(labelPx), paint)
+                }
             }
         }
 
@@ -91,16 +113,17 @@ fun BoundingBoxOverlay(
                 size = r.size,
                 style = Stroke(width = strokePx),
             )
-            // Only show OCR text when the recognizer is confident — the CCT-S
-            // model spits out random-looking characters at ~0.03–0.08 confidence
-            // on unreadable crops (uniform distribution over 37 chars is ~0.027).
-            // Showing that noise looks worse than showing no text at all.
-            // Chunk 5's multi-frame voting is what lets us raise this bar.
+            // Chunk 5: prefer the multi-frame voted text when it exists —
+            // it's dramatically more stable than any single-frame OCR read.
+            // Otherwise fall back to a high-confidence single-frame read,
+            // and otherwise show the plate-detection confidence only.
+            val voted = plate.votedText
             val recog = plate.recognition
-            val primary = if (recog != null && recog.isConfident(threshold = 0.30f)) {
-                "${recog.text}  ${"%.2f".format(recog.meanConfidence)}"
-            } else {
-                "plate ${"%.2f".format(plate.confidence)}"
+            val primary = when {
+                voted != null -> "${voted.text}  ✓${voted.votes}"
+                recog != null && recog.isConfident(threshold = 0.30f) ->
+                    "${recog.text}  ${"%.2f".format(recog.meanConfidence)}"
+                else -> "plate ${"%.2f".format(plate.confidence)}"
             }
             drawContext.canvas.nativeCanvas.apply {
                 val paint = android.graphics.Paint().apply {

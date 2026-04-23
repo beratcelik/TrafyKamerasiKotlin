@@ -17,7 +17,10 @@ import com.example.trafykamerasikotlin.data.vision.frame.MjpegFrameSource
 import com.example.trafykamerasikotlin.data.vision.ncnn.LibLoadState
 import com.example.trafykamerasikotlin.data.vision.ncnn.NcnnBridge
 import com.example.trafykamerasikotlin.data.vision.ocr.OnnxPlateOcr
+import com.example.trafykamerasikotlin.data.vision.tracker.ByteTracker
+import com.example.trafykamerasikotlin.data.vision.tracker.TrackedDetection
 import com.example.trafykamerasikotlin.data.vision.util.LatencyHistogram
+import com.example.trafykamerasikotlin.data.vision.voting.PlateVoteBook
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -80,6 +83,9 @@ class VisionDebugLiveViewModel(app: Application) : AndroidViewModel(app) {
     private var vehicle: NcnnVehicleDetector? = null
     private var plate:   NcnnPlateDetector?  = null
     private var ocr:     OnnxPlateOcr?       = null
+
+    private val tracker  = ByteTracker()
+    private val voteBook = PlateVoteBook()
 
     /** Called by the SurfaceView's SurfaceHolder.Callback when the surface becomes available. */
     fun setSurface(s: Surface) {
@@ -175,32 +181,52 @@ class VisionDebugLiveViewModel(app: Application) : AndroidViewModel(app) {
         histogram.record(vehicleMs)
         _latency.value = histogram.snapshot()
 
+        // Chunk 5: advance the ByteTracker with this frame's detections.
+        // The tracker returns only CONFIRMED tracks, which gives us a stable
+        // id to hang plate detections + OCR votes on.
+        val tracks: List<TrackedDetection> = tracker.update(vehicles)
+        voteBook.prune(tracker.activeTrackIds())
+
         val plateDet = ensurePlateDetectorOrNull()
         val ocrEngine = ensureOcrOrNull()
-        val plates = if (plateDet != null && vehicles.isNotEmpty()) {
-            vehicles.flatMapIndexed { idx, v ->
-                val x = v.bbox.left.toInt()
-                val y = v.bbox.top.toInt()
-                val w = (v.bbox.right  - v.bbox.left).toInt()
-                val h = (v.bbox.bottom - v.bbox.top ).toInt()
+
+        // Run plate detection + OCR per TRACK (not per raw detection) so
+        // parent track id on each plate is well-defined from the start.
+        val plates = if (plateDet != null && tracks.isNotEmpty()) {
+            tracks.flatMapIndexed { idx, t ->
+                val x = t.bbox.left.toInt()
+                val y = t.bbox.top.toInt()
+                val w = (t.bbox.right  - t.bbox.left).toInt()
+                val h = (t.bbox.bottom - t.bbox.top ).toInt()
                 val raw = runCatching { plateDet.detectInCrop(frame.bitmap, idx, x, y, w, h) }
                     .getOrElse { emptyList() }
-                if (ocrEngine == null) raw
-                else raw.map { p ->
-                    val crop = cropBitmap(frame.bitmap, p.bbox) ?: return@map p
-                    val recog = runCatching { ocrEngine.recognize(crop) }.getOrNull()
-                    crop.recycle()
-                    if (recog != null) p.copy(recognition = recog) else p
-                }
+                raw.map { p -> p.copy(parentTrackId = t.trackId) }
             }
         } else emptyList()
+
+        // OCR + vote each plate once per inference pass.
+        val plated = if (ocrEngine != null) plates.map { p ->
+            val trackId = p.parentTrackId
+            val crop = cropBitmap(frame.bitmap, p.bbox) ?: return@map p
+            val recog = runCatching { ocrEngine.recognize(crop) }.getOrNull()
+            crop.recycle()
+            // Record an OCR vote only when (a) OCR produced non-empty text
+            // AND (b) the plate belongs to a tracked vehicle. Untracked
+            // plates can't benefit from voting across frames.
+            if (trackId != null && recog != null && recog.text.isNotEmpty()) {
+                voteBook.record(trackId, recog.text)
+            }
+            val voted = trackId?.let { voteBook.bestText(it) }
+            p.copy(recognition = recog, votedText = voted)
+        } else plates
 
         _scene.value = TrackedScene(
             sourceFrameSize    = Size(frame.bitmap.width, frame.bitmap.height),
             detections         = vehicles,
             timestampNanos     = frame.timestampNanos,
             inferenceLatencyMs = vehicleMs,
-            plates             = plates,
+            plates             = plated,
+            tracks             = tracks,
         )
     }
 
@@ -260,6 +286,8 @@ class VisionDebugLiveViewModel(app: Application) : AndroidViewModel(app) {
         inferenceJob?.cancel(); inferenceJob = null
         _scene.value = null
         frameIdx.set(0)
+        tracker.reset()
+        voteBook.clear()
     }
 
     override fun onCleared() {

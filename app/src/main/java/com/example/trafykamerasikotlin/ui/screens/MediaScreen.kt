@@ -869,25 +869,51 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
     val bufferingState = remember { mutableStateOf(true) }
     val playerRef      = remember { mutableStateOf<MjpegRtspPlayer?>(null) }
 
-    // AI overlay toggle (default ON). Same pattern as the live Canlı tab —
-    // debug-build-gated for now; release will move the master switch into
-    // Settings. `rememberSaveable` preserves state across rotation/config
-    // change so toggling off and rotating doesn't silently re-enable it.
+    // AI overlay toggle — default OFF for recorded-file playback. Empirically
+    // the GeneralPlus dashcam's playback RTP stream is sensitive: starting
+    // playback with AI submission live appears to disrupt the camera's RTP
+    // delivery and the player times out with zero UDP packets. Off by default
+    // means the video plays first; the user opts in via the toggle if they
+    // want overlay on top of recorded footage. (Live tab still defaults ON —
+    // that path doesn't have the same fragility.)
     var aiOverlayEnabled by androidx.compose.runtime.saveable.rememberSaveable {
-        mutableStateOf(true)
+        mutableStateOf(false)
     }
     val aiViewModel: LiveVisionOverlayViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val aiScene by aiViewModel.scene.collectAsStateWithLifecycle()
-    Log.d("MediaScreen", "VideoPlayerOverlay composed: aiOverlayEnabled=$aiOverlayEnabled url=$url")
-    // Keep the onFrame callback current without re-creating the player when
-    // the toggle flips — the SurfaceView factory only runs once.
+
+    // Frame count (diagnostic only).
     val frameCount = remember { java.util.concurrent.atomic.AtomicInteger(0) }
-    val onFrameRef = remember { mutableStateOf<((android.graphics.Bitmap) -> Unit)?>(null) }
-    onFrameRef.value = if (aiOverlayEnabled) { bmp ->
-        val n = frameCount.incrementAndGet()
-        if (n <= 3 || n % 60 == 0) Log.d("MediaScreen", "VideoPlayerOverlay frame #$n → pipeline")
-        aiViewModel.onFrame(bmp)
+
+    // Build the per-frame tap that forwards bitmaps into the AI pipeline.
+    // Wrapped in `rememberUpdatedState` so the AndroidView factory's
+    // captured reference always sees the latest lambda — toggling the
+    // AI switch then doesn't require tearing down the player.
+    //
+    // IMPORTANT: this runs on the MJPEG receive thread, just before the
+    // surface is drawn. Keep it fast — expensive work here delays the
+    // first frame render, which is what made the overlay look like a
+    // "stuck buffering spinner" to the user. The pipeline's submit()
+    // is already non-blocking (Channel.trySend + DROP_OLDEST), but we
+    // defensively wrap in a try/catch so any exception can't wedge the
+    // player thread.
+    val onFrameLambda: ((android.graphics.Bitmap) -> Unit)? = if (aiOverlayEnabled) {
+        { bmp ->
+            val n = frameCount.incrementAndGet()
+            if (n <= 3 || n % 60 == 0) Log.d("MediaScreen", "VideoPlayerOverlay frame #$n → pipeline")
+            try { aiViewModel.onFrame(bmp) } catch (t: Throwable) {
+                Log.w("MediaScreen", "AI onFrame threw, dropping: ${t.message}")
+            }
+        }
     } else null
+    val currentOnFrame by androidx.compose.runtime.rememberUpdatedState(onFrameLambda)
+
+    androidx.compose.runtime.SideEffect {
+        val sceneSummary = aiScene?.let {
+            "tracks=${it.tracks?.size ?: 0} detections=${it.detections.size} plates=${it.plates?.size ?: 0}"
+        } ?: "null"
+        Log.d("MediaScreen", "VideoPlayerOverlay recompose aiOn=$aiOverlayEnabled scene=$sceneSummary")
+    }
 
     Box(
         modifier = Modifier
@@ -908,9 +934,11 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
                                 bufferingState.value = false
                             }
                             // Route per-frame bitmaps into the AI pipeline when
-                            // the toggle is on. Indirection via onFrameRef lets
-                            // us flip the toggle without bouncing the player.
-                            player.onFrame = { bmp -> onFrameRef.value?.invoke(bmp) }
+                            // the toggle is on. `currentOnFrame` is wrapped with
+                            // rememberUpdatedState above so the captured ref always
+                            // reads the latest lambda — flipping the toggle doesn't
+                            // require tearing down the player.
+                            player.onFrame = { bmp -> currentOnFrame?.invoke(bmp) }
                             playerRef.value = player
                             player.start(url)
                         }
@@ -928,18 +956,21 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
             modifier = Modifier.fillMaxSize()
         )
 
-        // AI bounding-box overlay — drawn above the SurfaceView. Only rendered
-        // when the toggle is on AND we actually have a scene to show. The
-        // overlay's fit-center math mirrors the player's, so boxes align.
-        if (aiOverlayEnabled) {
-            aiScene?.let { scene ->
-                BoundingBoxOverlay(
-                    scene = scene,
-                    sourceSize = android.util.Size(scene.sourceFrameSize.width, scene.sourceFrameSize.height),
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-        }
+        // AI bounding-box overlay — drawn above the SurfaceView. Always composed
+        // (BoundingBoxOverlay handles a null scene internally by early-returning
+        // before drawing) so the Canvas node is in the tree before the first
+        // scene arrives. Mounting it lazily caused a z-order glitch where the
+        // first non-null scene didn't paint above the SurfaceView until the
+        // user toggled the AI switch off/on. Mirrors LiveScreen.
+        val overlayScene = if (aiOverlayEnabled) aiScene else null
+        val overlaySourceSize = overlayScene?.let {
+            android.util.Size(it.sourceFrameSize.width, it.sourceFrameSize.height)
+        } ?: android.util.Size(0, 0)
+        BoundingBoxOverlay(
+            scene = overlayScene,
+            sourceSize = overlaySourceSize,
+            modifier = Modifier.fillMaxSize(),
+        )
 
         if (bufferingState.value) {
             CircularProgressIndicator(

@@ -514,9 +514,21 @@ private fun MjpegLivePlayer(
         .then(if (isLandscape) Modifier.fillMaxHeight() else Modifier.fillMaxWidth())
         .aspectRatio(16f / 9f)
 
-    // Keep the onFrame callback current without tearing down the player on
-    // every recomposition — the SurfaceView factory runs only once.
-    val onFrameRef = remember { mutableStateOf(onFrame) }.apply { value = onFrame }
+    // Canonical "keep the latest callback available to a long-lived View
+    // factory" pattern. `rememberUpdatedState` gives us a State<T> whose
+    // value is updated on every recomposition but whose identity stays
+    // stable, so the factory lambda that captures it sees the latest
+    // `onFrame` without us re-creating the player on every toggle.
+    val currentOnFrame by androidx.compose.runtime.rememberUpdatedState(onFrame)
+
+    // Log each time this composable re-runs with new inputs so we can see
+    // in logcat whether the overlay scene is actually flowing through.
+    androidx.compose.runtime.SideEffect {
+        val sceneSummary = overlayScene?.let {
+            "tracks=${it.tracks?.size ?: 0} detections=${it.detections.size} plates=${it.plates?.size ?: 0}"
+        } ?: "null"
+        Log.d(TAG, "MjpegLivePlayer recompose: onFrame=${if (onFrame != null) "set" else "null"} scene=$sceneSummary")
+    }
 
     Box(
         modifier         = playerSize,
@@ -533,9 +545,9 @@ private fun MjpegLivePlayer(
                                 network = GeneralplusSession.getBoundNetwork(),
                             )
                             player.onFirstFrame = { bufferingState.value = false }
-                            // Read via remembered ref so toggling the AI overlay
-                            // doesn't require tearing down the player.
-                            player.onFrame = { bmp -> onFrameRef.value?.invoke(bmp) }
+                            // Read via rememberUpdatedState so the toggle flips
+                            // without bouncing the player.
+                            player.onFrame = { bmp -> currentOnFrame?.invoke(bmp) }
                             playerRef.value = player
                             player.start(rtspUrl)
                         }
@@ -555,18 +567,17 @@ private fun MjpegLivePlayer(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Vision overlay — draws red vehicle boxes + yellow plate boxes on top
-        // of the rendered MJPEG. The overlay owns its own coordinate transform
-        // (fit-center source → view size) so it lines up with the SurfaceView's
-        // fit-center rendering of the 560×320 MJPEG stream.
-        if (overlayScene != null) {
-            val src = overlayScene.sourceFrameSize
-            BoundingBoxOverlay(
-                scene = overlayScene,
-                sourceSize = android.util.Size(src.width, src.height),
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
+        // Vision overlay — always composed, even when the scene is null.
+        // Keeping it in the tree unconditionally avoids a subtle z-ordering
+        // glitch where the overlay's first null → non-null transition
+        // wouldn't surface above the SurfaceView until some other event
+        // forced a re-layout (e.g. toggling the AI switch).
+        val srcSize = overlayScene?.sourceFrameSize ?: android.util.Size(0, 0)
+        BoundingBoxOverlay(
+            scene = overlayScene,
+            sourceSize = srcSize,
+            modifier = Modifier.fillMaxSize(),
+        )
 
         // Buffering spinner — shown until the first JPEG frame is decoded
         if (bufferingState.value) {

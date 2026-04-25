@@ -171,10 +171,13 @@ fun MediaScreen(
                 style = MaterialTheme.typography.headlineMedium,
                 color = ColorTextPrimary,
             )
-            // GP-only — other chipsets need the H.264 decoder path that
-            // hasn't landed yet. Debug-gated per the toggle-in-Settings plan.
-            if (device?.protocol == ChipsetProtocol.GENERALPLUS &&
-                com.example.trafykamerasikotlin.BuildConfig.DEBUG) {
+            // AI download burn-in: GP (AVI/MJPEG) and HiSilicon-family
+            // (HTTP MP4) supported. Allwinner uses RTP2P → temp .ts which the
+            // offline processor doesn't read yet, so the toggle is hidden
+            // for that chipset.
+            val aiDownloadSupported = device != null &&
+                device.protocol != ChipsetProtocol.ALLWINNER_V853
+            if (aiDownloadSupported) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text  = stringResource(R.string.media_ai_overlay_toggle_label),
@@ -263,11 +266,13 @@ fun MediaScreen(
                         onPlayInApp       = { url -> inAppVideoUrl = url },
                         onViewPhoto       = { url -> inAppPhotoUrl = url },
                         // Route through the burn-in flow when the AI toggle is on
-                        // AND the camera is GeneralPlus (only chipset supported
-                        // by OfflineVideoProcessor for now). Other chipsets and
-                        // the toggle-off case fall through to the plain download.
+                        // AND the camera supports it (GP via AVI/MJPEG, HiSilicon
+                        // family via HTTP MP4). Allwinner and toggle-off both
+                        // fall through to the plain download.
                         onDownload        = { f ->
-                            if (aiOverlayEnabled && device?.protocol == ChipsetProtocol.GENERALPLUS) {
+                            val aiBurnIn = aiOverlayEnabled && device != null &&
+                                device.protocol != ChipsetProtocol.ALLWINNER_V853
+                            if (aiBurnIn) {
                                 viewModel.downloadWithOverlay(f)
                             } else {
                                 viewModel.download(f)
@@ -345,12 +350,43 @@ private fun SdUsageRow(sd: AllwinnerSdInfo) {
 @Composable
 private fun AllwinnerPlaybackOverlay(url: String, onDismiss: () -> Unit) {
     BackHandler(onBack = onDismiss)
+
+    // AI overlay state — same pattern as the HiSilicon and GP playback
+    // overlays. Default OFF so the video plays cleanly first; user opts in
+    // by tapping the camera icon top-right. Pipeline ViewModel is
+    // activity-scoped and shared with Live + other playback flows.
+    var aiOverlayEnabled by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableStateOf(false)
+    }
+    val aiViewModel: LiveVisionOverlayViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val aiScene by aiViewModel.scene.collectAsStateWithLifecycle()
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        AllwinnerFilePlayer(fileUri = url, modifier = Modifier.align(Alignment.Center))
+        AllwinnerFilePlayer(
+            fileUri = url,
+            modifier = Modifier.align(Alignment.Center),
+            onFrame = if (aiOverlayEnabled) aiViewModel::onFrame else null,
+        )
+
+        // Bounding-box overlay sized to the same 16:9 letterbox region as
+        // the player so detection coords align with the rendered frame.
+        val overlayScene = if (aiOverlayEnabled) aiScene else null
+        val overlaySourceSize = overlayScene?.let {
+            android.util.Size(it.sourceFrameSize.width, it.sourceFrameSize.height)
+        } ?: android.util.Size(0, 0)
+        BoundingBoxOverlay(
+            scene = overlayScene,
+            sourceSize = overlaySourceSize,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f),
+        )
+
         IconButton(
             onClick  = onDismiss,
             modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
@@ -359,6 +395,18 @@ private fun AllwinnerPlaybackOverlay(url: String, onDismiss: () -> Unit) {
                 imageVector        = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = stringResource(R.string.common_close_cd),
                 tint               = Color.White
+            )
+        }
+
+        // AI overlay toggle — top-right, debug-gated. Same UX as the GP and
+        // HiSilicon-family playback overlays.
+        if (com.example.trafykamerasikotlin.BuildConfig.DEBUG) {
+            AiOverlayToggleButton(
+                enabled  = aiOverlayEnabled,
+                onToggle = { aiOverlayEnabled = !aiOverlayEnabled },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp),
             )
         }
     }
@@ -908,13 +956,6 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
     } else null
     val currentOnFrame by androidx.compose.runtime.rememberUpdatedState(onFrameLambda)
 
-    androidx.compose.runtime.SideEffect {
-        val sceneSummary = aiScene?.let {
-            "tracks=${it.tracks?.size ?: 0} detections=${it.detections.size} plates=${it.plates?.size ?: 0}"
-        } ?: "null"
-        Log.d("MediaScreen", "VideoPlayerOverlay recompose aiOn=$aiOverlayEnabled scene=$sceneSummary")
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -993,16 +1034,14 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
         }
 
         // AI overlay toggle — top-right, mirrors the Live tab's placement
-        // so muscle memory carries over. Debug-gated for now.
-        if (com.example.trafykamerasikotlin.BuildConfig.DEBUG) {
-            AiOverlayToggleButton(
-                enabled  = aiOverlayEnabled,
-                onToggle = { aiOverlayEnabled = !aiOverlayEnabled },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp),
-            )
-        }
+        // so muscle memory carries over.
+        AiOverlayToggleButton(
+            enabled  = aiOverlayEnabled,
+            onToggle = { aiOverlayEnabled = !aiOverlayEnabled },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp),
+        )
     }
 
     DisposableEffect(url) {
@@ -1071,6 +1110,12 @@ private fun AiOverlayToggleButton(
  * every HiDVR-family chipset where the camera exposes recordings directly over
  * HTTP. GeneralPlus (RTSP/MJPEG) and Allwinner (RTP2P temp file) use their own
  * overlays upstream.
+ *
+ * AI overlay (HiSilicon Chunk H1): IjkPlayer renders to a [TextureView] so we
+ * can poll [TextureView.getBitmap] off-thread to feed the vision pipeline.
+ * Toggle defaults OFF — tap the camera icon (top-right) to opt in. The
+ * polling loop only runs while the toggle is on, so the off path costs the
+ * same as the original SurfaceView path.
  */
 @Composable
 private fun IjkVideoPlayerOverlay(url: String, network: Network?, onDismiss: () -> Unit) {
@@ -1113,11 +1158,33 @@ private fun IjkVideoPlayerOverlay(url: String, network: Network?, onDismiss: () 
             setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize",       "1048576")
             setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "fflags",          "nobuffer")
             setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC,  "skip_loop_filter", 48L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec",             1L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 1L)
+            // Software decoding for the playback overlay. The hardware
+            // OMX.qcom.video.decoder.avc on Adreno-class chipsets rejects
+            // SurfaceTexture-backed Surfaces (the kind a TextureView gives
+            // us), causing `feed_input_buffer: SDL_AMediaCodec_getInputBuffer
+            // failed` immediately after start — audio plays, video stays
+            // black. FFmpeg's software H.264 decoder works with any Surface,
+            // and the AI-overlay tap polls TextureView.bitmap so we need a
+            // TextureView regardless. Costs CPU but works.
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec",             0L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 0L)
             setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared",      1L)
         }
     }
+
+    // ── AI overlay state ───────────────────────────────────────────────────
+    // Default OFF (matches GP playback overlay). User opts in by tapping the
+    // top-right camera icon. The pipeline ViewModel is activity-scoped and
+    // shared with the Live tab so the model only loads once per app session.
+    var aiOverlayEnabled by androidx.compose.runtime.saveable.rememberSaveable {
+        mutableStateOf(false)
+    }
+    val aiViewModel: LiveVisionOverlayViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val aiScene by aiViewModel.scene.collectAsStateWithLifecycle()
+
+    // TextureView reference for the polling coroutine — assigned by the
+    // SurfaceTextureListener once the GL surface is ready.
+    val textureViewRef = remember { mutableStateOf<android.view.TextureView?>(null) }
 
     Box(
         modifier         = Modifier
@@ -1129,12 +1196,14 @@ private fun IjkVideoPlayerOverlay(url: String, network: Network?, onDismiss: () 
         // portrait phone instead of being stretched to fill the screen.
         AndroidView(
             factory = { ctx ->
-                SurfaceView(ctx).also { sv ->
-                    sv.holder.addCallback(object : SurfaceHolder.Callback {
-                        override fun surfaceCreated(holder: SurfaceHolder) {
-                            Log.d("MediaScreen", "IjkVideoPlayerOverlay surfaceCreated — $url")
+                android.view.TextureView(ctx).also { tv ->
+                    tv.surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
+                        override fun onSurfaceTextureAvailable(
+                            surface: android.graphics.SurfaceTexture, w: Int, h: Int,
+                        ) {
+                            Log.d("MediaScreen", "IjkVideoPlayerOverlay surfaceTextureAvailable ${w}x$h — $url")
                             try {
-                                ijkPlayer.setDisplay(holder)
+                                ijkPlayer.setSurface(android.view.Surface(surface))
                                 ijkPlayer.dataSource = url
                                 ijkPlayer.setOnPreparedListener { mp ->
                                     mp.start()
@@ -1145,24 +1214,82 @@ private fun IjkVideoPlayerOverlay(url: String, network: Network?, onDismiss: () 
                                     false
                                 }
                                 ijkPlayer.prepareAsync()
+                                textureViewRef.value = tv
                             } catch (e: Exception) {
                                 Log.e("MediaScreen", "IjkVideoPlayerOverlay setup failed: ${e.message}")
                             }
                         }
 
-                        override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {}
+                        override fun onSurfaceTextureSizeChanged(
+                            surface: android.graphics.SurfaceTexture, w: Int, h: Int,
+                        ) {}
 
-                        override fun surfaceDestroyed(holder: SurfaceHolder) {
-                            Log.d("MediaScreen", "IjkVideoPlayerOverlay surfaceDestroyed")
+                        override fun onSurfaceTextureDestroyed(
+                            surface: android.graphics.SurfaceTexture,
+                        ): Boolean {
+                            Log.d("MediaScreen", "IjkVideoPlayerOverlay surfaceTextureDestroyed")
                             ijkPlayer.stop()
-                            ijkPlayer.setDisplay(null)
+                            ijkPlayer.setSurface(null)
+                            textureViewRef.value = null
+                            return true   // releases the SurfaceTexture
                         }
-                    })
+
+                        override fun onSurfaceTextureUpdated(
+                            surface: android.graphics.SurfaceTexture,
+                        ) {}
+                    }
                 }
             },
             modifier = Modifier
                 .then(if (isLandscape) Modifier.fillMaxHeight() else Modifier.fillMaxWidth())
                 .aspectRatio(16f / 9f)
+        )
+
+        // ── AI bitmap polling ──────────────────────────────────────────────
+        // Only active when the toggle is on AND the player has rendered its
+        // first frame. We poll at ~10 fps (100 ms tick); the pipeline's own
+        // sampler then drops 2 of every 3 (`inferenceEveryN = 3`) so actual
+        // inference runs ~3 fps. Each `getBitmap` allocates ~5 MB at 1080p
+        // letterboxed; we recycle right after submit since the pipeline
+        // copies internally before parking on its inference channel.
+        val aiActive = aiOverlayEnabled && !bufferingState.value
+        val pollKey = textureViewRef.value
+        LaunchedEffect(aiActive, pollKey) {
+            if (!aiActive || pollKey == null) return@LaunchedEffect
+            var firstFrameLogged = false
+            while (true) {
+                kotlinx.coroutines.delay(100)
+                val tv = textureViewRef.value ?: break
+                if (!tv.isAvailable) continue
+                val bmp = try { tv.bitmap } catch (t: Throwable) {
+                    Log.w("MediaScreen", "getBitmap failed: ${t.message}")
+                    null
+                } ?: continue
+                if (!firstFrameLogged) {
+                    Log.i("MediaScreen", "AI poll: first frame ${bmp.width}x${bmp.height}")
+                    firstFrameLogged = true
+                }
+                try { aiViewModel.onFrame(bmp) } catch (t: Throwable) {
+                    Log.w("MediaScreen", "AI onFrame threw: ${t.message}")
+                } finally {
+                    bmp.recycle()
+                }
+            }
+        }
+
+        // AI bounding-box overlay — always composed (handles null scene
+        // internally) so the Canvas node is in the tree before the first
+        // scene arrives. Mirrors the GP playback overlay pattern.
+        val overlayScene = if (aiOverlayEnabled) aiScene else null
+        val overlaySourceSize = overlayScene?.let {
+            android.util.Size(it.sourceFrameSize.width, it.sourceFrameSize.height)
+        } ?: android.util.Size(0, 0)
+        BoundingBoxOverlay(
+            scene = overlayScene,
+            sourceSize = overlaySourceSize,
+            modifier = Modifier
+                .then(if (isLandscape) Modifier.fillMaxHeight() else Modifier.fillMaxWidth())
+                .aspectRatio(16f / 9f),
         )
 
         if (bufferingState.value) {
@@ -1188,6 +1315,15 @@ private fun IjkVideoPlayerOverlay(url: String, network: Network?, onDismiss: () 
                 )
             }
         }
+
+        // AI overlay toggle — top-right, same UX as GP playback.
+        AiOverlayToggleButton(
+            enabled  = aiOverlayEnabled,
+            onToggle = { aiOverlayEnabled = !aiOverlayEnabled },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp),
+        )
     }
 
     DisposableEffect(url) {

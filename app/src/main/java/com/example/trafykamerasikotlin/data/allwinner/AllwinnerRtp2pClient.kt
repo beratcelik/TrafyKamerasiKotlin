@@ -253,6 +253,14 @@ internal class AllwinnerRtp2pClient private constructor(
         } finally {
             try { socket.close() } catch (_: Exception) {}
         }
+        // Receive loop is finished — close the producer channel so the
+        // consumer's collect returns and the surrounding coroutineScope can
+        // exit. Without this, awaitClose below would suspend forever waiting
+        // for an external cancel that never comes (the flow has no further
+        // packets to emit, so there's no reason to keep it alive). The
+        // [awaitClose] block is only reached when the consumer cancels first;
+        // it stays in place as a safety hook for socket cleanup.
+        close()
         awaitClose {
             try { socket.close() } catch (_: Exception) {}
         }

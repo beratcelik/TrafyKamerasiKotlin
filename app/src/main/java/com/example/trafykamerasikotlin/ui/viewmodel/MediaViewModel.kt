@@ -306,46 +306,73 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     fun downloadWithOverlay(file: MediaFile) {
         if (_downloading.value.contains(file.name)) return
         val device = loadedDevice ?: return
-        if (device.protocol != ChipsetProtocol.GENERALPLUS) {
-            // Fall back to the plain path for unsupported chipsets; AI burn-in
-            // requires the GP AVI parser path.
+        if (device.protocol == ChipsetProtocol.ALLWINNER_V853) {
+            // Allwinner uses RTP2P → temp .ts; offline processor would need a
+            // separate .ts source before this works. Plain download for now.
             download(file)
             return
         }
-        val fileIndex = GeneralplusMediaRepository.fileIndexOf(file.path)
-        if (fileIndex < 0) { Log.w(TAG, "downloadWithOverlay: bad path ${file.path}"); return }
 
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val outputName   = file.name.substringBeforeLast('.') + ".mp4"
         val outFile      = File(downloadsDir, outputName)
 
-        val tempAvi = File(getApplication<Application>().cacheDir, "ai_in_${file.name}")
+        val tempIn = File(getApplication<Application>().cacheDir, "ai_in_${file.name}")
+
+        // Pre-resolve GP file index outside the coroutine so a bad path
+        // surfaces immediately.
+        val gpFileIndex: Int = if (device.protocol == ChipsetProtocol.GENERALPLUS) {
+            GeneralplusMediaRepository.fileIndexOf(file.path)
+                .also { if (it < 0) { Log.w(TAG, "downloadWithOverlay: bad GP path ${file.path}"); return } }
+        } else -1
 
         val job = viewModelScope.launch(Dispatchers.Default) {
             _downloading.value = _downloading.value + file.name
             _downloadProgress.value = _downloadProgress.value + (file.name to DownloadState(0, 0f, 0f, 0f))
-            Log.i(TAG, "downloadWithOverlay: start ${file.name} → ${outFile.name}")
+            Log.i(TAG, "downloadWithOverlay: start ${file.name} → ${outFile.name} (proto=${device.protocol})")
             var completed = false
             try {
                 downloadsDir.mkdirs()
 
-                // Stage 1 — download the raw AVI into cache. Map 0..100% of
-                // GP download into the 0..50% band of the combined progress.
-                val ok = gpRepo.downloadFile(
-                    device.protocol.deviceIp, fileIndex, tempAvi,
-                ) { received, total ->
-                    val halfPct = ((received * 50L) / total.coerceAtLeast(1L)).toInt().coerceIn(0, 50)
-                    _downloadProgress.value = _downloadProgress.value + (file.name to DownloadState(
-                        pct           = halfPct,
-                        receivedMb    = received / (1024f * 1024f),
-                        totalMb       = total    / (1024f * 1024f),
-                        speedMbPerSec = 0f,
-                    ))
+                // ── Stage 1: download to cache ────────────────────────────
+                // GP uses the GPSOCKET GetRawData flow (chunked, with progress).
+                // HiSilicon-family uses a plain HTTP stream from `httpUrl`,
+                // with progress derived from Content-Length when available.
+                // Either way maps to the 0..50% band of the combined bar.
+                if (device.protocol == ChipsetProtocol.GENERALPLUS) {
+                    val ok = gpRepo.downloadFile(
+                        device.protocol.deviceIp, gpFileIndex, tempIn,
+                    ) { received, total ->
+                        val halfPct = ((received * 50L) / total.coerceAtLeast(1L)).toInt().coerceIn(0, 50)
+                        _downloadProgress.value = _downloadProgress.value + (file.name to DownloadState(
+                            pct           = halfPct,
+                            receivedMb    = received / (1024f * 1024f),
+                            totalMb       = total    / (1024f * 1024f),
+                            speedMbPerSec = 0f,
+                        ))
+                    }
+                    if (!ok) throw Exception("GetRawData returned no data")
+                } else {
+                    httpDownloadToFile(file.httpUrl, tempIn) { received, total ->
+                        val halfPct = if (total > 0L)
+                            ((received * 50L) / total).toInt().coerceIn(0, 50)
+                        else 0
+                        _downloadProgress.value = _downloadProgress.value + (file.name to DownloadState(
+                            pct           = halfPct,
+                            receivedMb    = received / (1024f * 1024f),
+                            totalMb       = (if (total > 0L) total else received) / (1024f * 1024f),
+                            speedMbPerSec = 0f,
+                        ))
+                    }
                 }
-                if (!ok) throw Exception("GetRawData returned no data")
 
-                // Stage 2 — offline process. Map processor progress into the
-                // remaining 50–100% band.
+                // ── Stage 2: offline process ──────────────────────────────
+                // GP path: AVI/MJPEG via the legacy `process(File, File)`
+                //          overload (uses AviMjpegVideoSource internally).
+                // HiSilicon-family: MP4/H.264 via `Mp4VideoSource.open(uri)`
+                //          which wraps Android's MediaMetadataRetriever.
+                // Both feed the same `OfflineVideoProcessor.process(source,
+                // out)` so the downstream decode→infer→encode loop is shared.
                 val proc = OfflineVideoProcessor(context = getApplication())
                 val stateJob = launch {
                     proc.state.collect { s ->
@@ -366,7 +393,20 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                 }
-                proc.process(tempAvi, outFile)
+                if (device.protocol == ChipsetProtocol.GENERALPLUS) {
+                    proc.process(tempIn, outFile)
+                } else {
+                    // HiSilicon-family dashcams produce MP4s that defeat
+                    // MediaMetadataRetriever — frame 0 decodes but subsequent
+                    // seeks return null one frame at a time, dragging a
+                    // 21-second clip out to ~30+ minutes. Skip MMR entirely
+                    // and go straight to the MediaCodec/MediaExtractor path,
+                    // which decodes the H.264 bitstream sequentially without
+                    // depending on the file's sample-table integrity.
+                    val source = com.example.trafykamerasikotlin.data.video.MediaCodecVideoSource
+                        .open(tempIn)
+                    source.use { proc.process(it, outFile) }
+                }
                 stateJob.cancel()
 
                 if (outFile.length() > 0L) {
@@ -386,11 +426,41 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                 _downloading.value      = _downloading.value - file.name
                 _downloadProgress.value = _downloadProgress.value - file.name
                 downloadJobs.remove(file.name)
-                try { if (tempAvi.exists()) tempAvi.delete() } catch (_: Throwable) {}
+                try { if (tempIn.exists()) tempIn.delete() } catch (_: Throwable) {}
                 if (!completed && outFile.exists()) outFile.delete()
             }
         }
         downloadJobs[file.name] = job
+    }
+
+    /**
+     * HTTP streaming download with progress reporting. Uses the same
+     * [DashcamHttpClient.openStream] path as the plain [download] function so
+     * it inherits the dashcam-Wi-Fi process binding. `total` is taken from
+     * Content-Length when present; otherwise it's reported as -1 and the
+     * caller should treat progress as indeterminate.
+     */
+    private suspend fun httpDownloadToFile(
+        url: String,
+        outFile: File,
+        onProgress: (received: Long, total: Long) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        val body = DashcamHttpClient.openStream(url) ?: throw Exception("Failed to open stream")
+        body.use { responseBody ->
+            val total = responseBody.contentLength()  // -1 if unknown
+            val input  = responseBody.byteStream()
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            outFile.outputStream().use { output ->
+                var received = 0L
+                var n: Int
+                while (input.read(buffer).also { n = it } != -1) {
+                    ensureActive()
+                    output.write(buffer, 0, n)
+                    received += n
+                    onProgress(received, total)
+                }
+            }
+        }
     }
 
     /**
@@ -432,6 +502,18 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         val device = loadedDevice ?: return
         Log.d(TAG, "onLeave: for ${device.protocol.deviceIp}")
         viewModelScope.launch { leavePlayback(device) }
+        // Allwinner uses a single-stream busy guard (see startAllwinnerStream).
+        // If the user backs out of the Media tab while a stream is in-flight,
+        // the playback overlay never appears so they have nothing to dismiss
+        // — the guard stays true and the next tap fails with BusyPlayback.
+        // Cancel any active job and clear the guard on tab leave.
+        if (allwinnerStreamActive) {
+            Log.i(TAG, "onLeave: cancelling active Allwinner stream")
+            allwinnerStreamJob?.cancel()
+            allwinnerStreamJob = null
+            _allwinnerPlaybackUri.value = null
+            allwinnerStreamActive = false
+        }
         // Invalidate the cached file list so the next visit re-probes the camera.
         // Other tabs (Live switching camera channels, Settings changing modes) can
         // mutate device state between visits — cheaper to re-fetch than stay stale.
@@ -506,9 +588,12 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         val device = loadedDevice ?: return
         if (device.protocol != ChipsetProtocol.ALLWINNER_V853) return
         if (allwinnerStreamActive) {
+            Log.w(TAG, "startAllwinnerStream: BUSY — active job=${allwinnerStreamJob?.isActive} " +
+                "uri=${_allwinnerPlaybackUri.value}; emitting BusyPlayback for ${file.name}")
             viewModelScope.launch { _userMessages.emit(MediaUserMessage.BusyPlayback) }
             return
         }
+        Log.i(TAG, "startAllwinnerStream: ${file.name}")
         allwinnerStreamActive = true
         val ctx = getApplication<Application>()
         val tempFile = File(ctx.cacheDir, "allwinner_play.ts").also {

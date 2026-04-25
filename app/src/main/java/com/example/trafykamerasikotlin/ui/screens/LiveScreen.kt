@@ -151,38 +151,37 @@ fun LiveScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         androidx.compose.runtime.key(state.selectedCamera) {
+                            // Both code paths now feed the vision pipeline. GP via
+                            // direct decoded-bitmap tap (fast, free); HiSilicon
+                            // family via TextureView.getBitmap() polling at ~10 fps
+                            // (Chunk H2). When AI is off, both paths skip the tap
+                            // entirely so non-AI users pay nothing.
+                            val aiActive = aiOverlayEnabled
                             if (state.useMjpeg) {
-                                // MJPEG (GeneralPlus) is the only path the vision
-                                // pipeline can see today. AI overlay is opt-in via
-                                // the toggle; when ON, `onFrame` feeds the shared
-                                // pipeline and `overlayScene` draws boxes on top.
-                                val aiActive = aiOverlayEnabled &&
-                                    device?.protocol == ChipsetProtocol.GENERALPLUS
                                 MjpegLivePlayer(
                                     rtspUrl = state.rtspUrl,
                                     onFrame = if (aiActive) aiViewModel::onFrame else null,
                                     overlayScene = if (aiActive) aiScene else null,
                                 )
                             } else {
-                                RtspPlayer(rtspUrl = state.rtspUrl)
+                                RtspPlayer(
+                                    rtspUrl = state.rtspUrl,
+                                    onFrame = if (aiActive) aiViewModel::onFrame else null,
+                                    overlayScene = if (aiActive) aiScene else null,
+                                )
                             }
                         }
-                        // AI overlay toggle — small icon overlaid on the video's
-                        // top-right. Only shown for MJPEG (the chipset where the
-                        // overlay can actually do anything) and only in debug
-                        // builds per the user's direction (moves to Settings for
-                        // release). Persists across rotation via rememberSaveable.
-                        if (state.useMjpeg &&
-                            device?.protocol == ChipsetProtocol.GENERALPLUS &&
-                            com.example.trafykamerasikotlin.BuildConfig.DEBUG) {
-                            AiOverlayToggle(
-                                enabled  = aiOverlayEnabled,
-                                onToggle = { aiOverlayEnabled = !aiOverlayEnabled },
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(12.dp),
-                            )
-                        }
+                        // AI overlay toggle — top-right, shown for every chipset
+                        // that has a video player (MJPEG GP, H.264 HiSilicon
+                        // family). Allwinner uses a separate capture UI and is
+                        // excluded by the surrounding `when (uiState)` branch.
+                        AiOverlayToggle(
+                            enabled  = aiOverlayEnabled,
+                            onToggle = { aiOverlayEnabled = !aiOverlayEnabled },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(12.dp),
+                        )
                     }
                     // Camera switcher tab bar — shown only when multiple cameras exist
                     // AND the user is in portrait. Landscape is a chrome-free view.
@@ -401,7 +400,11 @@ private fun CameraTabBar(
  *   stimeout       = 5s    — socket timeout so we don't hang indefinitely
  */
 @Composable
-private fun RtspPlayer(rtspUrl: String) {
+private fun RtspPlayer(
+    rtspUrl: String,
+    onFrame: ((android.graphics.Bitmap) -> Unit)? = null,
+    overlayScene: com.example.trafykamerasikotlin.data.vision.TrackedScene? = null,
+) {
 
     val ijkPlayer = remember(rtspUrl) {
         IjkMediaPlayer.loadLibrariesOnce(null)
@@ -439,54 +442,115 @@ private fun RtspPlayer(rtspUrl: String) {
         }
     }
 
+    // Use rememberUpdatedState so the captured `onFrame` reference inside the
+    // polling loop and the SurfaceTextureListener always sees the latest
+    // lambda — toggling AI doesn't have to bounce the player.
+    val currentOnFrame by androidx.compose.runtime.rememberUpdatedState(onFrame)
+    val textureViewRef = remember { mutableStateOf<android.view.TextureView?>(null) }
+    val playbackStarted = remember { mutableStateOf(false) }
+
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    AndroidView(
-        factory = { ctx ->
-            SurfaceView(ctx).also { sv ->
-                sv.holder.addCallback(object : SurfaceHolder.Callback {
-
-                    override fun surfaceCreated(holder: SurfaceHolder) {
-                        Log.d(TAG, "surfaceCreated — starting IjkPlayer for $rtspUrl")
-                        try {
-                            ijkPlayer.setDisplay(holder)
-                            ijkPlayer.dataSource = rtspUrl
-                            ijkPlayer.setOnPreparedListener { mp ->
-                                Log.d(TAG, "IjkPlayer prepared — starting playback")
-                                mp.start()
-                            }
-                            ijkPlayer.setOnErrorListener { _, what, extra ->
-                                Log.e(TAG, "IjkPlayer error what=$what extra=$extra")
-                                false
-                            }
-                            ijkPlayer.setOnInfoListener { _, what, extra ->
-                                Log.d(TAG, "IjkPlayer info what=$what extra=$extra")
-                                false
-                            }
-                            ijkPlayer.prepareAsync()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "IjkPlayer setup failed: ${e.message}")
-                        }
-                    }
-
-                    override fun surfaceChanged(
-                        holder: SurfaceHolder, format: Int, w: Int, h: Int,
-                    ) {}
-
-                    override fun surfaceDestroyed(holder: SurfaceHolder) {
-                        Log.d(TAG, "surfaceDestroyed — stopping IjkPlayer")
-                        ijkPlayer.stop()
-                        ijkPlayer.setDisplay(null)
-                    }
-                })
-            }
-        },
-        // Portrait: fill width, letterbox top/bottom. Landscape: fill height so the
-        // video grows into the longer axis instead of being clamped. 16:9 aspect
-        // preserved in both — no stretching of the 1920×1080 dashcam image.
+    Box(
+        contentAlignment = Alignment.Center,
         modifier = Modifier
             .then(if (isLandscape) Modifier.fillMaxHeight() else Modifier.fillMaxWidth())
-            .aspectRatio(16f / 9f)
-    )
+            .aspectRatio(16f / 9f),
+    ) {
+        AndroidView(
+            factory = { ctx ->
+                android.view.TextureView(ctx).also { tv ->
+                    tv.surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
+                        override fun onSurfaceTextureAvailable(
+                            surface: android.graphics.SurfaceTexture, w: Int, h: Int,
+                        ) {
+                            Log.d(TAG, "RtspPlayer surfaceTextureAvailable ${w}x$h — $rtspUrl")
+                            try {
+                                ijkPlayer.setSurface(android.view.Surface(surface))
+                                ijkPlayer.dataSource = rtspUrl
+                                ijkPlayer.setOnPreparedListener { mp ->
+                                    Log.d(TAG, "IjkPlayer prepared — starting playback")
+                                    mp.start()
+                                    playbackStarted.value = true
+                                }
+                                ijkPlayer.setOnErrorListener { _, what, extra ->
+                                    Log.e(TAG, "IjkPlayer error what=$what extra=$extra")
+                                    false
+                                }
+                                ijkPlayer.setOnInfoListener { _, what, extra ->
+                                    Log.d(TAG, "IjkPlayer info what=$what extra=$extra")
+                                    false
+                                }
+                                ijkPlayer.prepareAsync()
+                                textureViewRef.value = tv
+                            } catch (e: Exception) {
+                                Log.e(TAG, "IjkPlayer setup failed: ${e.message}")
+                            }
+                        }
+
+                        override fun onSurfaceTextureSizeChanged(
+                            surface: android.graphics.SurfaceTexture, w: Int, h: Int,
+                        ) {}
+
+                        override fun onSurfaceTextureDestroyed(
+                            surface: android.graphics.SurfaceTexture,
+                        ): Boolean {
+                            Log.d(TAG, "RtspPlayer surfaceTextureDestroyed")
+                            ijkPlayer.stop()
+                            ijkPlayer.setSurface(null)
+                            textureViewRef.value = null
+                            return true
+                        }
+
+                        override fun onSurfaceTextureUpdated(
+                            surface: android.graphics.SurfaceTexture,
+                        ) {}
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
+
+        // ── AI bitmap polling ─────────────────────────────────────────────
+        // Mirrors the HiSilicon playback overlay (IjkVideoPlayerOverlay):
+        // poll TextureView.bitmap at ~10 fps when AI is on, recycle after
+        // submit (the pipeline copies internally before parking on its
+        // inference channel). Loop cancels when onFrame goes null
+        // (toggle off) or when the TextureView reference clears.
+        val aiActive = onFrame != null && playbackStarted.value
+        val pollKey  = textureViewRef.value
+        LaunchedEffect(aiActive, pollKey) {
+            if (!aiActive || pollKey == null) return@LaunchedEffect
+            Log.d(TAG, "RtspPlayer: AI poll loop start")
+            try {
+                while (true) {
+                    kotlinx.coroutines.delay(100)
+                    val tv = textureViewRef.value ?: break
+                    if (!tv.isAvailable) continue
+                    val bmp = try { tv.bitmap } catch (t: Throwable) {
+                        Log.w(TAG, "getBitmap failed: ${t.message}")
+                        null
+                    } ?: continue
+                    try { currentOnFrame?.invoke(bmp) } catch (t: Throwable) {
+                        Log.w(TAG, "onFrame threw: ${t.message}")
+                    } finally {
+                        bmp.recycle()
+                    }
+                }
+            } finally {
+                Log.d(TAG, "RtspPlayer: AI poll loop end")
+            }
+        }
+
+        // Vision overlay — always composed (handles null scene internally),
+        // sized to the same letterboxed video region so detection coords
+        // align with the rendered frame. Same pattern as MjpegLivePlayer.
+        val srcSize = overlayScene?.sourceFrameSize ?: android.util.Size(0, 0)
+        BoundingBoxOverlay(
+            scene = overlayScene,
+            sourceSize = srcSize,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
 }
 
 // ── MJPEG RTSP player (GeneralPlus) ───────────────────────────────────────
@@ -520,15 +584,6 @@ private fun MjpegLivePlayer(
     // stable, so the factory lambda that captures it sees the latest
     // `onFrame` without us re-creating the player on every toggle.
     val currentOnFrame by androidx.compose.runtime.rememberUpdatedState(onFrame)
-
-    // Log each time this composable re-runs with new inputs so we can see
-    // in logcat whether the overlay scene is actually flowing through.
-    androidx.compose.runtime.SideEffect {
-        val sceneSummary = overlayScene?.let {
-            "tracks=${it.tracks?.size ?: 0} detections=${it.detections.size} plates=${it.plates?.size ?: 0}"
-        } ?: "null"
-        Log.d(TAG, "MjpegLivePlayer recompose: onFrame=${if (onFrame != null) "set" else "null"} scene=$sceneSummary")
-    }
 
     Box(
         modifier         = playerSize,

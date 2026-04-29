@@ -29,6 +29,7 @@
     <string name="home_shortcut_shop">Mağaza</string>
     <string name="home_shortcut_community">Topluluk</string>
     <string name="home_shortcut_support">Destek</string>
+    <string name="support_whatsapp_failed">WhatsApp açılamadı. Lütfen yükleyin veya +90 555 400 5342 numarasına manuel mesaj atın.</string>
 
     <!-- Bağlantı kartı -->
     <string name="connection_scanning_title">Trafy Kamerası ağları aranıyor…</string>
@@ -131,13 +132,17 @@
     <string name="shop_section_dashcams">Araç Kameraları</string>
     <string name="shop_section_sd_cards">Micro SD Kartlar</string>
     <string name="shop_product_view">İncele</string>
+    <string name="shop_action_buy">Satın Al</string>
+    <string name="shop_action_preorder">Ön Sipariş</string>
+    <string name="shop_out_of_stock">Stokta yok</string>
+    <string name="shop_error">Ürünler yüklenemedi. Bağlantınızı kontrol edin.</string>
 
     <!-- Diğer -->
     <string name="more_title">Diğer</string>
     <string name="more_shop_title">Mağaza</string>
     <string name="more_shop_desc">Araç kameraları, SD kartlar ve aksesuarlar</string>
     <string name="more_community_title">Topluluk</string>
-    <string name="more_community_desc">Telegram, Instagram ve destek</string>
+    <string name="more_community_desc">Instagram, Telegram ve WhatsApp</string>
 
     <!-- HiDVR cihaz ayarları — prototip çevirileri. Burada tanımlı anahtarlar
          HiDvrTranslations.kt içindeki sabit İngilizce haritaya üstün gelir. -->

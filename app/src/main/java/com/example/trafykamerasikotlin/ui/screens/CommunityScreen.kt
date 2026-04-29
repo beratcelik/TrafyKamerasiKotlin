@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CameraAlt
@@ -34,6 +35,7 @@ import com.example.trafykamerasikotlin.ui.components.TrafyTopBar
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorDivider
 import com.example.trafykamerasikotlin.ui.theme.ColorIconBgBlue
+import com.example.trafykamerasikotlin.ui.theme.ColorIconBgGreen
 import com.example.trafykamerasikotlin.ui.theme.ColorIconBgOrange
 import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorSurface
@@ -73,7 +75,8 @@ fun CommunityScreen(
                         icon        = Icons.Filled.CameraAlt,
                         iconBgColor = ColorIconBgOrange,
                         platform    = "Instagram",
-                        handle      = "@trafykamerasi",
+                        handle      = "Trafy Kamerası",
+                        description = "Trafy Kamerası ile çektiğiniz videoları gönderin bu kanalda yayınlansın.",
                         onClick     = { uriHandler.openUri("https://instagram.com/trafykamerasi") }
                     )
                     HorizontalDivider(
@@ -85,8 +88,22 @@ fun CommunityScreen(
                         icon        = Icons.AutoMirrored.Filled.Send,
                         iconBgColor = ColorIconBgBlue,
                         platform    = "Telegram",
-                        handle      = "trafy_kulubu",
+                        handle      = "Trafy | Araç Kulübü 🚗",
+                        description = "İkinci el araç alım satım platformu. Alıcı ve satıcı direkt buluşturulur, aracı komisyon ücreti çıkmaz.",
                         onClick     = { uriHandler.openUri("https://t.me/trafy_kulubu") }
+                    )
+                    HorizontalDivider(
+                        color     = ColorDivider,
+                        thickness = 0.5.dp,
+                        modifier  = Modifier.padding(start = 68.dp)
+                    )
+                    SocialLinkRow(
+                        icon        = Icons.AutoMirrored.Filled.Chat,
+                        iconBgColor = ColorIconBgGreen,
+                        platform    = "WhatsApp",
+                        handle      = "Trafy | Araç Kulübü 🚗",
+                        description = "İkinci el ve sıfır taşıt ilanlarının paylaşıldığı platform.",
+                        onClick     = { uriHandler.openUri("https://whatsapp.com/channel/0029VbCDkE3IyPtVNhtYL10Y") }
                     )
                 }
             }
@@ -100,14 +117,15 @@ private fun SocialLinkRow(
     iconBgColor: Color,
     platform: String,
     handle: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    description: String? = null,
 ) {
     Row(
         modifier          = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Box(
@@ -134,12 +152,22 @@ private fun SocialLinkRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = ColorTextSecondary
             )
+            if (!description.isNullOrBlank()) {
+                Text(
+                    text     = description,
+                    style    = MaterialTheme.typography.bodySmall,
+                    color    = ColorTextSecondary,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
         }
         Icon(
             imageVector        = Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
             tint               = ColorTextSecondary,
-            modifier           = Modifier.size(20.dp)
+            modifier           = Modifier
+                .size(20.dp)
+                .padding(top = 12.dp),
         )
     }
 }

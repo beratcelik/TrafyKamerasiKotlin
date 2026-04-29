@@ -1,8 +1,12 @@
 package com.example.trafykamerasikotlin.ui.screens
 
 import android.Manifest
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -121,10 +125,28 @@ fun HomeScreen(
         )
 
         // Shortcut row
+        val context = LocalContext.current
         HomeShortcutRow(
             onShopClick      = onNavigateToShop,
             onCommunityClick = onNavigateToCommunity,
-            onSupportClick   = {}
+            onSupportClick   = {
+                // wa.me link opens the WhatsApp app directly when installed,
+                // and falls back to the WhatsApp web/install page otherwise.
+                // Number is in international format with no '+' or spaces.
+                val intent = Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://wa.me/905554005342")
+                ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                try {
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.support_whatsapp_failed),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
         )
     }
 }

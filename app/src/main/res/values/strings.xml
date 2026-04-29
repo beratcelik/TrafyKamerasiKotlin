@@ -29,6 +29,7 @@
     <string name="home_shortcut_shop">Shop</string>
     <string name="home_shortcut_community">Community</string>
     <string name="home_shortcut_support">Support</string>
+    <string name="support_whatsapp_failed">Couldn\'t open WhatsApp. Please install it or message +90 555 400 5342 manually.</string>
 
     <!-- Dashcam connection card -->
     <string name="connection_scanning_title">Scanning for Trafy Kamerası networks…</string>
@@ -131,13 +132,17 @@
     <string name="shop_section_dashcams">Dashcams</string>
     <string name="shop_section_sd_cards">Micro SD Cards</string>
     <string name="shop_product_view">View</string>
+    <string name="shop_action_buy">Buy</string>
+    <string name="shop_action_preorder">Pre-order</string>
+    <string name="shop_out_of_stock">Out of stock</string>
+    <string name="shop_error">Couldn\'t load products. Check your connection.</string>
 
     <!-- More -->
     <string name="more_title">More</string>
     <string name="more_shop_title">Shop</string>
     <string name="more_shop_desc">Dashcams, SD cards &amp; accessories</string>
     <string name="more_community_title">Community</string>
-    <string name="more_community_desc">Telegram, Instagram &amp; support</string>
+    <string name="more_community_desc">Instagram, Telegram &amp; WhatsApp</string>
 
     <!-- HiDVR device settings — prototype translations. Entries here take precedence
          over the hardcoded English map in HiDvrTranslations.kt. Extend by adding a

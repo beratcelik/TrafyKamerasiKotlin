@@ -9,9 +9,11 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.trafykamerasikotlin.data.handshake.DashcamHandshakeManager
+import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.FailureReason
 import com.example.trafykamerasikotlin.data.model.HandshakeResult
+import com.example.trafykamerasikotlin.data.settings.GeneralplusSettingsRepository
 import com.example.trafykamerasikotlin.data.allwinner.AllwinnerNetwork
 import com.example.trafykamerasikotlin.data.allwinner.AllwinnerSessionHolder
 import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
@@ -43,6 +45,14 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         private const val TAG = "Trafy.ViewModel"
         private const val SCAN_TIMEOUT_MS = 12_000L
         private const val DHCP_SETTLE_DELAY_MS = 1_500L
+        // Dashcam APs (notably Trafy Uno's CarDV firmware) periodically drop
+        // Wi-Fi clients during streaming/downloads. The OS reports this as
+        // NetworkCallback.onLost and revokes the bound network. We auto-fire
+        // connect() to reattach transparently; cap the rate so a truly-gone
+        // dashcam (user drove away) eventually surfaces the error.
+        private const val AUTO_RECONNECT_DELAY_MS = 1_500L
+        private const val AUTO_RECONNECT_WINDOW_MS = 90_000L
+        private const val MAX_AUTO_RECONNECTS_IN_WINDOW = 4
     }
 
     private val manager = DashcamHandshakeManager(
@@ -58,6 +68,15 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
      *  Null on legacy path or when already connected manually. Exposed for LiveViewModel. */
     private val _connectedNetwork = MutableStateFlow<Network?>(null)
     val connectedNetwork: StateFlow<Network?> = _connectedNetwork.asStateFlow()
+
+    init {
+        // The app's primary job is to be paired with a dashcam, so kick off the
+        // scan/connect flow as soon as the ViewModel is created — no manual
+        // "Bağlan" tap required. Runs once per process; explicit disconnect
+        // returns to Idle and stays there because init won't fire again.
+        Log.i(TAG, "init: auto-triggering connect()")
+        connect()
+    }
 
     // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -195,6 +214,24 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                 Log.i(TAG, "Handshake SUCCESS: ${result.deviceInfo}")
                 _uiState.update { DashcamUiState.Connected(result.deviceInfo) }
                 wifiManager.startWatchingConnection(network) { onConnectionLost() }
+                // Rebrand the cam's Wi-Fi to Trafy_<suffix> on first pair when
+                // the SSID still matches a factory-default pattern (CarDV_*,
+                // A19_*, HiCV_*, DVR_*). The cam doesn't restart its radio
+                // automatically, so the new name appears on the air only
+                // after the next natural power-cycle (e.g. car ignition off /
+                // on). Auto-reconnect picks up either form ("trafy" is in the
+                // scan keywords). Idempotent: skipped if SSID is already a
+                // user-customized or already-rebranded name.
+                if (result.deviceInfo.protocol == ChipsetProtocol.GENERALPLUS) {
+                    viewModelScope.launch {
+                        try {
+                            GeneralplusSettingsRepository(getApplication())
+                                .rebrandSsidIfDefault(result.deviceInfo.protocol.deviceIp)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "rebrandSsidIfDefault failed: ${e.message}")
+                        }
+                    }
+                }
             }
             is HandshakeResult.Failure -> {
                 Log.e(TAG, "Handshake FAILURE: ${result.reason}")
@@ -202,6 +239,9 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
             }
         }
     }
+
+    /** Sliding window of recent auto-reconnect timestamps (epoch ms). */
+    private val autoReconnectTimestamps = mutableListOf<Long>()
 
     /** Invoked by [DashcamWifiManager] when the dashcam Wi-Fi disappears unexpectedly. */
     private fun onConnectionLost() {
@@ -211,6 +251,29 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         AllwinnerNetwork.bindToNetwork(null)
         AllwinnerSessionHolder.clear()
         _connectedNetwork.update { null }
-        _uiState.update { DashcamUiState.Error(FailureReason.CONNECTION_LOST) }
+
+        val now = System.currentTimeMillis()
+        autoReconnectTimestamps.removeAll { now - it > AUTO_RECONNECT_WINDOW_MS }
+        if (autoReconnectTimestamps.size >= MAX_AUTO_RECONNECTS_IN_WINDOW) {
+            Log.w(TAG, "onConnectionLost: ${autoReconnectTimestamps.size} auto-reconnects in last " +
+                "${AUTO_RECONNECT_WINDOW_MS / 1000}s — giving up, user must reconnect manually")
+            _uiState.update { DashcamUiState.Error(FailureReason.CONNECTION_LOST) }
+            return
+        }
+        autoReconnectTimestamps.add(now)
+
+        Log.i(TAG, "onConnectionLost: auto-reconnecting in ${AUTO_RECONNECT_DELAY_MS}ms " +
+            "(attempt ${autoReconnectTimestamps.size}/$MAX_AUTO_RECONNECTS_IN_WINDOW per ${AUTO_RECONNECT_WINDOW_MS / 1000}s)")
+        // Show the scan/connect spinner straight away so the user never sees
+        // a stale "Connected" / "Error" between drop and recovery.
+        _uiState.update { DashcamUiState.ScanningWifi }
+        viewModelScope.launch {
+            delay(AUTO_RECONNECT_DELAY_MS)
+            // connect() guards against re-entry while in ScanningWifi/Connecting,
+            // but our state is the freshly-set ScanningWifi which would block
+            // it. Roll back to Idle right before firing so the normal flow runs.
+            _uiState.update { DashcamUiState.Idle }
+            connect()
+        }
     }
 }

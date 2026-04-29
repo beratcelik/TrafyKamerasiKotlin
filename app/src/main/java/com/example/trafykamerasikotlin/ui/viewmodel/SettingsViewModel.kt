@@ -50,6 +50,10 @@ sealed class SettingsActionFeedback {
     data object ResetOk     : SettingsActionFeedback()
     data object GenericOk   : SettingsActionFeedback()
     data object GenericFail : SettingsActionFeedback()
+    /** Both initial attempt and the auto-retry failed — likely a connectivity drop. */
+    data object NetworkUnavailable : SettingsActionFeedback()
+    /** Camera ACKed the write but verify-readback shows it didn't take — firmware silently rejecting. */
+    data object UnsupportedByCamera : SettingsActionFeedback()
     data object WifiSaved   : SettingsActionFeedback()
     data object ApnSaved    : SettingsActionFeedback()
     data class  Raw(val message: String) : SettingsActionFeedback()
@@ -59,6 +63,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     companion object {
         private const val TAG = "Trafy.SettingsVM"
+        // Wait this long after a GP action fails before retrying. The dashcam
+        // auto-reconnect path is ~1.5 s + Wi-Fi reattach ~3-5 s + DHCP settle
+        // ~1.5 s, so 6 s comfortably covers a typical recovery.
+        private const val GP_RETRY_DELAY_MS = 6_000L
     }
 
     private val _uiState = MutableStateFlow<SettingsUiState>(SettingsUiState.NotConnected)
@@ -115,8 +123,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         Log.i(TAG, "Applying $key = $newValue")
         _uiState.update { SettingsUiState.Applying(current) }
         viewModelScope.launch {
-            val success = applySetting(device, key, newValue)
-            if (success) {
+            val result = if (device.protocol == ChipsetProtocol.GENERALPLUS) {
+                applyGpWithRetry(device, key, newValue)
+            } else {
+                if (applySetting(device, key, newValue)) ApplyResult.SUCCESS
+                else ApplyResult.GENERIC_FAIL
+            }
+            if (result == ApplyResult.SUCCESS) {
                 val updated = current.map { item ->
                     if (item.key == key) {
                         val label = item.options.find { it.value == newValue }?.label ?: newValue
@@ -126,9 +139,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 Log.i(TAG, "Applied $key=$newValue successfully")
                 _uiState.update { SettingsUiState.Loaded(updated) }
             } else {
-                Log.e(TAG, "Failed to apply $key=$newValue")
+                Log.e(TAG, "Failed to apply $key=$newValue (result=$result)")
                 _uiState.update { SettingsUiState.Loaded(current) }
-                _actionFeedback.update { SettingsActionFeedback.GenericFail }
+                _actionFeedback.update {
+                    when (result) {
+                        ApplyResult.NETWORK_UNAVAILABLE  -> SettingsActionFeedback.NetworkUnavailable
+                        ApplyResult.UNSUPPORTED          -> SettingsActionFeedback.UnsupportedByCamera
+                        else                              -> SettingsActionFeedback.GenericFail
+                    }
+                }
             }
         }
     }
@@ -144,14 +163,21 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             when (device.protocol) {
                 ChipsetProtocol.GENERALPLUS -> {
-                    val ok = getGeneralplusRepo().triggerAction(device.protocol.deviceIp, key)
+                    val result = applyWithGpRetry(device) {
+                        getGeneralplusRepo().triggerAction(device.protocol.deviceIp, key)
+                    }
                     _uiState.update { SettingsUiState.Loaded(current) }
                     _actionFeedback.update {
-                        if (ok) when (key) {
-                            "format"     -> SettingsActionFeedback.FormatOk
-                            "reset.cgi?" -> SettingsActionFeedback.ResetOk
-                            else          -> SettingsActionFeedback.GenericOk
-                        } else SettingsActionFeedback.GenericFail
+                        when (result) {
+                            ApplyResult.SUCCESS -> when (key) {
+                                "format"     -> SettingsActionFeedback.FormatOk
+                                "reset.cgi?" -> SettingsActionFeedback.ResetOk
+                                else          -> SettingsActionFeedback.GenericOk
+                            }
+                            ApplyResult.NETWORK_UNAVAILABLE -> SettingsActionFeedback.NetworkUnavailable
+                            ApplyResult.UNSUPPORTED         -> SettingsActionFeedback.UnsupportedByCamera
+                            ApplyResult.GENERIC_FAIL        -> SettingsActionFeedback.GenericFail
+                        }
                     }
                 }
                 ChipsetProtocol.ALLWINNER_V853 -> {
@@ -287,6 +313,55 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             else                           -> getHiDvrRepo().fetchAll(device.protocol.deviceIp)
         }
 
+    /** Result of a GP settings call, fine-grained enough to drive the user-facing feedback. */
+    private enum class ApplyResult { SUCCESS, NETWORK_UNAVAILABLE, UNSUPPORTED, GENERIC_FAIL }
+
+    /**
+     * GP apply with one automatic retry. Only retries connection-class
+     * failures — a firmware refusal (NAK or verify mismatch) won't change
+     * by retrying, so we surface it as [ApplyResult.UNSUPPORTED] right away.
+     */
+    private suspend fun applyGpWithRetry(
+        device: DeviceInfo,
+        key: String,
+        value: String,
+    ): ApplyResult {
+        val first = getGeneralplusRepo().applySettingWithOutcome(device.protocol.deviceIp, key, value)
+        when (first) {
+            GeneralplusSettingsRepository.ApplyOutcome.SUCCESS         -> return ApplyResult.SUCCESS
+            GeneralplusSettingsRepository.ApplyOutcome.NAK,
+            GeneralplusSettingsRepository.ApplyOutcome.VERIFY_FAILED   -> return ApplyResult.UNSUPPORTED
+            GeneralplusSettingsRepository.ApplyOutcome.NO_CONNECTION   -> { /* fall through to retry */ }
+        }
+        Log.w(TAG, "GP apply: connection error — waiting for auto-reconnect then retrying once")
+        kotlinx.coroutines.delay(GP_RETRY_DELAY_MS)
+        val second = getGeneralplusRepo().applySettingWithOutcome(device.protocol.deviceIp, key, value)
+        return when (second) {
+            GeneralplusSettingsRepository.ApplyOutcome.SUCCESS         -> ApplyResult.SUCCESS
+            GeneralplusSettingsRepository.ApplyOutcome.NAK,
+            GeneralplusSettingsRepository.ApplyOutcome.VERIFY_FAILED   -> ApplyResult.UNSUPPORTED
+            GeneralplusSettingsRepository.ApplyOutcome.NO_CONNECTION   -> ApplyResult.NETWORK_UNAVAILABLE
+        }
+    }
+
+    /**
+     * Wrapper that retries a GP triggerAction once on failure. triggerAction
+     * still uses Boolean return — for Format/Reset we can't easily distinguish
+     * connection vs cam-rejected, so we keep the existing retry-on-false logic.
+     */
+    private suspend fun applyWithGpRetry(
+        device: DeviceInfo,
+        action: suspend () -> Boolean,
+    ): ApplyResult {
+        val first = action()
+        if (first) return ApplyResult.SUCCESS
+        if (device.protocol != ChipsetProtocol.GENERALPLUS) return ApplyResult.GENERIC_FAIL
+        Log.w(TAG, "GP action failed — waiting for auto-reconnect then retrying once")
+        kotlinx.coroutines.delay(GP_RETRY_DELAY_MS)
+        val second = action()
+        return if (second) ApplyResult.SUCCESS else ApplyResult.NETWORK_UNAVAILABLE
+    }
+
     private suspend fun applySetting(device: DeviceInfo, key: String, value: String): Boolean =
         when (device.protocol) {
             ChipsetProtocol.EEASYTECH      -> getEeasyRepo().applySetting(device.protocol.deviceIp, key, value)
@@ -302,7 +377,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         hiDvrRepo ?: HiDvrSettingsRepository(getApplication()).also { hiDvrRepo = it }
 
     private fun getGeneralplusRepo(): GeneralplusSettingsRepository =
-        generalplusRepo ?: GeneralplusSettingsRepository().also { generalplusRepo = it }
+        generalplusRepo ?: GeneralplusSettingsRepository(getApplication()).also { generalplusRepo = it }
 
     private fun getAllwinnerRepo(): AllwinnerSettingsRepository =
         allwinnerRepo ?: AllwinnerSettingsRepository().also { allwinnerRepo = it }

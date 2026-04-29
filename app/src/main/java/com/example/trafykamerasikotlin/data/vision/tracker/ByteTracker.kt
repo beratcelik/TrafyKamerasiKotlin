@@ -147,7 +147,7 @@ class ByteTracker(
         }
     }
 
-    private fun Track.toSnapshot() = TrackedDetection(
+    private fun Track.toSnapshot(): TrackedDetection = TrackedDetection(
         trackId    = id,
         cls        = cls,
         confidence = confidence,

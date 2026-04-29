@@ -343,6 +343,14 @@ class MjpegRtspPlayer(
         var packetCount = 0
         var timeoutCount = 0
         var frameCount = 0
+        // RTP sequence + frame-corruption tracking. The dashcam Wi-Fi drops
+        // an occasional UDP packet; without these checks we'd happily decode
+        // the partial JPEG and BitmapFactory would paint garbage macroblocks
+        // where the missing entropy data should be — that's the random
+        // coloured-pixel flicker users see on Live.
+        var lastSeq = -1
+        var frameCorrupt = false
+        var droppedFrames = 0
 
         udp.soTimeout = 5000
 
@@ -374,6 +382,7 @@ class MjpegRtspPlayer(
             if (len < RTP_HEADER_SIZE + JPEG_HEADER_SIZE) continue
 
             // Parse RTP header
+            val seq = ((data[2].toInt() and 0xFF) shl 8) or (data[3].toInt() and 0xFF)
             val marker = (data[1].toInt() and 0x80) != 0
             val timestamp = ByteBuffer.wrap(data, 4, 4).int.toLong() and 0xFFFFFFFFL
 
@@ -406,18 +415,34 @@ class MjpegRtspPlayer(
             val jpegData = data.copyOfRange(payloadOffset, len)
 
             // New frame?
-            if (timestamp != currentTimestamp) {
-                // Assemble and render the previous frame
+            val isNewFrame = timestamp != currentTimestamp
+            if (isNewFrame) {
+                // Reaching here without ever seeing the marker bit means the
+                // previous frame's tail packet was lost — the JPEG would be
+                // truncated and decode to a partial garbage image. Drop it.
                 if (fragments.isNotEmpty()) {
-                    renderFrame(fragments, paint)
-                    if (!firstFrameEmitted) {
-                        firstFrameEmitted = true
-                        onFirstFrame?.invoke()
+                    droppedFrames++
+                    if (droppedFrames <= 5 || droppedFrames % 50 == 0) {
+                        Log.d(TAG, "drop frame: missing marker (frags=${fragments.size}, droppedTotal=$droppedFrames)")
                     }
                 }
                 fragments.clear()
                 currentTimestamp = timestamp
+                frameCorrupt = false
             }
+
+            // Detect packet loss within the current frame via RTP seq gaps.
+            // A gap on a frame transition is almost always the lost marker
+            // packet of the previous frame (already dropped above), so we
+            // only flag the *current* frame as corrupt when the gap occurs
+            // between two packets carrying the same timestamp.
+            if (lastSeq >= 0) {
+                val expected = (lastSeq + 1) and 0xFFFF
+                if (seq != expected && !isNewFrame) {
+                    frameCorrupt = true
+                }
+            }
+            lastSeq = seq
 
             fragments.add(RtpJpegFragment(
                 fragmentOffset = fragmentOffset,
@@ -432,14 +457,43 @@ class MjpegRtspPlayer(
 
             // Marker bit = last packet of frame
             if (marker && fragments.isNotEmpty()) {
-                frameCount++
-                renderFrame(fragments, paint, frameCount)
-                if (!firstFrameEmitted) {
-                    firstFrameEmitted = true
-                    onFirstFrame?.invoke()
+                // Final integrity check: fragment offsets must be contiguous
+                // starting at 0. Catches the cases the seq-gap check can't:
+                //   (a) lost first packet of new frame — frame-boundary seq
+                //       gaps aren't flagged as corrupt because we can't tell
+                //       whether the missing seq belonged to the previous
+                //       frame's marker or the new frame's head;
+                //   (b) any other split where a fragment didn't arrive but
+                //       sequence numbers happened to line up (rare, but
+                //       BitmapFactory will happily render the truncated JPEG
+                //       as a flickering pixel field if we let it through).
+                if (!frameCorrupt) {
+                    val sorted = fragments.sortedBy { it.fragmentOffset }
+                    var expectedOffset = 0
+                    for (frag in sorted) {
+                        if (frag.fragmentOffset != expectedOffset) {
+                            frameCorrupt = true
+                            break
+                        }
+                        expectedOffset += frag.data.size
+                    }
+                }
+                if (frameCorrupt) {
+                    droppedFrames++
+                    if (droppedFrames <= 5 || droppedFrames % 50 == 0) {
+                        Log.d(TAG, "drop frame: corrupt (frags=${fragments.size}, droppedTotal=$droppedFrames)")
+                    }
+                } else {
+                    frameCount++
+                    renderFrame(fragments, paint, frameCount)
+                    if (!firstFrameEmitted) {
+                        firstFrameEmitted = true
+                        onFirstFrame?.invoke()
+                    }
                 }
                 fragments.clear()
                 currentTimestamp = -1
+                frameCorrupt = false
             }
         }
     }

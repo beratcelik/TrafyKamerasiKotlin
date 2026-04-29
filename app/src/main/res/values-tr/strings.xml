@@ -54,7 +54,6 @@
     <string name="live_coming_soon_title">Canlı Yayın Yakında</string>
     <string name="live_coming_soon_body">Allwinner kameralar için canlı yayın yakında eklenecek. Kayıtlara şimdilik Media sekmesinden ulaşabilirsiniz.</string>
     <string name="live_ai_overlay_toggle_cd">Yapay zeka plaka katmanını aç/kapat</string>
-    <string name="live_ai_overlay_informational">AI katmanı • bilgilendirme amaçlı</string>
 
     <!-- Medya -->
     <string name="media_title">Medya</string>
@@ -80,7 +79,6 @@
     <string name="media_error_download_failed">Video indirilemedi</string>
     <string name="media_error_busy_playback">Önce oynatmayı kapatın</string>
     <string name="media_download_complete_fmt">İndirilenlere kaydedildi: %1$s</string>
-    <string name="media_ai_overlay_toggle_label">AI katmanı</string>
 
     <!-- Ayarlar -->
     <string name="settings_title">Ayarlar</string>
@@ -113,6 +111,8 @@
     <string name="settings_feedback_reset_ok">Fabrika ayarlarına sıfırlama başlatıldı. Kamera yeniden başlayacak.</string>
     <string name="settings_feedback_generic_ok">Tamamlandı.</string>
     <string name="settings_feedback_generic_fail">İşlem başarısız — cihaz bağlantısını kontrol edin.</string>
+    <string name="settings_feedback_network_unavailable">Ağ bağlantısında sorun var. Bağlanıp tekrar deneyin.</string>
+    <string name="settings_feedback_unsupported">Kamera bu değişikliği kabul etmedi. Cihazın firmware\'i bu ayarı değiştirmeyi desteklemiyor olabilir.</string>
     <string name="settings_feedback_wifi_saved">Wi-Fi şifresi güncellendi. Yeni şifreyle yeniden bağlanın.</string>
     <string name="settings_feedback_apn_saved">APN güncellendi.</string>
 
@@ -248,4 +248,58 @@
     <string name="vehicle_class_bus">Otobüs</string>
     <string name="vehicle_class_truck">Kamyon</string>
     <string name="vehicle_class_unknown">Bilinmiyor</string>
+
+    <!-- Plate-recognition overlay labels -->
+    <string name="plate_label_short">plaka</string>
+    <!-- Trafy Uno (GeneralPlus) ayar başlıkları -->
+    <string name="gp_setting_title_0">Video Çözünürlüğü</string>
+    <string name="gp_setting_title_1">Pozlama</string>
+    <string name="gp_setting_title_3">Döngüsel Kayıt</string>
+    <string name="gp_setting_title_5">Ses Kaydı</string>
+    <string name="gp_setting_title_7">Çarpışma Algılama</string>
+    <string name="gp_setting_title_8">Hoparlör Sesi</string>
+    <string name="gp_setting_title_9">Kontak Kapalı Davranışı</string>
+    <string name="gp_setting_title_10">Hızlandırılmış Kare Hızı</string>
+    <string name="gp_setting_title_515">Dil</string>
+    <string name="gp_setting_title_519">SD Kartı Biçimlendir</string>
+    <string name="gp_setting_title_520">Fabrika Ayarlarına Dön</string>
+    <string name="gp_setting_title_521">Yazılım Sürümü</string>
+    <string name="gp_setting_title_768">Wi-Fi Ayarları</string>
+    <string name="gp_setting_title_769">Wi-Fi Parolası</string>
+
+    <!-- Trafy Uno (GeneralPlus) ayar açıklamaları — sadece adından anlaşılmayanlar için -->
+    <string name="gp_setting_desc_1">Görüntünün parlaklığını manuel olarak artırır veya azaltır.</string>
+    <string name="gp_setting_desc_3">Her video parçasının uzunluğu; SD kart dolduğunda en eski parça otomatik silinir.</string>
+    <string name="gp_setting_desc_7">Darbe algılandığında o anki kayıt korumaya alınır; tetikleme hassasiyetini belirler.</string>
+    <string name="gp_setting_desc_9">Araç kontağı kapatıldıktan sonra kameranın ne kadar süre çalışmaya devam edeceğini belirler.</string>
+    <string name="gp_setting_desc_10">Uzun yolculukları hızlandırılmış videoya dönüştürür; saniyedeki kare sayısını seçin.</string>
+    <string name="gp_setting_desc_519">Karttaki tüm içerik silinir. Bu işlem geri alınamaz.</string>
+    <string name="gp_setting_desc_520">Tüm ayarları varsayılan değerlerine geri döndürür.</string>
+
+    <!-- Trafy Uno (GeneralPlus) değer etiketleri -->
+    <string name="gp_setting_value_3_0">1 dk</string>
+    <string name="gp_setting_value_3_1">2 dk</string>
+    <string name="gp_setting_value_3_2">3 dk</string>
+    <string name="gp_setting_value_5_0">Kapalı</string>
+    <string name="gp_setting_value_5_1">Açık</string>
+    <string name="gp_setting_value_7_0">Kapalı</string>
+    <string name="gp_setting_value_7_1">Düşük</string>
+    <string name="gp_setting_value_7_2">Orta</string>
+    <string name="gp_setting_value_7_3">Yüksek</string>
+    <string name="gp_setting_value_8_0">Sessiz</string>
+    <string name="gp_setting_value_8_1">Düşük</string>
+    <string name="gp_setting_value_8_2">Orta</string>
+    <string name="gp_setting_value_8_3">Yüksek</string>
+    <string name="gp_setting_value_9_0">Kapalı</string>
+    <string name="gp_setting_value_9_1">12 sa</string>
+    <string name="gp_setting_value_9_2">24 sa</string>
+    <string name="gp_setting_value_9_3">48 sa</string>
+    <string name="gp_setting_value_10_0">1 kare / 1 sn</string>
+    <string name="gp_setting_value_10_1">2 kare / 1 sn</string>
+    <string name="gp_setting_value_10_2">5 kare / 1 sn</string>
+    <string name="gp_setting_value_10_3">1 kare / 2 sn</string>
+    <string name="gp_setting_value_10_4">1 kare / 5 sn</string>
+    <string name="gp_setting_value_515_0">İngilizce</string>
+    <string name="gp_setting_value_515_1">Geleneksel Çince</string>
+    <string name="gp_setting_value_515_2">Basit Çince</string>
 </resources>

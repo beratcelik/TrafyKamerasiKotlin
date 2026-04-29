@@ -135,6 +135,67 @@ internal class AllwinnerRtp2pClient private constructor(
             client
         }
 
+        /**
+         * Open an rtp2p session for **live preview** — no recorded file, no
+         * timestamp, just the camera feed. Reverse-engineered from a CloudSpirit
+         * PCAP: the OEM omits both `file` and `time` fields when starting live.
+         * Camera replies with port 2222 + pwd and immediately starts streaming
+         * once heartbeats begin.
+         */
+        suspend fun openLive(
+            session: AllwinnerSession,
+            camid: Int,
+        ): AllwinnerRtp2pClient? = withContext(Dispatchers.IO) {
+            val startBody = JSONObject().apply {
+                put("peer", session.uidx)
+                put("deviceid", session.deviceId)
+                put("start", 1)
+                put("camid", camid)
+                put("timeout", 600)
+                put("flag", 0)
+                put("ver", 1)
+                // NOTE: deliberately NO "file" and NO "time" — the absence of
+                // both is what tells the camera "give me live, not a stored
+                // file" (CloudSpirit PCAP, cookie 28 / 56).
+            }
+            val resp = try {
+                session.rtp2p(startBody)
+            } catch (e: Exception) {
+                Log.e(TAG, "rtp2p live start failed: ${e.message}", e)
+                return@withContext null
+            }
+            if (resp.optInt("ret", -1) != 0) {
+                Log.w(TAG, "rtp2p live start ret=${resp.optInt("ret")}: $resp")
+                return@withContext null
+            }
+
+            val ipInt = resp.optLong("ip", 0L)
+            val port  = resp.optInt("port", 0)
+            val pwd   = resp.optLong("pwd", 0L)
+            if (ipInt == 0L || port == 0) {
+                Log.w(TAG, "rtp2p live start missing ip/port: $resp")
+                return@withContext null
+            }
+            val ipStr = ipFromLeUint32(ipInt)
+            Log.i(TAG, "rtp2p live start OK: $ipStr:$port pwd=$pwd uidx=${session.uidx} camid=$camid")
+
+            val socket = try {
+                AllwinnerNetwork.createDatagramSocket().apply {
+                    soTimeout = READ_TIMEOUT_MS
+                    connect(InetAddress.getByName(ipStr), port)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "createDatagramSocket / connect failed: ${e.message}", e)
+                return@withContext null
+            }
+
+            // Use "<live>" as a placeholder fileName for log/teardown purposes.
+            // Stop is sent with the same shape (no file/time).
+            val client = AllwinnerRtp2pClient(session, socket, pwd, camid, "<live>")
+            client.startHeartbeat()
+            client
+        }
+
         /** PCAP shows ip=19114176 (0x01 23 A8 C0) encoded little-endian = 192.168.35.1. */
         private fun ipFromLeUint32(v: Long): String {
             val b0 = (v and 0xFF).toInt()
@@ -266,7 +327,11 @@ internal class AllwinnerRtp2pClient private constructor(
         }
     }.flowOn(Dispatchers.IO)
 
-    /** Sends the rtp2p stop command and tears the UDP side down. Idempotent. */
+    /**
+     * Sends the rtp2p stop command and tears the UDP side down. Idempotent.
+     * Live-mode stops use the same JSON shape as start (no `file` field) per
+     * the CloudSpirit PCAP (cookie 71).
+     */
     suspend fun close() {
         if (closed) return
         closed = true
@@ -274,12 +339,13 @@ internal class AllwinnerRtp2pClient private constructor(
         scope.cancel()
         withContext(Dispatchers.IO) {
             try {
+                val isLive = fileName == "<live>"
                 val stopBody = JSONObject().apply {
                     put("peer", session.uidx)
                     put("deviceid", session.deviceId)
                     put("start", 0)
                     put("camid", camid)
-                    put("file", fileName)
+                    if (!isLive) put("file", fileName)
                     put("timeout", 600)
                     put("flag", 0)
                     put("ver", 1)

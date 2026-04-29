@@ -24,7 +24,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -67,8 +67,13 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
@@ -141,8 +146,26 @@ fun MediaScreen(
         }
     }
 
-    DisposableEffect(Unit) {
-        onDispose { viewModel.onLeave() }
+    // App backgrounding: exit playback so the cam can keep recording while
+    // we're not visible. Foregrounding: re-fetch (only fires when we'd
+    // actually been backgrounded, not on initial compose — initial load is
+    // already covered by LaunchedEffect(device) above, and a duplicate
+    // load() call would race the LaunchedEffect's call and cancel it).
+    // Compose dispose still calls onLeave to handle tab navigation.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP  -> viewModel.onBackground()
+                Lifecycle.Event.ON_START -> viewModel.onForeground()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.onLeave()
+        }
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -152,7 +175,22 @@ fun MediaScreen(
     // Full-screen photo viewer URL.
     var inAppPhotoUrl by remember { mutableStateOf<String?>(null) }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            // Initial-pass pointer listener: every touch on the Media tab
+            // counts as activity, resetting the auto-exit-playback watchdog.
+            // PointerEventPass.Initial means we observe events before any
+            // child consumes them, so we don't interfere with clicks/scrolls.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Initial)
+                        viewModel.reportInteraction()
+                    }
+                }
+            }
+    ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -161,50 +199,12 @@ fun MediaScreen(
     ) {
         val aiOverlayEnabled by viewModel.aiOverlayEnabled.collectAsStateWithLifecycle()
 
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                text  = stringResource(R.string.media_title),
-                style = MaterialTheme.typography.headlineMedium,
-                color = ColorTextPrimary,
-            )
-            // AI download burn-in: GP (AVI/MJPEG) and HiSilicon-family
-            // (HTTP MP4) supported. Allwinner uses RTP2P → temp .ts which the
-            // offline processor doesn't read yet, so the toggle is hidden
-            // for that chipset.
-            val aiDownloadSupported = device != null &&
-                device.protocol != ChipsetProtocol.ALLWINNER_V853
-            if (aiDownloadSupported) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text  = stringResource(R.string.media_ai_overlay_toggle_label),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = ColorTextSecondary,
-                        modifier = Modifier.padding(end = 8.dp),
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(
-                                color = if (aiOverlayEnabled) ColorPrimary else ColorSurface,
-                                shape = androidx.compose.foundation.shape.CircleShape,
-                            )
-                            .clickable { viewModel.toggleAiOverlay() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.CameraAlt,
-                            contentDescription = stringResource(R.string.live_ai_overlay_toggle_cd),
-                            tint = if (aiOverlayEnabled) Color.White else ColorTextSecondary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                }
-            }
-        }
+        Text(
+            text     = stringResource(R.string.media_title),
+            style    = MaterialTheme.typography.headlineMedium,
+            color    = ColorTextPrimary,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+        )
 
         (uiState as? MediaUiState.Loaded)?.sdInfo?.let { sd -> SdUsageRow(sd) }
 
@@ -215,11 +215,20 @@ fun MediaScreen(
             is MediaUiState.Loaded -> {
                 // Group videos by camera channel (front/back/inside) from filename suffix.
                 // Only tabs for cameras that actually have footage are shown.
+                // Photos tab is hidden when no photos exist — Trafy Uno never
+                // emits photos so the tab would be perpetually empty there.
                 val videosByCamera = groupVideosByCamera(state.videos)
                 val cameraTabs     = listOf("Front", "Back", "Inside")
                     .filter { videosByCamera.containsKey(it) }
-                val tabs           = cameraTabs + "Photos"
-                // Clamp in case a reload returns fewer cameras than current tab index
+                val tabs           = buildList {
+                    addAll(cameraTabs)
+                    if (state.photos.isNotEmpty()) add("Photos")
+                }
+
+                if (tabs.isEmpty()) {
+                    EmptyMediaContent(isPhoto = false)
+                } else {
+                // Clamp in case a reload returns fewer tabs than current index
                 val safeTab        = selectedTab.coerceIn(0, tabs.lastIndex)
 
                 TabRow(
@@ -249,9 +258,10 @@ fun MediaScreen(
                     }
                 }
 
-                val isPhotoTab = safeTab == tabs.lastIndex
+                val selectedTitle = tabs[safeTab]
+                val isPhotoTab = selectedTitle == "Photos"
                 val files      = if (isPhotoTab) state.photos
-                                 else videosByCamera[cameraTabs.getOrNull(safeTab)] ?: emptyList()
+                                 else videosByCamera[selectedTitle] ?: emptyList()
 
                 if (files.isEmpty()) {
                     EmptyMediaContent(isPhoto = isPhotoTab)
@@ -261,6 +271,8 @@ fun MediaScreen(
                         device            = device,
                         downloading       = downloading,
                         downloadProgress  = downloadProgress,
+                        aiOverlayOn       = aiOverlayEnabled,
+                        onToggleAi        = { viewModel.setAiOverlay(it) },
                         onPlay            = { viewModel.playFile(it) },
                         onPlayAllwinner   = { viewModel.startAllwinnerStream(it) },
                         onPlayInApp       = { url -> inAppVideoUrl = url },
@@ -281,6 +293,7 @@ fun MediaScreen(
                         onCancelDownload  = { viewModel.cancelDownload(it) },
                         onDelete          = { viewModel.delete(it) }
                     )
+                }
                 }
             }
         }
@@ -351,13 +364,11 @@ private fun SdUsageRow(sd: AllwinnerSdInfo) {
 private fun AllwinnerPlaybackOverlay(url: String, onDismiss: () -> Unit) {
     BackHandler(onBack = onDismiss)
 
-    // AI overlay state — same pattern as the HiSilicon and GP playback
-    // overlays. Default OFF so the video plays cleanly first; user opts in
-    // by tapping the camera icon top-right. Pipeline ViewModel is
-    // activity-scoped and shared with Live + other playback flows.
-    var aiOverlayEnabled by androidx.compose.runtime.saveable.rememberSaveable {
-        mutableStateOf(false)
-    }
+    // AI overlay state — single shared, persistent preference (default ON).
+    // Backed by AiOverlayPreferences/SharedPreferences; toggling here is
+    // observed by Live + every other playback overlay.
+    val (aiOverlayEnabled, setAiOverlay) =
+        com.example.trafykamerasikotlin.data.settings.rememberAiOverlayPreference()
     val aiViewModel: LiveVisionOverlayViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val aiScene by aiViewModel.scene.collectAsStateWithLifecycle()
 
@@ -403,7 +414,7 @@ private fun AllwinnerPlaybackOverlay(url: String, onDismiss: () -> Unit) {
         if (com.example.trafykamerasikotlin.BuildConfig.DEBUG) {
             AiOverlayToggleButton(
                 enabled  = aiOverlayEnabled,
-                onToggle = { aiOverlayEnabled = !aiOverlayEnabled },
+                onToggle = { setAiOverlay(!aiOverlayEnabled) },
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(8.dp),
@@ -565,6 +576,8 @@ private fun MediaGrid(
     device: DeviceInfo?,
     downloading: Set<String>,
     downloadProgress: Map<String, DownloadState>,
+    aiOverlayOn: Boolean,
+    onToggleAi: (Boolean) -> Unit,
     onPlay: (MediaFile) -> Unit,
     onPlayAllwinner: (MediaFile) -> Unit,
     onPlayInApp: (String) -> Unit,
@@ -644,7 +657,12 @@ private fun MediaGrid(
                         )
                         HorizontalDivider(color = ColorDivider, thickness = 0.5.dp)
                     }
-                    // Download / Cancel
+                    // Download / Cancel — when this chipset supports AI burn-in
+                    // (GP / HiDVR-family; not Allwinner V853), the Download row
+                    // gets a trailing AI toggle. Toggling it just flips the
+                    // shared preference; tapping the row text/icon triggers the
+                    // download (which routes through the global flag at the
+                    // call site).
                     if (downloading.contains(file.name)) {
                         DialogActionRow(
                             icon    = Icons.Filled.Close,
@@ -656,15 +674,56 @@ private fun MediaGrid(
                             }
                         )
                     } else {
-                        DialogActionRow(
-                            icon    = Icons.Filled.Download,
-                            label   = stringResource(R.string.media_action_download),
-                            color   = ColorTextPrimary,
-                            onClick = {
-                                actionTarget = null
-                                onDownload(file)
+                        val aiDownloadSupported = device != null &&
+                            device.protocol != ChipsetProtocol.ALLWINNER_V853
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable {
+                                        actionTarget = null
+                                        onDownload(file)
+                                    }
+                                    .padding(vertical = 12.dp, horizontal = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Download,
+                                    contentDescription = null,
+                                    tint = ColorTextPrimary,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                                Text(
+                                    text = stringResource(R.string.media_action_download),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = ColorTextPrimary,
+                                )
                             }
-                        )
+                            if (aiDownloadSupported) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .background(
+                                            color = if (aiOverlayOn) ColorPrimary
+                                                    else ColorSurface.copy(alpha = 0.6f),
+                                            shape = androidx.compose.foundation.shape.CircleShape,
+                                        )
+                                        .clickable { onToggleAi(!aiOverlayOn) },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.AutoAwesome,
+                                        contentDescription = stringResource(R.string.live_ai_overlay_toggle_cd),
+                                        tint = if (aiOverlayOn) Color.White else ColorTextSecondary,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                }
+                            }
+                        }
                     }
                     // Delete — Allwinner firmware doesn't support deletion (the OEM app
                     // has no delete button either), so we hide the option entirely.
@@ -917,16 +976,12 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
     val bufferingState = remember { mutableStateOf(true) }
     val playerRef      = remember { mutableStateOf<MjpegRtspPlayer?>(null) }
 
-    // AI overlay toggle — default OFF for recorded-file playback. Empirically
-    // the GeneralPlus dashcam's playback RTP stream is sensitive: starting
-    // playback with AI submission live appears to disrupt the camera's RTP
-    // delivery and the player times out with zero UDP packets. Off by default
-    // means the video plays first; the user opts in via the toggle if they
-    // want overlay on top of recorded footage. (Live tab still defaults ON —
-    // that path doesn't have the same fragility.)
-    var aiOverlayEnabled by androidx.compose.runtime.saveable.rememberSaveable {
-        mutableStateOf(false)
-    }
+    // AI overlay toggle — single shared, persistent preference (default ON).
+    // Historical note: GP playback once timed out with AI submission live
+    // because the older RTP path was fragile; if that regresses we'll handle
+    // it in MjpegRtspPlayer rather than special-casing the default here.
+    val (aiOverlayEnabled, setAiOverlay) =
+        com.example.trafykamerasikotlin.data.settings.rememberAiOverlayPreference()
     val aiViewModel: LiveVisionOverlayViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val aiScene by aiViewModel.scene.collectAsStateWithLifecycle()
 
@@ -1037,7 +1092,7 @@ private fun VideoPlayerOverlay(url: String, onDismiss: () -> Unit) {
         // so muscle memory carries over.
         AiOverlayToggleButton(
             enabled  = aiOverlayEnabled,
-            onToggle = { aiOverlayEnabled = !aiOverlayEnabled },
+            onToggle = { setAiOverlay(!aiOverlayEnabled) },
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(8.dp),
@@ -1080,24 +1135,10 @@ private fun AiOverlayToggleButton(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector        = Icons.Filled.CameraAlt,
+                imageVector        = Icons.Filled.AutoAwesome,
                 contentDescription = stringResource(R.string.live_ai_overlay_toggle_cd),
                 tint               = if (enabled) Color.White else ColorTextSecondary,
                 modifier           = Modifier.size(20.dp),
-            )
-        }
-        if (enabled) {
-            androidx.compose.foundation.layout.Spacer(Modifier.height(6.dp))
-            Text(
-                text  = stringResource(R.string.live_ai_overlay_informational),
-                style = MaterialTheme.typography.labelSmall,
-                color = ColorTextSecondary,
-                modifier = Modifier
-                    .background(
-                        color = Color.Black.copy(alpha = 0.55f),
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
-                    )
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
             )
         }
     }
@@ -1173,12 +1214,11 @@ private fun IjkVideoPlayerOverlay(url: String, network: Network?, onDismiss: () 
     }
 
     // ── AI overlay state ───────────────────────────────────────────────────
-    // Default OFF (matches GP playback overlay). User opts in by tapping the
-    // top-right camera icon. The pipeline ViewModel is activity-scoped and
-    // shared with the Live tab so the model only loads once per app session.
-    var aiOverlayEnabled by androidx.compose.runtime.saveable.rememberSaveable {
-        mutableStateOf(false)
-    }
+    // Single shared, persistent preference (default ON). Lives in
+    // AiOverlayPreferences so toggling here is reflected on Live + every
+    // other playback screen, and persists across app restarts.
+    val (aiOverlayEnabled, setAiOverlay) =
+        com.example.trafykamerasikotlin.data.settings.rememberAiOverlayPreference()
     val aiViewModel: LiveVisionOverlayViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val aiScene by aiViewModel.scene.collectAsStateWithLifecycle()
 
@@ -1319,7 +1359,7 @@ private fun IjkVideoPlayerOverlay(url: String, network: Network?, onDismiss: () 
         // AI overlay toggle — top-right, same UX as GP playback.
         AiOverlayToggleButton(
             enabled  = aiOverlayEnabled,
-            onToggle = { aiOverlayEnabled = !aiOverlayEnabled },
+            onToggle = { setAiOverlay(!aiOverlayEnabled) },
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(8.dp),

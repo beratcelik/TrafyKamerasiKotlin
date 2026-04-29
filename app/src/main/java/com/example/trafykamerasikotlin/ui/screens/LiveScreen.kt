@@ -23,7 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Card
@@ -94,12 +94,12 @@ fun LiveScreen(
     val ctx            = LocalContext.current
     val isLandscape    = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    // AI overlay (Chunks 1–5 vision pipeline) defaults to ON. Only the
-    // MJPEG/GeneralPlus path supports it right now — other chipsets stream
-    // H.264 which the current MjpegRtspPlayer doesn't handle. The toggle is
-    // an icon button overlaid on the video during development; release
-    // builds will move it into the Settings screen (tracked as follow-up).
-    var aiOverlayEnabled by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(true) }
+    // AI overlay (Chunks 1–5 vision pipeline). Defaults to ON; user choice
+    // persists across launches via AiOverlayPreferences (SharedPreferences).
+    // Same flow is shared with every other on-screen toggle so toggling here
+    // is reflected on Media/playback screens immediately.
+    val (aiOverlayEnabled, setAiOverlay) =
+        com.example.trafykamerasikotlin.data.settings.rememberAiOverlayPreference()
     val aiViewModel: LiveVisionOverlayViewModel = viewModel()
     val aiScene by aiViewModel.scene.collectAsStateWithLifecycle()
 
@@ -136,10 +136,14 @@ fun LiveScreen(
         when (val state = uiState) {
             is LiveUiState.NotConnected     -> NotConnectedPlaceholder()
             is LiveUiState.Preparing        -> PreparingPlaceholder()
-            is LiveUiState.AllwinnerCapture -> AllwinnerCaptureView(
-                captureState = captureState,
-                onPhoto      = { viewModel.capturePhoto() },
-                onVideo      = { viewModel.captureVideo() },
+            is LiveUiState.AllwinnerLive    -> AllwinnerLiveView(
+                state           = state,
+                aiOverlayOn     = aiOverlayEnabled,
+                onToggleAi      = { setAiOverlay(!aiOverlayEnabled) },
+                aiViewModel     = aiViewModel,
+                aiScene         = aiScene,
+                isLandscape     = isLandscape,
+                onSwitchCamera  = { viewModel.switchAllwinnerCamera(it) },
             )
             is LiveUiState.Playing -> {
                 Column(modifier = Modifier.fillMaxSize()) {
@@ -177,7 +181,7 @@ fun LiveScreen(
                         // excluded by the surrounding `when (uiState)` branch.
                         AiOverlayToggle(
                             enabled  = aiOverlayEnabled,
-                            onToggle = { aiOverlayEnabled = !aiOverlayEnabled },
+                            onToggle = { setAiOverlay(!aiOverlayEnabled) },
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(12.dp),
@@ -212,6 +216,110 @@ fun LiveScreen(
 // ── Allwinner remote-capture view ───────────────────────────────────────────
 
 /**
+ * Live-tab view for Allwinner V853 — uses the rtp2p UDP transport
+ * (reverse-engineered from a CloudSpirit PCAP). The MediaViewModel's
+ * AllwinnerLiveRepository drains UDP into a temp .ts file and hands its URI
+ * here once buffered; we play it through the existing [AllwinnerFilePlayer]
+ * (which also wires the AI overlay tap via TextureView.getBitmap polling).
+ *
+ * Buffering / failure UI mirrors the GP and HiSilicon paths: spinner while
+ * waiting, error message + retry hint if the watchdog times out.
+ */
+@Composable
+private fun AllwinnerLiveView(
+    state: LiveUiState.AllwinnerLive,
+    aiOverlayOn: Boolean,
+    onToggleAi: () -> Unit,
+    aiViewModel: LiveVisionOverlayViewModel,
+    aiScene: com.example.trafykamerasikotlin.data.vision.TrackedScene?,
+    isLandscape: Boolean,
+    onSwitchCamera: (Int) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier         = Modifier.weight(1f).fillMaxWidth(),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                state.failed -> Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier            = Modifier.padding(24.dp),
+                ) {
+                    Icon(
+                        imageVector        = Icons.Filled.Videocam,
+                        contentDescription = null,
+                        tint               = ColorTextSecondary,
+                        modifier           = Modifier.size(48.dp),
+                    )
+                    Text(
+                        text      = "Canlı yayın başlatılamadı",
+                        style     = MaterialTheme.typography.titleMedium,
+                        color     = ColorTextPrimary,
+                        textAlign = TextAlign.Center,
+                    )
+                    Text(
+                        text      = "Kamerayla bağlantı kurulamadı. Wi-Fi’yi kontrol edip tekrar deneyin.",
+                        style     = MaterialTheme.typography.bodySmall,
+                        color     = ColorTextSecondary,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                state.localFileUri == null || state.buffering -> {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        color = com.example.trafykamerasikotlin.ui.theme.ColorPrimary,
+                    )
+                }
+                else -> {
+                    // We have a buffered URI — render the live stream through
+                    // AllwinnerFilePlayer (TextureView + IjkPlayer + AI tap).
+                    androidx.compose.runtime.key(state.camid) {
+                        com.example.trafykamerasikotlin.ui.components.AllwinnerFilePlayer(
+                            fileUri = state.localFileUri,
+                            onFrame = if (aiOverlayOn) aiViewModel::onFrame else null,
+                        )
+                    }
+                    // Bounding-box overlay when AI is on (sized to the same
+                    // 16:9 letterbox as the player).
+                    val overlayScene = if (aiOverlayOn) aiScene else null
+                    val overlaySrcSize = overlayScene?.sourceFrameSize
+                        ?: android.util.Size(0, 0)
+                    com.example.trafykamerasikotlin.ui.components.BoundingBoxOverlay(
+                        scene      = overlayScene,
+                        sourceSize = overlaySrcSize,
+                        modifier   = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(16f / 9f),
+                    )
+                }
+            }
+            // AI overlay toggle — top-right, same UX as other chipsets.
+            if (state.localFileUri != null && !state.failed) {
+                AiOverlayToggle(
+                    enabled  = aiOverlayOn,
+                    onToggle = onToggleAi,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp),
+                )
+            }
+        }
+        // Front / back camera switcher (Allwinner has both). Hidden in
+        // landscape so the video owns the chrome-free frame.
+        if (!isLandscape) {
+            CameraTabBar(
+                cameras          = listOf(
+                    stringResource(R.string.media_tab_front),
+                    stringResource(R.string.media_tab_back),
+                ),
+                selectedCamera   = state.camid,
+                onCameraSelected = onSwitchCamera,
+            )
+        }
+    }
+}
+
+/**
  * Standalone Live-tab view for Allwinner V853.
  *
  * Shows a "live stream coming soon" placeholder for now. The remote-capture wiring
@@ -220,7 +328,7 @@ fun LiveScreen(
  * over mobile-internet (cloud path), not the dashcam's Wi-Fi. When the cloud
  * implementation lands, the buttons come back here guarded by a connectivity check.
  */
-@Suppress("UNUSED_PARAMETER")
+@Suppress("UNUSED_PARAMETER", "unused")
 @Composable
 private fun AllwinnerCaptureView(
     captureState: CaptureState,
@@ -680,29 +788,12 @@ private fun AiOverlayToggle(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector        = Icons.Filled.CameraAlt,
+                imageVector        = Icons.Filled.AutoAwesome,
                 contentDescription = stringResource(R.string.live_ai_overlay_toggle_cd),
                 tint               = if (enabled) Color.White else ColorTextSecondary,
                 modifier           = Modifier.size(20.dp),
             )
         }
-        if (enabled) {
-            Spacer(Modifier.height(6.dp))
-            // Informational-only disclaimer. Matches spec §9: warnings on
-            // live stream are not safety-actionable — they're a visible
-            // overlay of what the AI "sees," nothing more.
-            Text(
-                text  = stringResource(R.string.live_ai_overlay_informational),
-                style = MaterialTheme.typography.labelSmall,
-                color = ColorTextSecondary,
-                textAlign = TextAlign.End,
-                modifier = Modifier
-                    .background(
-                        color = ColorBackground.copy(alpha = 0.55f),
-                        shape = RoundedCornerShape(6.dp),
-                    )
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-            )
-        }
     }
 }
+

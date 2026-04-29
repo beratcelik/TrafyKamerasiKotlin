@@ -1,5 +1,6 @@
 package com.example.trafykamerasikotlin.data.settings
 
+import android.content.Context
 import android.util.Log
 import com.example.trafykamerasikotlin.data.generalplus.GeneralplusMenuParser
 import com.example.trafykamerasikotlin.data.generalplus.GeneralplusProtocol
@@ -25,7 +26,7 @@ import com.example.trafykamerasikotlin.data.model.SettingOption
  *
  * Protocol confirmed from PcapDroid captures.
  */
-class GeneralplusSettingsRepository {
+class GeneralplusSettingsRepository(private val context: Context) {
 
     companion object {
         private const val TAG = "Trafy.GPRepo"
@@ -40,6 +41,17 @@ class GeneralplusSettingsRepository {
         private const val ID_RESET     = 0x0208  // 520 — Factory reset
         private const val ID_WIFI_SSID = 0x0300  // 768 — WiFi SSID (string, read-only display)
         private const val ID_WIFI_PASS = 0x0301  // 769 — WiFi password (string, write-only via dialog)
+        // Cam's own display-language setting. Firmware only supports English /
+        // Traditional Chinese / Simplified Chinese — none useful for Turkish
+        // users — and Trafy Uno has no built-in screen anyway, so this only
+        // affects timestamp overlay format. Hidden from the settings list.
+        private const val ID_LANGUAGE  = 0x0203  // 515
+        // ACC-Off Behavior. Cam advertises it as writable but the firmware
+        // ACKs SetParameter and silently drops the value (verify-after-set
+        // confirmed the readback never changes). The OEM Viidure app also
+        // hides this setting, which suggests the firmware just doesn't
+        // expose a working write path for it. Hidden to match Viidure.
+        private const val ID_ACC_OFF   = 0x0009  // 9
 
         // Semantic keys used by SettingsScreen/SettingsViewModel for special item types.
         // Format/Reset use HiDVR's existing DESTRUCTIVE_KEYS so the confirmation dialog fires.
@@ -105,6 +117,11 @@ class GeneralplusSettingsRepository {
             for (gpSetting in allSettings) {
                 val id = gpSetting.id
 
+                // Skip the cam's display-language setting (see ID_LANGUAGE comment).
+                if (id == ID_LANGUAGE) continue
+                // Skip ACC-Off Behavior — firmware advertises it but won't apply writes.
+                if (id == ID_ACC_OFF) continue
+
                 // WiFi password: cache it for the WiFi dialog but don't add to the settings list
                 if (id == ID_WIFI_PASS) {
                     if (gpSetting.type == GP_TYPE_STRING) {
@@ -123,13 +140,13 @@ class GeneralplusSettingsRepository {
                         val options = gpSetting.values.map { v ->
                             SettingOption(
                                 value = v.id.toString(),
-                                label = GeneralplusTranslations.valueLabel(id, v.id, v.name),
+                                label = GeneralplusTranslations.valueLabel(context, id, v.id, v.name),
                             )
                         }
                         if (options.isEmpty()) {
                             // No values in XML — show as read-only display item
                             items.add(SettingItem(id.toString(),
-                                GeneralplusTranslations.title(id, gpSetting.name), "", "", emptyList()))
+                                GeneralplusTranslations.title(context, id, gpSetting.name), "", "", emptyList()))
                             continue
                         }
                         sendPacket(GeneralplusProtocol.buildGetParameter(0, id))
@@ -143,10 +160,11 @@ class GeneralplusSettingsRepository {
                         Log.d(TAG, "Setting $id: idx=$currentIdx label=${currentOption?.label}")
                         items.add(SettingItem(
                             key               = id.toString(),
-                            title             = GeneralplusTranslations.title(id, gpSetting.name),
+                            title             = GeneralplusTranslations.title(context, id, gpSetting.name),
                             currentValue      = currentIdx.toString(),
                             currentValueLabel = currentOption?.label ?: currentIdx.toString(),
                             options           = options,
+                            description       = GeneralplusTranslations.description(context, id),
                         ))
                     }
 
@@ -158,10 +176,11 @@ class GeneralplusSettingsRepository {
                         }
                         items.add(SettingItem(
                             key               = key,
-                            title             = GeneralplusTranslations.title(id, gpSetting.name),
+                            title             = GeneralplusTranslations.title(context, id, gpSetting.name),
                             currentValue      = "",
                             currentValueLabel = "",
                             options           = emptyList(),
+                            description       = GeneralplusTranslations.description(context, id),
                         ))
                         Log.d(TAG, "Action setting $id key=$key")
                     }
@@ -178,7 +197,7 @@ class GeneralplusSettingsRepository {
                         Log.d(TAG, "String setting $id key=$key value='$currentStr'")
                         items.add(SettingItem(
                             key               = key,
-                            title             = GeneralplusTranslations.title(id, gpSetting.name),
+                            title             = GeneralplusTranslations.title(context, id, gpSetting.name),
                             currentValue      = currentStr,
                             currentValueLabel = currentStr,
                             options           = emptyList(),  // no dropdown — tap opens WiFi dialog
@@ -199,23 +218,57 @@ class GeneralplusSettingsRepository {
      * String and action settings are NOT handled here (they use dedicated methods).
      * Returns true on ACK from camera.
      */
-    suspend fun applySetting(deviceIp: String, key: String, value: String): Boolean {
-        val settingId   = key.toIntOrNull()   ?: return false
-        val newValueIdx = value.toIntOrNull()  ?: return false
+    /** Fine-grained outcome of an apply attempt — lets the VM show the right error. */
+    enum class ApplyOutcome {
+        SUCCESS,         // ACK received and verify GetParameter matches
+        NO_CONNECTION,   // TCP session couldn't be established
+        NAK,             // Camera explicitly rejected the write
+        VERIFY_FAILED,   // Camera ACKed but readback shows old value — firmware silently dropped
+    }
+
+    /**
+     * Variant of [applySetting] that returns a fine-grained outcome so the
+     * caller can distinguish a transient connection problem (worth retrying)
+     * from a firmware refusal (no point retrying — needs a different command
+     * or just isn't supported).
+     */
+    suspend fun applySettingWithOutcome(deviceIp: String, key: String, value: String): ApplyOutcome {
+        val settingId   = key.toIntOrNull()  ?: return ApplyOutcome.NAK
+        val newValueIdx = value.toIntOrNull() ?: return ApplyOutcome.NAK
         Log.i(TAG, "applySetting settingId=$settingId newValueIdx=$newValueIdx")
 
-        val success = GeneralplusSession.withSession { _, sendPacket, receive ->
+        val outcome = GeneralplusSession.withSession { _, sendPacket, receive ->
             sendPacket(GeneralplusProtocol.buildSetParameter(0, settingId, newValueIdx))
-            val ack = receive(GeneralplusProtocol.CMD_MENU_SET_PARAMETER)
-            if (ack == null) {
-                Log.e(TAG, "applySetting: no ACK for settingId=$settingId")
-                return@withSession false
+            val resp = receive(GeneralplusProtocol.CMD_MENU_SET_PARAMETER)
+            if (resp == null) {
+                Log.e(TAG, "applySetting: no response for settingId=$settingId")
+                return@withSession ApplyOutcome.NAK
             }
-            Log.i(TAG, "applySetting: ACK received — success")
-            true
+            if (!resp.isAck) {
+                Log.e(TAG, "applySetting: NAK for settingId=$settingId (type=0x%02x)".format(resp.type))
+                return@withSession ApplyOutcome.NAK
+            }
+            Log.i(TAG, "applySetting: ACK received — verifying with GetParameter")
+            sendPacket(GeneralplusProtocol.buildGetParameter(0, settingId))
+            val getResp = receive(GeneralplusProtocol.CMD_MENU_GET_PARAMETER)
+            if (getResp == null || !getResp.isAck || getResp.data.isEmpty()) {
+                Log.w(TAG, "applySetting: verify read failed for $settingId — trusting ACK")
+                return@withSession ApplyOutcome.SUCCESS
+            }
+            val readback = getResp.data[0].toInt() and 0xFF
+            if (readback != newValueIdx) {
+                Log.e(TAG, "applySetting: verify mismatch for $settingId — wrote=$newValueIdx readback=$readback (firmware ignored write)")
+                return@withSession ApplyOutcome.VERIFY_FAILED
+            }
+            Log.i(TAG, "applySetting: verify OK (readback=$readback)")
+            ApplyOutcome.SUCCESS
         }
-        return success == true
+        return outcome ?: ApplyOutcome.NO_CONNECTION
     }
+
+    /** Boolean wrapper retained for non-GP-aware callers. */
+    suspend fun applySetting(deviceIp: String, key: String, value: String): Boolean =
+        applySettingWithOutcome(deviceIp, key, value) == ApplyOutcome.SUCCESS
 
     /**
      * Triggers an action setting (Format SD card or Factory Reset).
@@ -272,6 +325,93 @@ class GeneralplusSettingsRepository {
      * Sets a new WiFi password on the camera.
      * Returns true on ACK.
      */
+    /**
+     * Sets a new Wi-Fi SSID on the camera. Triggered automatically once on
+     * first pair to rebrand factory `CarDV_*` SSIDs to `Trafy_*`. The cam
+     * usually reboots its Wi-Fi after this, so the ACK is best-effort —
+     * "command sent, command flushed" is treated as success. Caller should
+     * be ready for the network to drop briefly.
+     */
+    suspend fun setWifiSsid(deviceIp: String, newSsid: String): Boolean {
+        Log.i(TAG, "setWifiSsid: '$newSsid'")
+
+        val success = GeneralplusSession.withSession { _, sendPacket, receive ->
+            sendPacket(GeneralplusProtocol.buildSetParameterString(0, ID_WIFI_SSID, newSsid))
+            val ack = receive(GeneralplusProtocol.CMD_MENU_SET_PARAMETER)
+            if (ack == null) Log.w(TAG, "setWifiSsid: no ACK — camera may have applied and dropped connection")
+            else             Log.i(TAG, "setWifiSsid: ACK received")
+            true
+        }
+        if (success == true) cachedWifiSsid = newSsid
+        return success == true
+    }
+
+    /**
+     * Rebrands the camera's Wi-Fi SSID from a factory-default name (e.g.
+     * `CarDV_YZJ_2ff4f`) to `Trafy_<suffix>`. Suffix is the unique tail of
+     * the existing SSID (last underscore-delimited token), so two cams
+     * never collide.
+     *
+     * Important firmware quirk: the cam ACKs the write and persists it to
+     * its parameter store, but **does not** restart the Wi-Fi radio. The
+     * new SSID only goes on the air after the cam is power-cycled (which
+     * happens organically when the car is parked / next ignition cycle).
+     * In the interim we have stored=Trafy_xxx but broadcast=CarDV_xxx —
+     * auto-reconnect handles this because both keywords are in the scan
+     * filter, and the next power-up auto-applies the rename for good.
+     *
+     * Idempotent: only fires if the current SSID matches a default pattern.
+     * User-customized names (anything not matching the defaults) are left
+     * alone — including ones already prefixed with Trafy_.
+     *
+     * Returns the new SSID on a successful write, or null when no rename
+     * was needed / possible.
+     */
+    suspend fun rebrandSsidIfDefault(deviceIp: String): String? {
+        return GeneralplusSession.withSession { _, sendPacket, receive ->
+            sendPacket(GeneralplusProtocol.buildGetParameter(0, ID_WIFI_SSID))
+            val resp = receive(GeneralplusProtocol.CMD_MENU_GET_PARAMETER)
+            val current = if (resp != null && resp.isAck && resp.data.isNotEmpty()) {
+                // Cam returns: 1-byte length prefix + N-byte UTF-8 string. Older
+                // code paths trim trailing null but the leading length byte is a
+                // hard part of the protocol — skip it explicitly.
+                val raw = resp.data
+                val skip = if (raw.isNotEmpty() && raw[0].toInt() and 0xFF <= raw.size - 1) 1 else 0
+                String(raw, skip, raw.size - skip, Charsets.UTF_8).trimEnd(' ')
+            } else {
+                Log.w(TAG, "rebrandSsidIfDefault: couldn't read current SSID")
+                return@withSession null
+            }
+            cachedWifiSsid = current
+            if (!isDefaultFactorySsid(current)) {
+                Log.d(TAG, "rebrandSsidIfDefault: '$current' is not a default factory SSID — leaving alone")
+                return@withSession null
+            }
+            val suffix = current.substringAfterLast('_', current.takeLast(6))
+                .filter { it.isLetterOrDigit() }
+                .ifEmpty { current.takeLast(6).filter { it.isLetterOrDigit() } }
+            val newSsid = "Trafy_$suffix"
+            if (newSsid == current) return@withSession null
+            Log.i(TAG, "rebrandSsidIfDefault: '$current' → '$newSsid' (applies after cam power-cycle)")
+            sendPacket(GeneralplusProtocol.buildSetParameterString(0, ID_WIFI_SSID, newSsid))
+            val ack = receive(GeneralplusProtocol.CMD_MENU_SET_PARAMETER)
+            if (ack == null) Log.w(TAG, "rebrandSsidIfDefault: no ACK")
+            else             Log.i(TAG, "rebrandSsidIfDefault: ACK received")
+            cachedWifiSsid = newSsid
+            newSsid
+        }
+    }
+
+    /** True if [ssid] matches a known factory-default pattern. */
+    private fun isDefaultFactorySsid(ssid: String): Boolean {
+        val lower = ssid.lowercase()
+        return lower.startsWith("cardv") ||
+               lower.startsWith("a19") ||
+               lower.startsWith("hicv") ||
+               lower.startsWith("dvr_")
+    }
+
+
     suspend fun setWifiPassword(deviceIp: String, newPassword: String): Boolean {
         Log.i(TAG, "setWifiPassword")
 

@@ -172,6 +172,8 @@ fun SettingsScreen(
                 SettingsActionFeedback.ResetOk     -> stringResource(R.string.settings_feedback_reset_ok)
                 SettingsActionFeedback.GenericOk   -> stringResource(R.string.settings_feedback_generic_ok)
                 SettingsActionFeedback.GenericFail -> stringResource(R.string.settings_feedback_generic_fail)
+                SettingsActionFeedback.NetworkUnavailable -> stringResource(R.string.settings_feedback_network_unavailable)
+                SettingsActionFeedback.UnsupportedByCamera -> stringResource(R.string.settings_feedback_unsupported)
                 SettingsActionFeedback.WifiSaved   -> stringResource(R.string.settings_feedback_wifi_saved)
                 SettingsActionFeedback.ApnSaved    -> stringResource(R.string.settings_feedback_apn_saved)
                 is SettingsActionFeedback.Raw      -> feedback.message
@@ -631,12 +633,25 @@ private fun SettingRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(
-            text     = item.title,
-            style    = MaterialTheme.typography.bodyLarge,
-            color    = if (enabled) ColorTextPrimary else ColorTextSecondary,
-            modifier = Modifier.weight(1f)
-        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp),
+        ) {
+            Text(
+                text  = item.title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (enabled) ColorTextPrimary else ColorTextSecondary,
+            )
+            item.description?.takeIf { it.isNotBlank() }?.let { desc ->
+                Text(
+                    text     = desc,
+                    style    = MaterialTheme.typography.bodySmall,
+                    color    = ColorTextSecondary,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
         if (isInfo) {
             val value = item.currentValueLabel.ifEmpty { item.currentValue }
             Text(

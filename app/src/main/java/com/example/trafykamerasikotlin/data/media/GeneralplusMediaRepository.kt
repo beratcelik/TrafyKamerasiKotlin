@@ -111,9 +111,20 @@ class GeneralplusMediaRepository {
             val videos = mutableListOf<MediaFile>()
             val photos = mutableListOf<MediaFile>()
 
+            val keepThumbNames = mutableSetOf<String>()
             for (entry in entries) {
                 val name      = buildFileName(entry)
-                val thumbFile = File(thumbCacheDir, "gp_thumb_${entry.fileIndex}.jpg")
+                // The dashcam recycles fileIndex values when its SD card loops
+                // — without the timestamp suffix, today's clip-at-index-N is
+                // served from yesterday's cached thumb. Keying by index +
+                // recording timestamp guarantees a fresh fetch whenever the
+                // recording at a given index changes.
+                val thumbName = "gp_thumb_${entry.fileIndex}_" +
+                    "%04d%02d%02d_%02d%02d%02d".format(
+                        entry.year, entry.month, entry.day,
+                        entry.hour, entry.min, entry.sec) + ".jpg"
+                val thumbFile = File(thumbCacheDir, thumbName)
+                keepThumbNames += thumbName
 
                 // Fetch and cache thumbnail only if not already on disk.
                 // Camera sends: data chunk(s) + empty ACK end-marker (confirmed PCAP [91][92]).
@@ -146,6 +157,15 @@ class GeneralplusMediaRepository {
                 if (isPhoto) photos.add(media) else videos.add(media)
                 Log.d(TAG, "File ${entry.fileIndex}: $name (photo=$isPhoto)")
             }
+
+            // Prune cached thumbs that no longer correspond to a current
+            // recording on the camera. Without this, the cache grows
+            // unboundedly as the SD card loops through filenames.
+            thumbCacheDir.listFiles()
+                ?.filter { it.name.startsWith("gp_thumb_") && it.name !in keepThumbNames }
+                ?.forEach { stale ->
+                    if (stale.delete()) Log.d(TAG, "Pruned stale thumb: ${stale.name}")
+                }
 
             Log.i(TAG, "fetchFiles complete: ${videos.size} videos, ${photos.size} photos")
             Pair(videos, photos)

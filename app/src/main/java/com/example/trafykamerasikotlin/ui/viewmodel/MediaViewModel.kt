@@ -16,6 +16,7 @@ import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.MediaFile
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
+import com.example.trafykamerasikotlin.data.settings.AiOverlayPreferences
 import com.example.trafykamerasikotlin.data.video.OfflineVideoProcessor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -76,6 +77,11 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         // If the device doesn't send a single UDP packet within this window, give up —
         // the firmware is refusing to stream (same behaviour the OEM app hits).
         const val INITIAL_RX_TIMEOUT_MS   = 6_000L
+        // GeneralPlus / HiDVR firmwares pause SD recording while in PLAYBACK
+        // mode (browse/download). When the user is idle on the Media tab we
+        // auto-exit playback so the cam can keep recording; the next user
+        // interaction re-enters playback and refreshes the file list.
+        const val IDLE_PLAYBACK_TIMEOUT_MS = 30_000L
     }
 
     private val hiDvrRepo     = HiDvrMediaRepository()
@@ -90,15 +96,14 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     private val _downloading = MutableStateFlow<Set<String>>(emptySet())
     val downloading: StateFlow<Set<String>> = _downloading
 
-    // User's opt-in for burning the AI overlay into downloaded files. Shared
-    // with the playback/live overlays in spirit — same product concept — but
-    // we key this flag on the Media VM because the download flow originates
-    // here. Default ON matches the live toggle's default.
-    private val _aiOverlayEnabled = MutableStateFlow(true)
-    val aiOverlayEnabled: StateFlow<Boolean> = _aiOverlayEnabled
+    // The AI overlay toggle is a single user preference shared across every
+    // screen that has one (Live, GP/HiDVR/Allwinner playback, Media browsing
+    // burn-in). The shared flow is in AiOverlayPreferences and is backed by
+    // SharedPreferences, so the choice persists across app restarts.
+    val aiOverlayEnabled: StateFlow<Boolean> = AiOverlayPreferences.state(app)
 
-    fun toggleAiOverlay() { _aiOverlayEnabled.value = !_aiOverlayEnabled.value }
-    fun setAiOverlay(on: Boolean) { _aiOverlayEnabled.value = on }
+    fun toggleAiOverlay() { AiOverlayPreferences.set(getApplication(), !aiOverlayEnabled.value) }
+    fun setAiOverlay(on: Boolean) { AiOverlayPreferences.set(getApplication(), on) }
 
     // Live DownloadState per file name; only present while a GP download is active.
     private val _downloadProgress = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
@@ -142,6 +147,13 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     private var loadedDevice: DeviceInfo? = null
     private var loadJob: Job?             = null
 
+    /** Idle-exit watchdog. Active while we're in PLAYBACK mode on the Media tab. */
+    private var idleJob: Job? = null
+    /** True when the watchdog has put the cam back in RECORD mode; next interaction re-enters PLAYBACK. */
+    @Volatile private var idleExited: Boolean = false
+    /** True when the screen put the cam back in RECORD mode because the app went to background. */
+    @Volatile private var pausedForBackground: Boolean = false
+
     // ── Public API ─────────────────────────────────────────────────────────
 
     fun load(device: DeviceInfo) {
@@ -171,6 +183,8 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                 } else null
                 Log.i(TAG, "load: ${videos.size} videos, ${photos.size} photos, sdInfo=$sdInfo")
                 _uiState.value = MediaUiState.Loaded(videos, photos, sdInfo)
+                idleExited = false
+                scheduleIdleExit()
             } catch (e: Exception) {
                 Log.e(TAG, "load failed: ${e.message}")
                 _uiState.value = MediaUiState.Error
@@ -367,12 +381,12 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 // ── Stage 2: offline process ──────────────────────────────
-                // GP path: AVI/MJPEG via the legacy `process(File, File)`
-                //          overload (uses AviMjpegVideoSource internally).
-                // HiSilicon-family: MP4/H.264 via `Mp4VideoSource.open(uri)`
-                //          which wraps Android's MediaMetadataRetriever.
-                // Both feed the same `OfflineVideoProcessor.process(source,
-                // out)` so the downstream decode→infer→encode loop is shared.
+                // GP path: AVI/MJPEG → `processAvi` (each JPEG decoded to
+                //          ARGB on CPU, uploaded as a 2D source texture).
+                // HiSilicon-family: MP4/H.264 → `process(file)` Surface-to-
+                //          Surface GL pipeline (zero CPU YUV→ARGB cost).
+                // Both share the same encoder, overlay renderer, and AI
+                // inference logic via [GlOverlayPipeline].
                 val proc = OfflineVideoProcessor(context = getApplication())
                 val stateJob = launch {
                     proc.state.collect { s ->
@@ -394,18 +408,14 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 if (device.protocol == ChipsetProtocol.GENERALPLUS) {
-                    proc.process(tempIn, outFile)
+                    proc.processAvi(tempIn, outFile)
                 } else {
-                    // HiSilicon-family dashcams produce MP4s that defeat
-                    // MediaMetadataRetriever — frame 0 decodes but subsequent
-                    // seeks return null one frame at a time, dragging a
-                    // 21-second clip out to ~30+ minutes. Skip MMR entirely
-                    // and go straight to the MediaCodec/MediaExtractor path,
-                    // which decodes the H.264 bitstream sequentially without
-                    // depending on the file's sample-table integrity.
-                    val source = com.example.trafykamerasikotlin.data.video.MediaCodecVideoSource
-                        .open(tempIn)
-                    source.use { proc.process(it, outFile) }
+                    // HiSilicon-family dashcams produce MP4s. The Surface-to-
+                    // Surface GL pipeline decodes the H.264 bitstream straight
+                    // into a GPU texture and re-encodes without ever touching
+                    // CPU pixels — much faster than the old MediaCodec→Bitmap
+                    // path on 2K dashcam footage.
+                    proc.process(tempIn, outFile)
                 }
                 stateJob.cancel()
 
@@ -498,9 +508,83 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * App went to background while on the Media tab — exit playback so the
+     * cam can resume recording. We deliberately don't clear [loadedDevice]
+     * so [onForeground] can detect this and re-fetch instead of being a
+     * no-op.
+     */
+    fun onBackground() {
+        val device = loadedDevice ?: return
+        if (pausedForBackground) return
+        Log.i(TAG, "onBackground: exiting playback so cam can record")
+        pausedForBackground = true
+        idleJob?.cancel()
+        idleJob = null
+        viewModelScope.launch { leavePlayback(device) }
+    }
+
+    /**
+     * App came back to foreground. If we were paused for background, re-fetch
+     * the file list (which also flips the cam back to PLAYBACK mode for the
+     * GP/HiDVR firmwares). No-op on initial composition — that case is handled
+     * by [MediaScreen]'s `LaunchedEffect(device)` which already calls [load].
+     */
+    fun onForeground() {
+        if (!pausedForBackground) return
+        pausedForBackground = false
+        val device = loadedDevice ?: return
+        Log.i(TAG, "onForeground: re-entering playback (refresh)")
+        loadedDevice = null
+        load(device)
+    }
+
+    /**
+     * Called from the Media screen on every user touch. Resets the idle
+     * watchdog; if the watchdog has already put the cam back in RECORD mode,
+     * re-fetches files (which also flips the cam to PLAYBACK).
+     */
+    fun reportInteraction() {
+        val device = loadedDevice ?: return
+        if (idleExited) {
+            idleExited = false
+            Log.i(TAG, "reportInteraction: re-entering playback after idle exit")
+            // Force a fresh fetch — clears loadedDevice so load() doesn't take the
+            // already-loaded fast path. fetchFiles also re-sends SetMode(PLAYBACK).
+            loadedDevice = null
+            load(device)
+        } else {
+            scheduleIdleExit()
+        }
+    }
+
+    private fun scheduleIdleExit() {
+        idleJob?.cancel()
+        idleJob = viewModelScope.launch {
+            delay(IDLE_PLAYBACK_TIMEOUT_MS)
+            // Don't exit if active work needs PLAYBACK mode. Re-arm and probe again.
+            if (downloading.value.isNotEmpty() ||
+                _playbackUri.value != null ||
+                _allwinnerPlaybackUri.value != null ||
+                allwinnerStreamActive
+            ) {
+                scheduleIdleExit()
+                return@launch
+            }
+            val device = loadedDevice ?: return@launch
+            Log.i(TAG, "idle ${IDLE_PLAYBACK_TIMEOUT_MS / 1000}s — auto-exiting playback so cam can record")
+            idleExited = true
+            leavePlayback(device)
+        }
+    }
+
     fun onLeave() {
         val device = loadedDevice ?: return
         Log.d(TAG, "onLeave: for ${device.protocol.deviceIp}")
+        idleJob?.cancel()
+        idleJob = null
+        idleExited = false
+        pausedForBackground = false
         viewModelScope.launch { leavePlayback(device) }
         // Allwinner uses a single-stream busy guard (see startAllwinnerStream).
         // If the user backs out of the Media tab while a stream is in-flight,

@@ -7,7 +7,6 @@ import android.provider.OpenableColumns
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.trafykamerasikotlin.data.video.Mp4VideoSource
 import com.example.trafykamerasikotlin.data.video.OfflineVideoProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -15,15 +14,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
  * Drives the "pick any video from your phone and produce an AI-overlay
  * copy" debug screen. User flow:
  *   1. Tap "Pick video" → SAF file chooser.
- *   2. We open the picked URI via [Mp4VideoSource], decode every frame via
- *      MediaMetadataRetriever, run the full AI pipeline + re-encode to MP4.
+ *   2. The Surface-to-Surface GL pipeline decodes the picked URI via
+ *      MediaCodec straight into a GPU texture, runs AI inference on
+ *      downscaled snapshots, and re-encodes with the overlay burned in.
  *   3. Save result into the user's Downloads folder alongside the original,
  *      with an `_ai.mp4` suffix so it sits next to the source without
  *      overwriting anything.
@@ -86,22 +85,10 @@ class VideoAiProcessingViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
-                // Open the picked video. Mp4VideoSource is backed by
-                // MediaMetadataRetriever which handles everything the
-                // platform can decode — MP4 (H.264/H.265), MOV, WebM,
-                // MKV, and some AVIs. The user may have picked anything.
-                val source = try {
-                    withContext(Dispatchers.IO) {
-                        Mp4VideoSource.open(getApplication(), uri)
-                    }
-                } catch (t: Throwable) {
-                    Log.w(TAG, "Mp4VideoSource.open failed: ${t.message}")
-                    _state.value = UiState.Failed("Could not open the selected video: ${t.message ?: ""}")
-                    progressJob.cancel()
-                    return@launch
-                }
-
-                proc.process(source, outFile)
+                // Surface-to-Surface GL pipeline decodes via MediaCodec
+                // (handles MP4/H.264, MOV, WebM, MKV) directly into a GPU
+                // texture and re-encodes without CPU YUV→ARGB conversion.
+                proc.process(uri, outFile)
                 progressJob.cancel()
                 // proc.state emits Done which the collector mapped above.
                 // Poke MediaScanner so the file shows in Files/Gallery.

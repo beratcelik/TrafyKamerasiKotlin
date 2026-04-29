@@ -54,7 +54,6 @@
     <string name="live_coming_soon_title">Live stream coming soon</string>
     <string name="live_coming_soon_body">Live streaming for Allwinner cameras is coming soon. You can still access recordings from the Media tab.</string>
     <string name="live_ai_overlay_toggle_cd">Toggle AI plate overlay</string>
-    <string name="live_ai_overlay_informational">AI overlay • informational only</string>
 
     <!-- Media -->
     <string name="media_title">Media</string>
@@ -80,7 +79,6 @@
     <string name="media_error_download_failed">Video download failed</string>
     <string name="media_error_busy_playback">Close playback first</string>
     <string name="media_download_complete_fmt">Saved to Downloads: %1$s</string>
-    <string name="media_ai_overlay_toggle_label">AI overlay</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>
@@ -113,6 +111,8 @@
     <string name="settings_feedback_reset_ok">Factory reset initiated. Camera will restart.</string>
     <string name="settings_feedback_generic_ok">Done.</string>
     <string name="settings_feedback_generic_fail">Action failed — check device connection.</string>
+    <string name="settings_feedback_network_unavailable">Network problem. Reconnect to the dashcam and try again.</string>
+    <string name="settings_feedback_unsupported">The camera didn\'t accept this change. Its firmware may not support modifying this setting.</string>
     <string name="settings_feedback_wifi_saved">Wi-Fi password updated. Reconnect with the new password.</string>
     <string name="settings_feedback_apn_saved">APN updated.</string>
 
@@ -249,4 +249,58 @@
     <string name="vehicle_class_bus">Bus</string>
     <string name="vehicle_class_truck">Truck</string>
     <string name="vehicle_class_unknown">Unknown</string>
+
+    <!-- Plate-recognition overlay labels -->
+    <string name="plate_label_short">plate</string>
+    <!-- GeneralPlus settings titles (Trafy Uno) — keyed by setting ID -->
+    <string name="gp_setting_title_0">Video Resolution</string>
+    <string name="gp_setting_title_1">Exposure</string>
+    <string name="gp_setting_title_3">Loop Recording</string>
+    <string name="gp_setting_title_5">Audio Recording</string>
+    <string name="gp_setting_title_7">Collision Sensing</string>
+    <string name="gp_setting_title_8">Speaker Volume</string>
+    <string name="gp_setting_title_9">ACC-Off Behavior</string>
+    <string name="gp_setting_title_10">Time-Lapse Frame Rate</string>
+    <string name="gp_setting_title_515">Language</string>
+    <string name="gp_setting_title_519">Format SD Card</string>
+    <string name="gp_setting_title_520">Restore Factory Settings</string>
+    <string name="gp_setting_title_521">Firmware Version</string>
+    <string name="gp_setting_title_768">Wi-Fi Settings</string>
+    <string name="gp_setting_title_769">Wi-Fi Password</string>
+
+    <!-- GeneralPlus settings descriptions — only for non-obvious settings -->
+    <string name="gp_setting_desc_1">Manually brightens or darkens the captured image.</string>
+    <string name="gp_setting_desc_3">Length of each clip; the oldest is auto-deleted when the SD card fills up.</string>
+    <string name="gp_setting_desc_7">Locks the current clip when an impact is detected; sets the trigger sensitivity.</string>
+    <string name="gp_setting_desc_9">How long the camera keeps running after the vehicle ignition is switched off.</string>
+    <string name="gp_setting_desc_10">Condenses long trips into a sped-up video; choose the frame rate.</string>
+    <string name="gp_setting_desc_519">Erases everything on the card. This cannot be undone.</string>
+    <string name="gp_setting_desc_520">Resets all settings to their default values.</string>
+
+    <!-- GeneralPlus settings value labels — keyed by setting/value ID -->
+    <string name="gp_setting_value_3_0">1 min</string>
+    <string name="gp_setting_value_3_1">2 min</string>
+    <string name="gp_setting_value_3_2">3 min</string>
+    <string name="gp_setting_value_5_0">Off</string>
+    <string name="gp_setting_value_5_1">On</string>
+    <string name="gp_setting_value_7_0">Off</string>
+    <string name="gp_setting_value_7_1">Low</string>
+    <string name="gp_setting_value_7_2">Medium</string>
+    <string name="gp_setting_value_7_3">High</string>
+    <string name="gp_setting_value_8_0">Mute</string>
+    <string name="gp_setting_value_8_1">Low</string>
+    <string name="gp_setting_value_8_2">Medium</string>
+    <string name="gp_setting_value_8_3">High</string>
+    <string name="gp_setting_value_9_0">Shutdown</string>
+    <string name="gp_setting_value_9_1">12 h</string>
+    <string name="gp_setting_value_9_2">24 h</string>
+    <string name="gp_setting_value_9_3">48 h</string>
+    <string name="gp_setting_value_10_0">1 fps / 1 s</string>
+    <string name="gp_setting_value_10_1">2 fps / 1 s</string>
+    <string name="gp_setting_value_10_2">5 fps / 1 s</string>
+    <string name="gp_setting_value_10_3">1 fps / 2 s</string>
+    <string name="gp_setting_value_10_4">1 fps / 5 s</string>
+    <string name="gp_setting_value_515_0">English</string>
+    <string name="gp_setting_value_515_1">Traditional Chinese</string>
+    <string name="gp_setting_value_515_2">Simplified Chinese</string>
 </resources>

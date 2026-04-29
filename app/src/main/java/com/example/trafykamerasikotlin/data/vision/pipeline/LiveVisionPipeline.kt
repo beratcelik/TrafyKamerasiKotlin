@@ -20,12 +20,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -95,6 +98,11 @@ class LiveVisionPipeline(
      * and owned by the caller — the pipeline copies internally if it keeps
      * the pixels past the call. Typically called from a video player's
      * per-frame tap.
+     *
+     * Sampler runs BEFORE the copy: at 1080p ARGB_8888 the bitmap.copy is
+     * ~8 MB of allocation per call, and with [inferenceEveryN]=3 we'd be
+     * burning two thirds of those copies just to drop them at trySend.
+     * Returning early on skipped frames keeps the on-frame thread cheap.
      */
     fun submit(bitmap: Bitmap, timestampNanos: Long = System.nanoTime()) {
         val n = sampler.incrementAndGet()
@@ -104,8 +112,7 @@ class LiveVisionPipeline(
         // The caller is about to recycle its bitmap. Copy before we park it
         // in a channel the inference thread reads later. ARGB_8888 is the
         // lingua franca of the Android bitmap APIs we need downstream.
-        val copy = if (bitmap.config == Bitmap.Config.ARGB_8888) bitmap.copy(Bitmap.Config.ARGB_8888, false)
-            else bitmap.copy(Bitmap.Config.ARGB_8888, false)
+        val copy = bitmap.copy(Bitmap.Config.ARGB_8888, false)
         inferenceChannel.trySend(Frame(bitmap = copy, timestampNanos = timestampNanos))
     }
 
@@ -119,7 +126,16 @@ class LiveVisionPipeline(
     }
 
     fun release() {
-        inferenceJob?.cancel()
+        // Native ncnn detect/recognize calls don't observe Kotlin cancellation
+        // — tearing down a detector mid-call destroys mutexes the call still
+        // holds and trips FORTIFY (`pthread_mutex_lock on a destroyed mutex`).
+        // Wait for the in-flight inference to drain before releasing native
+        // resources. Bounded so a stuck native call can't hang the UI thread.
+        runBlocking {
+            withTimeoutOrNull(2_000L) {
+                inferenceJob?.cancelAndJoin()
+            }
+        }
         inferenceJob = null
         scope.cancel()
         vehicle?.release(); vehicle = null

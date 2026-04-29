@@ -53,6 +53,17 @@ class OnnxPlateOcr(
     private var padG:     Int         = 114
     private var padB:     Int         = 114
 
+    // Per-call scratch reused across recognize() invocations. The pipeline
+    // serializes calls on a single inference coroutine, so plain mutable
+    // fields are safe — no concurrency. Allocated once in initialize().
+    private var pixelScratch:  IntArray?   = null
+    private var inputBuffer:   ByteBuffer? = null
+    private var resizeScratch: Bitmap?     = null
+    private var resizeCanvas:  Canvas?     = null
+    private val resizePaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    private val srcRectScratch = Rect()
+    private val dstRectScratch = Rect()
+
     override suspend fun initialize() {
         withContext(Dispatchers.Default) {
             loadMetaFromAssets()
@@ -65,6 +76,14 @@ class OnnxPlateOcr(
             val session = env.createSession(bytes, opts)
             this@OnnxPlateOcr.env = env
             this@OnnxPlateOcr.session = session
+            // Scratch buffers — sized from the meta (inputW × inputH × inputC).
+            pixelScratch = IntArray(inputW * inputH)
+            inputBuffer  = ByteBuffer
+                .allocateDirect(inputH * inputW * inputC)
+                .order(ByteOrder.nativeOrder())
+            resizeScratch = Bitmap.createBitmap(inputW, inputH, Bitmap.Config.ARGB_8888)
+            resizeCanvas  = Canvas(resizeScratch!!)
+            dstRectScratch.set(0, 0, inputW, inputH)
             Log.i(TAG, "initialized: model=$modelAssetPath " +
                     "inputs=${session.inputNames} outputs=${session.outputNames} " +
                     "alphabet=${alphabet.length}")
@@ -74,25 +93,39 @@ class OnnxPlateOcr(
     override suspend fun recognize(plateCrop: Bitmap): PlateRecognition = withContext(Dispatchers.Default) {
         val s = session ?: return@withContext emptyResult()
         val e = env     ?: return@withContext emptyResult()
+        val resized = resizeScratch ?: return@withContext emptyResult()
+        val canvas  = resizeCanvas  ?: return@withContext emptyResult()
+        val pixels  = pixelScratch  ?: return@withContext emptyResult()
+        val buf     = inputBuffer   ?: return@withContext emptyResult()
 
-        // Preprocess: ARGB_8888 bitmap -> 128×64 RGB uint8 in HWC order.
-        // Spec says "no keep_aspect_ratio" — a straight resize with bilinear
-        // interpolation, padded to inputH×inputW with (114, 114, 114).
-        val resized = resizeWithPadding(plateCrop, inputW, inputH, padR, padG, padB)
-        val buf = ByteBuffer.allocateDirect(1 * inputH * inputW * inputC).order(ByteOrder.nativeOrder())
-        val pixels = IntArray(inputH * inputW)
+        // Preprocess: ARGB_8888 bitmap -> inputW × inputH RGB uint8 in HWC.
+        // The scratch Bitmap + Canvas are reused across calls; we just clear
+        // and redraw. fast-plate-ocr's config has keep_aspect_ratio=False, so
+        // a straight stretched draw matches the trained preprocessing.
+        canvas.drawColor(Color.rgb(padR, padG, padB))
+        srcRectScratch.set(0, 0, plateCrop.width, plateCrop.height)
+        canvas.drawBitmap(plateCrop, srcRectScratch, dstRectScratch, resizePaint)
         resized.getPixels(pixels, 0, inputW, 0, 0, inputW, inputH)
-        for (p in pixels) {
-            // ARGB_8888 → (R, G, B) bytes
+
+        // Pack ARGB ints → (R, G, B) bytes into the reused direct buffer.
+        buf.clear()
+        var i = 0
+        val total = inputW * inputH
+        while (i < total) {
+            val p = pixels[i]
             buf.put(((p shr 16) and 0xFF).toByte())
             buf.put(((p shr 8)  and 0xFF).toByte())
             buf.put(( p         and 0xFF).toByte())
+            i++
         }
         buf.rewind()
-        resized.recycle()
 
         val inputName = s.inputNames.first()
-        val tensor = OnnxTensor.createTensor(e, buf, longArrayOf(1, inputH.toLong(), inputW.toLong(), inputC.toLong()), OnnxJavaType.UINT8)
+        val tensor = OnnxTensor.createTensor(
+            e, buf,
+            longArrayOf(1, inputH.toLong(), inputW.toLong(), inputC.toLong()),
+            OnnxJavaType.UINT8,
+        )
         val outputs = try {
             s.run(mapOf(inputName to tensor))
         } finally {
@@ -102,28 +135,40 @@ class OnnxPlateOcr(
         // plate head: [1, 10, 37]
         @Suppress("UNCHECKED_CAST")
         val plate3d = outputs.get("plate").get().value as Array<Array<FloatArray>>
-        val slots = plate3d[0]  // [10][37]
+        val slots = plate3d[0]  // [numSlots][alphaSize]
 
         val numSlots = slots.size
-        val alphabetSize = slots[0].size
         val chars = StringBuilder(numSlots)
         val perSlotConf = FloatArray(numSlots)
-        val padIdx = alphabet.indexOf(padChar).let { if (it < 0) alphabet.length - 1 else it }
-        for (i in 0 until numSlots) {
-            val logits = slots[i]
-            val probs = softmax(logits)
+        for (slotIdx in 0 until numSlots) {
+            val logits = slots[slotIdx]
+            // Argmax on raw logits — softmax is monotonic, so the winning
+            // index is identical. Saves a FloatArray + 37 exp() calls per slot.
             var bestIdx = 0
-            var bestP = probs[0]
-            for (k in 1 until probs.size) if (probs[k] > bestP) { bestP = probs[k]; bestIdx = k }
-            perSlotConf[i] = bestP
+            var bestLogit = logits[0]
+            for (k in 1 until logits.size) {
+                if (logits[k] > bestLogit) { bestLogit = logits[k]; bestIdx = k }
+            }
             chars.append(alphabet.getOrElse(bestIdx) { padChar })
+            // Confidence (softmax probability of the winner) is only needed
+            // for slots that actually contribute to the displayed text. Pad
+            // slots get 0f without computing exp().
+            perSlotConf[slotIdx] = if (alphabet.getOrNull(bestIdx) == padChar) {
+                0f
+            } else {
+                softmaxOfWinner(logits, bestIdx)
+            }
         }
-        // Strip trailing pads.
+        // Strip trailing pads from the text.
         val text = chars.toString().trimEnd(padChar)
-        val meaningful = perSlotConf.withIndex()
-            .filter { (i, _) -> i < text.length }
-            .map { it.value }
-        val meanConf = if (meaningful.isEmpty()) 0f else meaningful.average().toFloat()
+        // Mean confidence over the kept (non-pad) slots.
+        var sum = 0f
+        var count = 0
+        for (k in 0 until text.length) {
+            sum += perSlotConf[k]
+            count++
+        }
+        val meanConf = if (count == 0) 0f else sum / count
 
         outputs.close()
         PlateRecognition(
@@ -139,6 +184,11 @@ class OnnxPlateOcr(
         // Do not close OrtEnvironment — it's a shared singleton.
         session = null
         env = null
+        try { resizeScratch?.recycle() } catch (_: Throwable) {}
+        resizeScratch = null
+        resizeCanvas = null
+        pixelScratch = null
+        inputBuffer = null
     }
 
     private fun loadMetaFromAssets() {
@@ -160,25 +210,21 @@ class OnnxPlateOcr(
         }
     }
 
-    private fun resizeWithPadding(src: Bitmap, w: Int, h: Int, r: Int, g: Int, b: Int): Bitmap {
-        // fast-plate-ocr's config has `keep_aspect_ratio=False`, so just stretch.
-        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val c = Canvas(out)
-        c.drawColor(Color.rgb(r, g, b))
-        val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-        c.drawBitmap(src, Rect(0, 0, src.width, src.height), Rect(0, 0, w, h), paint)
-        return out
-    }
-
-    private fun softmax(logits: FloatArray): FloatArray {
-        var max = Float.NEGATIVE_INFINITY
-        for (v in logits) if (v > max) max = v
+    /**
+     * Softmax probability of the winning logit only — avoids allocating a
+     * full exp-output array. We need this for the displayed confidence
+     * (single number per slot), not the full distribution.
+     *
+     * P(winner) = exp(L_winner − Lmax) / Σ exp(L_k − Lmax)
+     *           = 1 / Σ exp(L_k − L_winner)   (since L_winner == Lmax)
+     */
+    private fun softmaxOfWinner(logits: FloatArray, winnerIdx: Int): Float {
+        val winnerLogit = logits[winnerIdx]
         var sum = 0.0
-        val exps = FloatArray(logits.size)
-        for (i in logits.indices) { exps[i] = exp((logits[i] - max).toDouble()).toFloat(); sum += exps[i] }
-        val inv = (1.0 / sum).toFloat()
-        for (i in exps.indices) exps[i] *= inv
-        return exps
+        for (k in logits.indices) {
+            sum += exp((logits[k] - winnerLogit).toDouble())
+        }
+        return (1.0 / sum).toFloat()
     }
 
     private fun emptyResult() = PlateRecognition(

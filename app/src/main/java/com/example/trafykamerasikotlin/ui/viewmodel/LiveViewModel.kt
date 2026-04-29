@@ -36,12 +36,22 @@ sealed class LiveUiState {
         val useMjpeg       : Boolean      = false,
     ) : LiveUiState()
     /**
-     * Allwinner V853 doesn't expose an RTSP server — its live stream travels over the
-     * proprietary RTP2P/KCP transport which isn't implemented yet. Meanwhile, remote
-     * capture (take photo / take 6-s event video) works via the relay channel and is
-     * the primary Live-tab action for this chipset.
+     * Allwinner V853 live preview. The camera streams MPEG-TS over the
+     * proprietary `rtp2p` UDP transport (port 2222 after handshake). We
+     * drain UDP into a temp file and hand the player a local `file://` URI
+     * once buffered. While [localFileUri] is null we show a buffering state.
+     *
+     * [camid] = 0 (front) / 1 (back). Switching cameras tears down the
+     * current rtp2p session and opens a new one.
      */
-    object AllwinnerCapture : LiveUiState()
+    data class AllwinnerLive(
+        val camid: Int = 0,
+        val localFileUri: String? = null,
+        /** True while we still don't have any buffered bytes — UI shows a spinner. */
+        val buffering: Boolean = true,
+        /** Set when the watchdog gives up (no packets within INITIAL_RX_TIMEOUT_MS). */
+        val failed: Boolean = false,
+    ) : LiveUiState()
 }
 
 /** Transient state of a remote-capture action (Allwinner only). */
@@ -71,6 +81,10 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val eeasyRepo    = EeasytechLiveRepository()
     private val gpLiveRepo   = GeneralplusLiveRepository()
     private val captureRepo  = AllwinnerCaptureRepository()
+    private val allwinnerLiveRepo =
+        com.example.trafykamerasikotlin.data.media.AllwinnerLiveRepository(application)
+
+    private var allwinnerLiveJob: kotlinx.coroutines.Job? = null
 
     private val _uiState = MutableStateFlow<LiveUiState>(LiveUiState.NotConnected)
     val uiState: StateFlow<LiveUiState> = _uiState
@@ -109,10 +123,13 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
             val ip = device.protocol.deviceIp
             when (device.protocol) {
                 ChipsetProtocol.ALLWINNER_V853 -> {
-                    // No RTSP path — Allwinner streams over RTP2P/KCP which we haven't
-                    // wired for live yet. The Live tab surfaces remote capture instead.
-                    Log.i(TAG, "startStream: Allwinner — showing capture-only Live view")
-                    _uiState.value = LiveUiState.AllwinnerCapture
+                    // Live preview goes over rtp2p UDP (port 2222). The repo
+                    // streams MPEG-TS into a temp file; we hand its URI to
+                    // the player once enough buffered. Always start at front
+                    // cam (camid=0); switching is a follow-up.
+                    Log.i(TAG, "startStream: Allwinner — opening live rtp2p session")
+                    _uiState.value = LiveUiState.AllwinnerLive(camid = 0, buffering = true)
+                    startAllwinnerLive(camid = 0)
                 }
                 ChipsetProtocol.GENERALPLUS -> {
                     Log.i(TAG, "startStream: GeneralPlus entering live")
@@ -128,6 +145,14 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                     Log.i(TAG, "startStream: Easytech entering live for $ip")
                     val camNum  = eeasyRepo.enterLive(ip)
                     val cameras = cameraLabels(camNum)
+                    // Some Easytech firmware variants spin up the RTSP server
+                    // a few hundred ms AFTER /app/enterrecorder ACKs. Without
+                    // this gap, FFmpeg's DESCRIBE arrives before the RTSP
+                    // server is listening and IjkPlayer reports
+                    // "Invalid data found when processing input" → -10000.
+                    // 600 ms is empirically enough on the firmware variants
+                    // we've seen; HiDVR already does 1 s for a similar reason.
+                    delay(600)
                     val rtspUrl = EeasytechLiveRepository.RTSP_URL
                     Log.i(TAG, "startStream: Easytech ready → $rtspUrl, cameras=$cameras")
                     _uiState.value = LiveUiState.Playing(
@@ -207,10 +232,15 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = LiveUiState.NotConnected
         _captureState.value = CaptureState.Idle
         Log.d(TAG, "onLeave: for ${device.protocol.deviceIp}")
+        // Cancel any active Allwinner live stream synchronously so its
+        // resources are released before we even return from this method.
+        allwinnerLiveJob?.cancel()
+        allwinnerLiveJob = null
+        allwinnerLiveRepo.stop()
         viewModelScope.launch {
             val ip = device.protocol.deviceIp
             when (device.protocol) {
-                ChipsetProtocol.ALLWINNER_V853 -> { /* nothing to tear down — relay session stays alive */ }
+                ChipsetProtocol.ALLWINNER_V853 -> { /* live stream already cancelled above; relay session stays alive */ }
                 ChipsetProtocol.GENERALPLUS    -> gpLiveRepo.exitLive()
                 ChipsetProtocol.EEASYTECH      -> eeasyRepo.exitLive(ip)
                 else -> {
@@ -221,6 +251,46 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
             // Unbind AFTER exit calls complete so they still route through dashcam WiFi
             connectivityManager.bindProcessToNetwork(null)
             Log.i(TAG, "onLeave: process unbound from dashcam network")
+        }
+    }
+
+    // ── Allwinner live preview ──────────────────────────────────────────────
+
+    /**
+     * Switch the live preview to a different camera. Tears down the current
+     * rtp2p session and opens a new one for [camid] (0 = front, 1 = back).
+     */
+    fun switchAllwinnerCamera(camid: Int) {
+        val device = loadedDevice ?: return
+        if (device.protocol != ChipsetProtocol.ALLWINNER_V853) return
+        if ((_uiState.value as? LiveUiState.AllwinnerLive)?.camid == camid) return
+        allwinnerLiveJob?.cancel()
+        allwinnerLiveRepo.stop()
+        _uiState.value = LiveUiState.AllwinnerLive(camid = camid, buffering = true)
+        startAllwinnerLive(camid)
+    }
+
+    private fun startAllwinnerLive(camid: Int) {
+        val device = loadedDevice ?: return
+        val ip = device.protocol.deviceIp
+        allwinnerLiveJob?.cancel()
+        allwinnerLiveJob = viewModelScope.launch {
+            val ok = allwinnerLiveRepo.stream(
+                deviceIp = ip,
+                camid = camid,
+                onBuffered = { uri ->
+                    val cur = _uiState.value
+                    if (cur is LiveUiState.AllwinnerLive && cur.camid == camid) {
+                        _uiState.value = cur.copy(localFileUri = uri, buffering = false)
+                    }
+                },
+            )
+            if (!ok) {
+                val cur = _uiState.value
+                if (cur is LiveUiState.AllwinnerLive && cur.camid == camid) {
+                    _uiState.value = cur.copy(buffering = false, failed = true)
+                }
+            }
         }
     }
 

@@ -75,9 +75,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import com.example.trafykamerasikotlin.R
+import com.example.trafykamerasikotlin.data.media.rememberDashcamImageLoader
 import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.MediaFile
@@ -198,6 +200,11 @@ fun MediaScreen(
             .windowInsetsPadding(WindowInsets.statusBars)
     ) {
         val aiOverlayEnabled by viewModel.aiOverlayEnabled.collectAsStateWithLifecycle()
+        // Coil ImageLoader pinned to the dashcam Wi-Fi network so HiDVR /
+        // Easytech style remote thumbnails (`http://192.168.x.x/...thm`) can
+        // actually be reached. Without this, Coil's default loader would
+        // route via cellular and 404 on every fetch.
+        val dashcamImageLoader = rememberDashcamImageLoader(network)
 
         Text(
             text     = stringResource(R.string.media_title),
@@ -273,6 +280,7 @@ fun MediaScreen(
                         downloadProgress  = downloadProgress,
                         aiOverlayOn       = aiOverlayEnabled,
                         onToggleAi        = { viewModel.setAiOverlay(it) },
+                        imageLoader       = dashcamImageLoader,
                         onPlay            = { viewModel.playFile(it) },
                         onPlayAllwinner   = { viewModel.startAllwinnerStream(it) },
                         onPlayInApp       = { url -> inAppVideoUrl = url },
@@ -578,6 +586,7 @@ private fun MediaGrid(
     downloadProgress: Map<String, DownloadState>,
     aiOverlayOn: Boolean,
     onToggleAi: (Boolean) -> Unit,
+    imageLoader: ImageLoader,
     onPlay: (MediaFile) -> Unit,
     onPlayAllwinner: (MediaFile) -> Unit,
     onPlayInApp: (String) -> Unit,
@@ -601,6 +610,7 @@ private fun MediaGrid(
                 file          = file,
                 isDownloading = downloading.contains(file.name),
                 downloadState = downloadProgress[file.name],
+                imageLoader   = imageLoader,
                 onClick       = { actionTarget = file }
             )
         }
@@ -822,6 +832,7 @@ private fun MediaFileCard(
     file: MediaFile,
     isDownloading: Boolean,
     downloadState: DownloadState?,  // null = non-GP or not downloading; non-null = GP progress
+    imageLoader: ImageLoader,
     onClick: () -> Unit,
 ) {
     Card(
@@ -839,6 +850,7 @@ private fun MediaFileCard(
                 model             = file.thumbnailUrl,
                 contentDescription = null,
                 contentScale      = ContentScale.Crop,
+                imageLoader       = imageLoader,
                 modifier          = Modifier.fillMaxSize(),
                 loading = {
                     Box(

@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <external-files-path name="updates" path="updates/" />
+    <!-- Public Downloads folder so we can hand off Video AI output to a
+         player via Intent.ACTION_VIEW with a FileProvider content URI. -->
+    <external-path name="downloads" path="Download/" />
 </paths>

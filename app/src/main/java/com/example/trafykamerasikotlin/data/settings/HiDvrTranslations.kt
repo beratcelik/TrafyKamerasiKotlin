@@ -25,18 +25,65 @@ object HiDvrTranslations {
 
     @StringRes
     private val TITLE_RES = mapOf(
-        "MEDIAMODE"         to R.string.hidvr_title_mediamode,
-        "AUDIO"             to R.string.hidvr_title_audio,
-        "format"            to R.string.hidvr_title_format,
-        "reset.cgi?"        to R.string.hidvr_title_reset,
-        "getwifi.cgi?"      to R.string.hidvr_title_wifi_settings,
-        "Rec_Split_Time"    to R.string.hidvr_title_rec_split_time,
-        "GSR_SENSITIVITY"   to R.string.hidvr_title_gsr_sensitivity,
-        "GSR_PARKING"       to R.string.hidvr_title_gsr_parking,
-        "LOW_POWER_PROTECT" to R.string.hidvr_title_low_power_protect,
-        "VOLUME"            to R.string.hidvr_title_volume,
-        "FLIP"              to R.string.hidvr_title_flip,
-        "MIRROR"            to R.string.hidvr_title_mirror,
+        "MEDIAMODE"          to R.string.hidvr_title_mediamode,
+        "AUDIO"              to R.string.hidvr_title_audio,
+        "format"             to R.string.hidvr_title_format,
+        "reset.cgi?"         to R.string.hidvr_title_reset,
+        "getwifi.cgi?"       to R.string.hidvr_title_wifi_settings,
+        "Rec_Split_Time"     to R.string.hidvr_title_rec_split_time,
+        "GSR_SENSITIVITY"    to R.string.hidvr_title_gsr_sensitivity,
+        "GSR_PARKING"        to R.string.hidvr_title_gsr_parking,
+        "LOW_POWER_PROTECT"  to R.string.hidvr_title_low_power_protect,
+        "VOLUME"             to R.string.hidvr_title_volume,
+        "FLIP"               to R.string.hidvr_title_flip,
+        "MIRROR"             to R.string.hidvr_title_mirror,
+        // Migrated from legacy English-only TITLES map:
+        "ENC_PAYLOAD_TYPE"   to R.string.hidvr_title_enc_payload_type,
+        "MD_SENSITIVITY"     to R.string.hidvr_title_md_sensitivity,
+        "SCREEN_DORMANT"     to R.string.hidvr_title_screen_dormant,
+        "LOW_FPS_REC"        to R.string.hidvr_title_low_fps_rec,
+        "LOW_FPS_REC_TIME"   to R.string.hidvr_title_low_fps_rec_time,
+        "ENABLEWATERMARK"    to R.string.hidvr_title_enable_watermark,
+        "WATERMARKID"        to R.string.hidvr_title_watermark_id,
+        "ADAS_EN"            to R.string.hidvr_title_adas_en,
+        "AUTO_POWEROFF"      to R.string.hidvr_title_auto_poweroff,
+        "SPEECH"             to R.string.hidvr_title_speech,
+        "SPEED_UNIT"         to R.string.hidvr_title_speed_unit,
+        "UTC"                to R.string.hidvr_title_utc,
+        "getwifissid.cgi?"   to R.string.hidvr_title_change_wifi_password,
+        "getdeviceattr.cgi?" to R.string.hidvr_title_about_camera,
+        "devlog"             to R.string.hidvr_title_export_logs,
+        "PAR_SUR_VID"        to R.string.hidvr_title_par_sur_vid,
+        "BACK_REC"           to R.string.hidvr_title_back_rec,
+        "OSD"                to R.string.hidvr_title_osd,
+        "LDC"                to R.string.hidvr_title_ldc,
+        "TIME_OSD"           to R.string.hidvr_title_time_osd,
+        "SENSITIVITY"        to R.string.hidvr_title_sensitivity,
+    )
+
+    /** Optional one-line explanations for non-obvious settings. */
+    @StringRes
+    private val DESC_RES = mapOf(
+        "Rec_Split_Time"     to R.string.hidvr_desc_rec_split_time,
+        "GSR_SENSITIVITY"    to R.string.hidvr_desc_gsr_sensitivity,
+        "GSR_PARKING"        to R.string.hidvr_desc_gsr_parking,
+        "LOW_POWER_PROTECT"  to R.string.hidvr_desc_low_power_protect,
+        "ENC_PAYLOAD_TYPE"   to R.string.hidvr_desc_enc_payload_type,
+        "MD_SENSITIVITY"     to R.string.hidvr_desc_md_sensitivity,
+        "SCREEN_DORMANT"     to R.string.hidvr_desc_screen_dormant,
+        "LOW_FPS_REC"        to R.string.hidvr_desc_low_fps_rec,
+        "LOW_FPS_REC_TIME"   to R.string.hidvr_desc_low_fps_rec_time,
+        "ENABLEWATERMARK"    to R.string.hidvr_desc_enable_watermark,
+        "ADAS_EN"            to R.string.hidvr_desc_adas_en,
+        "AUTO_POWEROFF"      to R.string.hidvr_desc_auto_poweroff,
+        "PAR_SUR_VID"        to R.string.hidvr_desc_par_sur_vid,
+        "LDC"                to R.string.hidvr_desc_ldc,
+        "TIME_OSD"           to R.string.hidvr_desc_time_osd,
+        "MIRROR"             to R.string.hidvr_desc_mirror,
+        "FLIP"               to R.string.hidvr_desc_flip,
+        "SPEECH"             to R.string.hidvr_desc_speech,
+        "format"             to R.string.hidvr_desc_format,
+        "reset.cgi?"         to R.string.hidvr_desc_reset,
     )
 
     @StringRes
@@ -64,6 +111,23 @@ object HiDvrTranslations {
         ("ENABLEWATERMARK"  to "1") to R.string.hidvr_opt_on,
         ("LOW_FPS_REC"      to "0") to R.string.hidvr_opt_off,
         ("LOW_FPS_REC"      to "1") to R.string.hidvr_opt_on,
+        // SPEECH is a language picker, not on/off. Default firmware ships
+        // with value 2 (Chinese). Confirmed values from log probing: 0/1/2
+        // accepted by setcommparam. If the firmware ever flips the
+        // English/Chinese mapping, swap the two res entries below.
+        ("SPEECH"           to "0") to R.string.hidvr_opt_off,
+        ("SPEECH"           to "1") to R.string.hidvr_opt_speech_english,
+        ("SPEECH"           to "2") to R.string.hidvr_opt_speech_chinese,
+        ("ADAS_EN"          to "0") to R.string.hidvr_opt_off,
+        ("ADAS_EN"          to "1") to R.string.hidvr_opt_on,
+        ("OSD"              to "0") to R.string.hidvr_opt_off,
+        ("OSD"              to "1") to R.string.hidvr_opt_on,
+        ("LDC"              to "0") to R.string.hidvr_opt_off,
+        ("LDC"              to "1") to R.string.hidvr_opt_on,
+        ("TIME_OSD"         to "0") to R.string.hidvr_opt_off,
+        ("TIME_OSD"         to "1") to R.string.hidvr_opt_on,
+        ("BACK_REC"         to "0") to R.string.hidvr_opt_off,
+        ("BACK_REC"         to "1") to R.string.hidvr_opt_on,
         ("GSR_PARKING"      to "0") to R.string.hidvr_opt_off,
         ("GSR_PARKING"      to "1") to R.string.hidvr_opt_on,
         // Four-level sensitivity ladders
@@ -87,75 +151,29 @@ object HiDvrTranslations {
     // (e.g. "1", "2") is parsed as an integer and plugged into the format string.
     private val MINUTES_FMT_CONTEXTS = setOf("Rec_Split_Time")
 
-    // ── Legacy hardcoded English maps (fallback) ───────────────────────────
-    //
-    // Anything not migrated to the *_RES maps above still resolves via these
-    // English strings. Incremental migration: move an entry up, delete it here.
-
-    private val TITLES = mapOf(
-        "ENC_PAYLOAD_TYPE"  to "Video Codec",
-        "MD_SENSITIVITY"    to "Motion Detection",
-        "SCREEN_DORMANT"    to "Screen Sleep",
-        "LOW_FPS_REC"       to "Low-Speed Recording",
-        "LOW_FPS_REC_TIME"  to "Low-Speed Duration",
-        "ENABLEWATERMARK"   to "Watermark",
-        "WATERMARKID"       to "Watermark ID",
-        "ADAS_EN"           to "ADAS",
-        "AUTO_POWEROFF"     to "Auto Power Off",
-        "SPEECH"            to "Voice Control",
-        "SPEED_UNIT"        to "Speed Unit",
-        "UTC"               to "Time Zone",
-        "getwifissid.cgi?"  to "Change Wi-Fi Password",
-        "getdeviceattr.cgi?" to "About Camera",
-        "devlog"            to "Export Logs",
-        "PAR_SUR_VID"       to "Parking Surveillance",
-        "BACK_REC"          to "Rear Camera",
-        "OSD"               to "OSD Display",
-        "LDC"               to "Lens Distortion Correction",
-        "TIME_OSD"          to "Timestamp Overlay",
-        "SENSITIVITY"       to "Sensitivity",
-    )
-
-    private val GENERIC_OPTIONS = mapOf(
-        "NONE"    to "None",
-        // Codecs
-        "H264"    to "H.264",
-        "H265"    to "H.265",
-        "H.264"   to "H.264",
-        "H.265"   to "H.265",
-        // Speed
-        "KMH"     to "km/h",
-        "MPH"     to "mph",
-        // Parking rec
-        "PAR"     to "Parking",
-        "LPR"     to "Low-Power Rec",
-        // Time durations — pretty-printed
-        "1MIN"  to "1 min",  "2MIN"  to "2 min",  "3MIN"  to "3 min",
-        "4MIN"  to "4 min",  "5MIN"  to "5 min",  "6MIN"  to "6 min",
-        "7MIN"  to "7 min",  "8MIN"  to "8 min",  "9MIN"  to "9 min",
-        "10MIN" to "10 min", "15MIN" to "15 min",
-        "1H"    to "1 h",    "2H"    to "2 h",    "3H"    to "3 h",
-        "4H"    to "4 h",    "5H"    to "5 h",    "6H"    to "6 h",
-        "7H"    to "7 h",    "8H"    to "8 h",    "9H"    to "9 h",
-        "10H"   to "10 h",   "11H"   to "11 h",   "12H"   to "12 h",
-        "24H"   to "24 h",   "48H"   to "48 h",
-        // Voltage
+    /**
+     * Locale-neutral option labels. These are units / codec names / voltage
+     * readings that mean the same thing in every language so we don't put
+     * them in strings.xml.
+     */
+    private val NEUTRAL_OPTIONS = mapOf(
+        "H264" to "H.264", "H265" to "H.265",
+        "H.264" to "H.264", "H.265" to "H.265",
+        "KMH" to "km/h", "MPH" to "mph",
         "11.8V" to "11.8 V", "12.0V" to "12.0 V", "12.2V" to "12.2 V",
     )
 
-    private val CONTEXT_OPTIONS = mapOf(
-        ("LOW_FPS_REC_TIME" to "0") to "30 s",
-        ("LOW_FPS_REC_TIME" to "1") to "1 min",
-        ("LOW_FPS_REC_TIME" to "2") to "2 min",
-        ("LOW_FPS_REC_TIME" to "3") to "3 min",
+    /** Numeric duration ids — formatted via [hidvr_opt_minutes_fmt]/_hours_fmt. */
+    private val MIN_OPTIONS = (1..15).associate { "${it}MIN" to it }
+    private val HOUR_OPTIONS = (listOf(1..12) + listOf(listOf(24, 48))).flatten()
+        .associate { "${it}H" to it }
+
+    /** Static voltage / codec context entries that aren't locale-sensitive. */
+    private val NEUTRAL_CONTEXT_OPTIONS = mapOf(
         ("LOW_POWER_PROTECT" to "1") to "11.8 V",
         ("LOW_POWER_PROTECT" to "2") to "12.0 V",
-        ("SCREEN_DORMANT" to "0") to "Never",
-        ("SCREEN_DORMANT" to "1") to "1 min",
-        ("SCREEN_DORMANT" to "2") to "3 min",
-        ("SCREEN_DORMANT" to "3") to "5 min",
-        ("ENC_PAYLOAD_TYPE" to "0") to "H.264",
-        ("ENC_PAYLOAD_TYPE" to "1") to "H.265",
+        ("ENC_PAYLOAD_TYPE"  to "0") to "H.264",
+        ("ENC_PAYLOAD_TYPE"  to "1") to "H.265",
     )
 
     // ── Public API ─────────────────────────────────────────────────────────
@@ -163,14 +181,17 @@ object HiDvrTranslations {
     /** Returns a localized title for the given menu key, or the fallback. */
     fun title(ctx: Context, key: String, fallback: String): String {
         TITLE_RES[key]?.let { return ctx.getString(it) }
-        TITLES[key]?.let { return it }
         return fallback
     }
 
+    /** Returns a localized one-line description for [key], or null if none. */
+    fun description(ctx: Context, key: String): String? =
+        DESC_RES[key]?.let { ctx.getString(it) }
+
     /**
      * Returns a localized label for an option.
-     * Priority: context-specific resource > generic resource > minutes format
-     *   > legacy context map > legacy generic map > raw ASCII id > entry id.
+     * Priority: context-specific resource → generic resource → minutes/hours
+     *   format → neutral (codec/voltage) → MEDIAMODE normalisation → fallback.
      */
     fun optionLabel(ctx: Context, menuKey: String, entryId: String, fallback: String): String {
         CONTEXT_OPTION_RES[menuKey to entryId]?.let { return ctx.getString(it) }
@@ -178,8 +199,31 @@ object HiDvrTranslations {
         if (menuKey in MINUTES_FMT_CONTEXTS) {
             entryId.toIntOrNull()?.let { return ctx.getString(R.string.hidvr_opt_minutes_fmt, it) }
         }
-        CONTEXT_OPTIONS[menuKey to entryId]?.let { return it }
-        GENERIC_OPTIONS[entryId]?.let { return it }
+        // Newer firmware contexts that map an integer entry id to a duration.
+        when (menuKey) {
+            "LOW_FPS_REC_TIME" -> when (entryId) {
+                "0" -> return ctx.getString(R.string.hidvr_opt_seconds_fmt, 30)
+                "1" -> return ctx.getString(R.string.hidvr_opt_minutes_fmt, 1)
+                "2" -> return ctx.getString(R.string.hidvr_opt_minutes_fmt, 2)
+                "3" -> return ctx.getString(R.string.hidvr_opt_minutes_fmt, 3)
+            }
+            "SCREEN_DORMANT" -> when (entryId) {
+                "0" -> return ctx.getString(R.string.hidvr_opt_never)
+                "1" -> return ctx.getString(R.string.hidvr_opt_minutes_fmt, 1)
+                "2" -> return ctx.getString(R.string.hidvr_opt_minutes_fmt, 3)
+                "3" -> return ctx.getString(R.string.hidvr_opt_minutes_fmt, 5)
+            }
+        }
+        // Symbolic ASCII ids: codecs, units, parking modes, durations.
+        when (entryId) {
+            "NONE" -> return ctx.getString(R.string.hidvr_opt_none)
+            "PAR"  -> return ctx.getString(R.string.hidvr_opt_parking)
+            "LPR"  -> return ctx.getString(R.string.hidvr_opt_low_power_rec)
+        }
+        MIN_OPTIONS[entryId]?.let { return ctx.getString(R.string.hidvr_opt_minutes_fmt, it) }
+        HOUR_OPTIONS[entryId]?.let { return ctx.getString(R.string.hidvr_opt_hours_fmt, it) }
+        NEUTRAL_OPTIONS[entryId]?.let { return it }
+        NEUTRAL_CONTEXT_OPTIONS[menuKey to entryId]?.let { return it }
         val asciiFallback = if (fallback.all { it.code < 128 }) fallback else entryId
         return if (menuKey == "MEDIAMODE") normalizeMediamode(asciiFallback) else asciiFallback
     }

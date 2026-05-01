@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.trafykamerasikotlin.data.model.MediaFile
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Fetches, deletes and controls recording for HiSilicon (HiDVR) dashcam media files.
@@ -207,7 +208,11 @@ class HiDvrMediaRepository {
         sdDir: String,
         isPhoto: Boolean,
         cameraHint: String? = null,
-    ): List<MediaFile> {
+    ): List<MediaFile> = CamHttpGate.mutex.withLock {
+        // Hold the cam HTTP gate for the full count+list sequence. Without
+        // this, an in-flight thumbnail MMR stream saturates the cam's two
+        // HTTP slots and the listing's TCP connect attempts time out
+        // (`Failed to connect to /192.168.0.1:80`) → user sees empty Media.
         val base = "http://$deviceIp$CGI"
 
         // Step 1: get count AND tell the camera which directory we want
@@ -221,10 +226,26 @@ class HiDvrMediaRepository {
         if (count <= 0) return emptyList()
 
         // Step 2: list files — getdirfilelist.cgi uses -dir + 0-based inclusive end index
-        val listBody = DashcamHttpClient.get("$base/getdirfilelist.cgi?&-dir=$sdDir&-start=0&-end=${count - 1}")
+        val listUrl = "$base/getdirfilelist.cgi?&-dir=$sdDir&-start=0&-end=${count - 1}"
+        var listBody = DashcamHttpClient.get(listUrl)
+        // The G3518 firmware sometimes returns 200 with an empty body under
+        // stress (e.g. shortly after several parallel range requests). It's a
+        // transient cam-side hiccup — retry once with a small backoff before
+        // giving up. Without this, the user sees "0 videos" for a cam that
+        // clearly has files (count > 0).
+        if (listBody.isNullOrBlank() && count > 0) {
+            Log.w(TAG, "getfilelist returned empty body for $sdDir despite count=$count — retrying after 600ms")
+            kotlinx.coroutines.delay(600)
+            listBody = DashcamHttpClient.get(listUrl)
+        }
         if (listBody == null) {
             Log.w(TAG, "getfilelist failed for $sdDir")
             return emptyList()
+        }
+        if (listBody.isBlank() && count > 0) {
+            // Surface as an error to the caller so the UI shows "retry" instead
+            // of pretending the SD card is empty.
+            throw RuntimeException("Camera returned an empty file list for $sdDir despite reporting $count files. Probably overloaded — try again in a few seconds.")
         }
 
         return parseSemicolonList(listBody)
@@ -232,8 +253,12 @@ class HiDvrMediaRepository {
             .map { path ->
                 // Camera returns paths like "sd//norm/file.MP4" — prepend "/" for HTTP
                 val httpUrl      = "http://$deviceIp/$path"
+                // Trafy Uno Pro / G3518 firmware doesn't generate `.thm`
+                // sidecars (probed → 404). Route video thumbnails through
+                // the client-side frame-extraction fetcher; photos use their
+                // own URL since they ARE images.
                 val thumbnailUrl = if (isPhoto) httpUrl
-                                   else "http://$deviceIp/${path.substringBeforeLast('.')}.thm"
+                                   else HiDvrThumbnailFetcher.urlFor(deviceIp, path)
                 MediaFile(
                     path         = path,
                     httpUrl      = httpUrl,

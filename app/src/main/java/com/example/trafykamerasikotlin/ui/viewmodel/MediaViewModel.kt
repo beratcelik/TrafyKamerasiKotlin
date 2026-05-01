@@ -456,12 +456,14 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         onProgress: (received: Long, total: Long) -> Unit,
     ) = withContext(Dispatchers.IO) {
         val body = DashcamHttpClient.openStream(url) ?: throw Exception("Failed to open stream")
+        var received = 0L
+        var total = -1L
         body.use { responseBody ->
-            val total = responseBody.contentLength()  // -1 if unknown
+            total = responseBody.contentLength()  // -1 if unknown
+            Log.i(TAG, "httpDownloadToFile: Content-Length=$total")
             val input  = responseBody.byteStream()
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
             outFile.outputStream().use { output ->
-                var received = 0L
                 var n: Int
                 while (input.read(buffer).also { n = it } != -1) {
                     ensureActive()
@@ -470,6 +472,16 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                     onProgress(received, total)
                 }
             }
+        }
+        Log.i(TAG, "httpDownloadToFile: received=$received bytes, file=${outFile.length()}")
+        // If the server advertised a content length and we got less, the cam
+        // dropped the connection mid-stream — common on G3518 firmware when
+        // it's also serving thumbnails or recording. The truncated MP4 has
+        // valid moov but missing mdat trailing data, which causes the offline
+        // processor's decoder to hit EOS after a handful of frames and write
+        // a 0-second output. Surface as an error so the user can retry.
+        if (total > 0 && received < total) {
+            throw Exception("Download truncated: got $received of $total bytes — camera likely dropped the connection. Try again.")
         }
     }
 

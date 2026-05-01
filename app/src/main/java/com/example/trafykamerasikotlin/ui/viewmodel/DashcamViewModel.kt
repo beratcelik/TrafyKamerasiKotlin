@@ -9,11 +9,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.trafykamerasikotlin.data.handshake.DashcamHandshakeManager
-import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.FailureReason
 import com.example.trafykamerasikotlin.data.model.HandshakeResult
-import com.example.trafykamerasikotlin.data.settings.GeneralplusSettingsRepository
 import com.example.trafykamerasikotlin.data.allwinner.AllwinnerNetwork
 import com.example.trafykamerasikotlin.data.allwinner.AllwinnerSessionHolder
 import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
@@ -214,24 +212,6 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                 Log.i(TAG, "Handshake SUCCESS: ${result.deviceInfo}")
                 _uiState.update { DashcamUiState.Connected(result.deviceInfo) }
                 wifiManager.startWatchingConnection(network) { onConnectionLost() }
-                // Rebrand the cam's Wi-Fi to Trafy_<suffix> on first pair when
-                // the SSID still matches a factory-default pattern (CarDV_*,
-                // A19_*, HiCV_*, DVR_*). The cam doesn't restart its radio
-                // automatically, so the new name appears on the air only
-                // after the next natural power-cycle (e.g. car ignition off /
-                // on). Auto-reconnect picks up either form ("trafy" is in the
-                // scan keywords). Idempotent: skipped if SSID is already a
-                // user-customized or already-rebranded name.
-                if (result.deviceInfo.protocol == ChipsetProtocol.GENERALPLUS) {
-                    viewModelScope.launch {
-                        try {
-                            GeneralplusSettingsRepository(getApplication())
-                                .rebrandSsidIfDefault(result.deviceInfo.protocol.deviceIp)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "rebrandSsidIfDefault failed: ${e.message}")
-                        }
-                    }
-                }
             }
             is HandshakeResult.Failure -> {
                 Log.e(TAG, "Handshake FAILURE: ${result.reason}")

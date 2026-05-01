@@ -99,4 +99,5 @@ object DashcamHttpClient {
             null
         }
     }
+
 }

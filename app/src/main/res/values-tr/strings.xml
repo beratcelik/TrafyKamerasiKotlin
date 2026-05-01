@@ -147,7 +147,7 @@
     <!-- HiDVR cihaz ayarları — prototip çevirileri. Burada tanımlı anahtarlar
          HiDvrTranslations.kt içindeki sabit İngilizce haritaya üstün gelir. -->
     <string name="hidvr_title_mediamode">Video Çözünürlüğü</string>
-    <string name="hidvr_title_audio">Ses</string>
+    <string name="hidvr_title_audio">Ses Kaydı</string>
     <string name="hidvr_title_format">SD Kartı Formatla</string>
     <string name="hidvr_title_reset">Fabrika Ayarlarına Dön</string>
     <string name="hidvr_title_wifi_settings">Wi-Fi Ayarları</string>
@@ -155,9 +155,9 @@
     <string name="hidvr_title_gsr_sensitivity">G-Sensör Hassasiyeti</string>
     <string name="hidvr_title_gsr_parking">Park Modu</string>
     <string name="hidvr_title_low_power_protect">Düşük Voltaj Koruması</string>
-    <string name="hidvr_title_volume">Ses Seviyesi</string>
+    <string name="hidvr_title_volume">Hoparlör Sesi</string>
     <string name="hidvr_title_flip">Ters Çevir</string>
-    <string name="hidvr_title_mirror">Aynala</string>
+    <string name="hidvr_title_mirror">Ayna Görüntüsü</string>
 
     <string name="hidvr_opt_on">Açık</string>
     <string name="hidvr_opt_off">Kapalı</string>
@@ -167,6 +167,59 @@
     <string name="hidvr_opt_mute">Sessiz</string>
 
     <string name="hidvr_opt_minutes_fmt">%1$d dk</string>
+    <string name="hidvr_opt_hours_fmt">%1$d sa</string>
+    <string name="hidvr_opt_seconds_fmt">%1$d sn</string>
+    <string name="hidvr_opt_none">Yok</string>
+    <string name="hidvr_opt_never">Hiçbir zaman</string>
+    <string name="hidvr_opt_parking">Park modu</string>
+    <string name="hidvr_opt_low_power_rec">Düşük güç kaydı</string>
+    <string name="hidvr_opt_speech_english">İngilizce</string>
+    <string name="hidvr_opt_speech_chinese">Çince</string>
+
+    <!-- Trafy Uno Pro (HiSilicon DVR) — yeni yerelleştirilen başlıklar -->
+    <string name="hidvr_title_enc_payload_type">Video Codec</string>
+    <string name="hidvr_title_md_sensitivity">Hareket Algılama</string>
+    <string name="hidvr_title_screen_dormant">Ekran Uykusu</string>
+    <string name="hidvr_title_low_fps_rec">Düşük Hızda Kayıt</string>
+    <string name="hidvr_title_low_fps_rec_time">Düşük Hız Süresi</string>
+    <string name="hidvr_title_enable_watermark">Filigran</string>
+    <string name="hidvr_title_watermark_id">Filigran Metni</string>
+    <string name="hidvr_title_adas_en">ADAS Sürüş Desteği</string>
+    <string name="hidvr_title_auto_poweroff">Otomatik Kapanma</string>
+    <string name="hidvr_title_speech">Sesli Komut</string>
+    <string name="hidvr_title_speed_unit">Hız Birimi</string>
+    <string name="hidvr_title_utc">Saat Dilimi</string>
+    <string name="hidvr_title_change_wifi_password">Wi-Fi Parolasını Değiştir</string>
+    <string name="hidvr_title_about_camera">Kamera Hakkında</string>
+    <string name="hidvr_title_export_logs">Günlükleri Dışa Aktar</string>
+    <string name="hidvr_title_par_sur_vid">Park Modu Gözetim</string>
+    <string name="hidvr_title_back_rec">Arka Kamera</string>
+    <string name="hidvr_title_osd">Ekran Bilgileri</string>
+    <string name="hidvr_title_ldc">Lens Bozulma Düzeltmesi</string>
+    <string name="hidvr_title_time_osd">Tarih/Saat Damgası</string>
+    <string name="hidvr_title_sensitivity">Hassasiyet</string>
+
+    <!-- Trafy Uno Pro (HiSilicon DVR) — açıklamalar (yalnızca adından anlaşılmayanlar) -->
+    <string name="hidvr_desc_rec_split_time">Her video parçasının uzunluğu; SD kart dolduğunda en eski parça otomatik silinir.</string>
+    <string name="hidvr_desc_gsr_sensitivity">Darbe algılandığında o anki kayıt korumaya alınır; tetikleme hassasiyetini belirler.</string>
+    <string name="hidvr_desc_gsr_parking">Park halindeyken darbe algılandığında otomatik kayıt başlatır.</string>
+    <string name="hidvr_desc_low_power_protect">Aracın aküsü belirlenen voltajın altına düştüğünde kamera kapanarak akünün korunmasını sağlar.</string>
+    <string name="hidvr_desc_enc_payload_type">H.265 daha küçük dosya üretir ama bazı oynatıcılarla uyumsuz olabilir.</string>
+    <string name="hidvr_desc_md_sensitivity">Kameranın önünde hareket algılandığında otomatik kayıt başlatır.</string>
+    <string name="hidvr_desc_screen_dormant">Belirlenen süre dokunulmazsa kameranın kendi ekranı uykuya geçer.</string>
+    <string name="hidvr_desc_low_fps_rec">Araç yavaş ilerlerken düşük kare hızıyla kayıt yaparak SD karttan tasarruf sağlar.</string>
+    <string name="hidvr_desc_low_fps_rec_time">Düşük kare hızında kalma süresi sınırı.</string>
+    <string name="hidvr_desc_enable_watermark">Belirlenen metni video üzerine yerleştirir.</string>
+    <string name="hidvr_desc_adas_en">Sürüş destek sistemi: şerit takibi ve ön araç mesafesi uyarısı.</string>
+    <string name="hidvr_desc_auto_poweroff">Belirlenen süre aktivite olmazsa kamera otomatik kapanır.</string>
+    <string name="hidvr_desc_par_sur_vid">Araç park halindeyken hareket veya darbe algılandığında otomatik kayıt başlatır.</string>
+    <string name="hidvr_desc_ldc">Geniş açı lensin balıkgözü bozulmasını yazılımsal olarak düzeltir.</string>
+    <string name="hidvr_desc_time_osd">Tarih ve saati video üzerine kaydeder.</string>
+    <string name="hidvr_desc_mirror">Görüntüyü ayna görüntüsü gibi yatay olarak ters çevirir. Araç içine yerleştirilen kameralarda dış manzaranın doğru yönde görünmesi için kullanılır.</string>
+    <string name="hidvr_desc_flip">Görüntüyü baş aşağı çevirir. Kamera tavana ters monte edildiyse görüntünün doğru yönde olması için kullanın.</string>
+    <string name="hidvr_desc_speech">Sesli komutlarla kamerayı kontrol etmenizi sağlar. İngilizce seçilirse kamera \"Take a picture\" (fotoğraf çek), \"Start recording\" (kayıt başlat) ve \"Stop recording\" (kayıt durdur) gibi komutları algılar.</string>
+    <string name="hidvr_desc_format">Karttaki tüm içerik silinir. Bu işlem geri alınamaz.</string>
+    <string name="hidvr_desc_reset">Tüm kamera ayarlarını varsayılan değerlerine geri döndürür.</string>
 
     <!-- Uygulama güncellemeleri -->
     <string name="settings_section_app">Uygulama</string>
@@ -229,6 +282,8 @@
     <string name="video_ai_state_picked_hint">Başlamak için Başlat\'a dokunun. Uzun videolarda birkaç dakika sürebilir.</string>
     <string name="video_ai_state_working_fmt">İşleniyor %1$s — %%%2$d (%3$d / %4$d kare)</string>
     <string name="video_ai_state_done_fmt">Tamam. %1$s (%2$d kare) İndirilenler\'e kaydedildi.</string>
+    <string name="video_ai_open_video">Videoyu Aç</string>
+    <string name="video_ai_open_failed">Bu videoyu oynatabilecek bir uygulama bulunamadı.</string>
     <string name="video_ai_state_failed_fmt">Başarısız: %1$s</string>
 
     <!-- Görüntü Hata Ayıklama — Canlı -->

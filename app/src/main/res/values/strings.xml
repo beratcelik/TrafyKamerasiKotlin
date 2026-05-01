@@ -148,7 +148,7 @@
          over the hardcoded English map in HiDvrTranslations.kt. Extend by adding a
          res entry below, then registering the mapping in HiDvrTranslations. -->
     <string name="hidvr_title_mediamode">Video Resolution</string>
-    <string name="hidvr_title_audio">Audio</string>
+    <string name="hidvr_title_audio">Audio Recording</string>
     <string name="hidvr_title_format">Format SD Card</string>
     <string name="hidvr_title_reset">Restore Factory Settings</string>
     <string name="hidvr_title_wifi_settings">Wi-Fi Settings</string>
@@ -156,7 +156,7 @@
     <string name="hidvr_title_gsr_sensitivity">G-Sensor Sensitivity</string>
     <string name="hidvr_title_gsr_parking">Parking Mode</string>
     <string name="hidvr_title_low_power_protect">Low Voltage Protection</string>
-    <string name="hidvr_title_volume">Volume</string>
+    <string name="hidvr_title_volume">Speaker Volume</string>
     <string name="hidvr_title_flip">Flip</string>
     <string name="hidvr_title_mirror">Mirror</string>
 
@@ -168,6 +168,59 @@
     <string name="hidvr_opt_mute">Mute</string>
 
     <string name="hidvr_opt_minutes_fmt">%1$d min</string>
+    <string name="hidvr_opt_hours_fmt">%1$d h</string>
+    <string name="hidvr_opt_seconds_fmt">%1$d s</string>
+    <string name="hidvr_opt_none">None</string>
+    <string name="hidvr_opt_never">Never</string>
+    <string name="hidvr_opt_parking">Parking</string>
+    <string name="hidvr_opt_low_power_rec">Low-Power Rec</string>
+    <string name="hidvr_opt_speech_english">English</string>
+    <string name="hidvr_opt_speech_chinese">Chinese</string>
+
+    <!-- HiSilicon DVR (Trafy Uno Pro) — newly localized titles -->
+    <string name="hidvr_title_enc_payload_type">Video Codec</string>
+    <string name="hidvr_title_md_sensitivity">Motion Detection</string>
+    <string name="hidvr_title_screen_dormant">Screen Sleep</string>
+    <string name="hidvr_title_low_fps_rec">Low-Speed Recording</string>
+    <string name="hidvr_title_low_fps_rec_time">Low-Speed Duration</string>
+    <string name="hidvr_title_enable_watermark">Watermark</string>
+    <string name="hidvr_title_watermark_id">Watermark ID</string>
+    <string name="hidvr_title_adas_en">ADAS</string>
+    <string name="hidvr_title_auto_poweroff">Auto Power Off</string>
+    <string name="hidvr_title_speech">Voice Control</string>
+    <string name="hidvr_title_speed_unit">Speed Unit</string>
+    <string name="hidvr_title_utc">Time Zone</string>
+    <string name="hidvr_title_change_wifi_password">Change Wi-Fi Password</string>
+    <string name="hidvr_title_about_camera">About Camera</string>
+    <string name="hidvr_title_export_logs">Export Logs</string>
+    <string name="hidvr_title_par_sur_vid">Parking Surveillance</string>
+    <string name="hidvr_title_back_rec">Rear Camera</string>
+    <string name="hidvr_title_osd">OSD Display</string>
+    <string name="hidvr_title_ldc">Lens Distortion Correction</string>
+    <string name="hidvr_title_time_osd">Timestamp Overlay</string>
+    <string name="hidvr_title_sensitivity">Sensitivity</string>
+
+    <!-- HiSilicon DVR — descriptions for non-obvious settings -->
+    <string name="hidvr_desc_rec_split_time">Length of each video clip; the oldest is auto-deleted when the SD card fills up.</string>
+    <string name="hidvr_desc_gsr_sensitivity">Locks the current clip when an impact is detected; sets the trigger sensitivity.</string>
+    <string name="hidvr_desc_gsr_parking">Triggers a recording when an impact is detected while parked.</string>
+    <string name="hidvr_desc_low_power_protect">Shuts the camera off when the car battery drops below the chosen voltage so the engine still starts next morning.</string>
+    <string name="hidvr_desc_enc_payload_type">H.265 produces smaller files but may not play on every device.</string>
+    <string name="hidvr_desc_md_sensitivity">Starts a recording when motion is detected in front of the camera.</string>
+    <string name="hidvr_desc_screen_dormant">Turns off the camera\'s built-in screen after the chosen idle time.</string>
+    <string name="hidvr_desc_low_fps_rec">Records at low frame rate when the car is moving slowly to save SD space.</string>
+    <string name="hidvr_desc_low_fps_rec_time">How long the camera stays in low-frame-rate mode before reverting.</string>
+    <string name="hidvr_desc_enable_watermark">Burns the configured ID text onto the recorded video.</string>
+    <string name="hidvr_desc_adas_en">Driver-assist alerts: lane departure and front-vehicle distance.</string>
+    <string name="hidvr_desc_auto_poweroff">Camera turns off after the chosen idle period.</string>
+    <string name="hidvr_desc_par_sur_vid">Records automatically when motion or impact is detected while parked.</string>
+    <string name="hidvr_desc_ldc">Corrects the fisheye distortion of the wide-angle lens in software.</string>
+    <string name="hidvr_desc_time_osd">Burns the date and time onto the recorded video.</string>
+    <string name="hidvr_desc_mirror">Flips the image horizontally — like a mirror reflection. Useful for in-cabin cameras so the outside view appears the right way around.</string>
+    <string name="hidvr_desc_flip">Flips the image upside-down. Use this if the camera is mounted on the ceiling so the recorded view is right-side up.</string>
+    <string name="hidvr_desc_speech">Lets you control the camera with voice commands. With English selected the camera responds to phrases like \"Take a picture\", \"Start recording\" and \"Stop recording\".</string>
+    <string name="hidvr_desc_format">Erases everything on the SD card. This cannot be undone.</string>
+    <string name="hidvr_desc_reset">Resets all camera settings to their default values.</string>
 
     <!-- App updates -->
     <string name="settings_section_app">App</string>
@@ -230,6 +283,8 @@
     <string name="video_ai_state_picked_hint">Tap Start to process. Processing can take several minutes for long videos.</string>
     <string name="video_ai_state_working_fmt">Processing %1$s — %2$d%% (%3$d / %4$d frames)</string>
     <string name="video_ai_state_done_fmt">Done. Saved %1$s (%2$d frames) to Downloads.</string>
+    <string name="video_ai_open_video">Open Video</string>
+    <string name="video_ai_open_failed">No app found to play this video.</string>
     <string name="video_ai_state_failed_fmt">Failed: %1$s</string>
 
     <!-- Vision Debug — Live (Chunk 4) -->

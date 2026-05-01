@@ -16,16 +16,19 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.core.content.FileProvider
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -49,7 +52,13 @@ fun VideoAiProcessingScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) viewModel.onVideoPicked(uri)
+        // One-step flow: pick → state=Picked → immediately startProcessing.
+        // Both run on the main thread so by the time startProcessing reads
+        // _state.value it sees Picked and proceeds.
+        if (uri != null) {
+            viewModel.onVideoPicked(uri)
+            viewModel.startProcessing()
+        }
     }
 
     Column(
@@ -87,24 +96,14 @@ fun VideoAiProcessingScreen(
         }
 
         val working = state is UiState.Working
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
-                onClick = { picker.launch("video/*") },
-                enabled = !working,
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = ColorPrimary),
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(vertical = 12.dp),
-            ) { Text(stringResource(R.string.video_ai_pick), color = ColorTextPrimary) }
-
-            OutlinedButton(
-                onClick = { viewModel.startProcessing() },
-                enabled = state is UiState.Picked,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(vertical = 12.dp),
-            ) { Text(stringResource(R.string.video_ai_start), color = ColorTextPrimary) }
-        }
+        Button(
+            onClick = { picker.launch("video/*") },
+            enabled = !working,
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = ColorPrimary),
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(vertical = 12.dp),
+        ) { Text(stringResource(R.string.video_ai_pick), color = ColorTextPrimary) }
 
         StatusCard(state)
     }
@@ -112,6 +111,7 @@ fun VideoAiProcessingScreen(
 
 @Composable
 private fun StatusCard(state: UiState) {
+    val context = LocalContext.current
     Card(
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = ColorSurface),
@@ -155,12 +155,39 @@ private fun StatusCard(state: UiState) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                is UiState.Done -> Text(
-                    text  = stringResource(R.string.video_ai_state_done_fmt,
-                        state.outputFile.name, state.frameCount),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = ColorSuccess,
-                )
+                is UiState.Done -> {
+                    val openFailedMsg = stringResource(R.string.video_ai_open_failed)
+                    // The success message itself is the button — tap it to open
+                    // the AI-overlay video. Distinct success-green colour so it
+                    // doesn't blend with the primary "Pick Video" button above.
+                    Button(
+                        onClick = {
+                            val authority = "${context.packageName}.fileprovider"
+                            val uri = FileProvider.getUriForFile(context, authority, state.outputFile)
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "video/mp4")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            try {
+                                context.startActivity(intent)
+                            } catch (_: Exception) {
+                                Toast.makeText(context, openFailedMsg, Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = ColorSuccess),
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 12.dp, horizontal = 14.dp),
+                    ) {
+                        Text(
+                            text  = stringResource(R.string.video_ai_state_done_fmt,
+                                state.outputFile.name, state.frameCount),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = ColorTextPrimary,
+                        )
+                    }
+                }
                 is UiState.Failed -> Text(
                     text  = stringResource(R.string.video_ai_state_failed_fmt, state.message),
                     style = MaterialTheme.typography.bodyMedium,

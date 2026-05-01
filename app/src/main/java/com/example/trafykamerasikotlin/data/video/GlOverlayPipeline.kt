@@ -292,6 +292,12 @@ class GlOverlayPipeline(
      * back as an ARGB Bitmap. Caller owns the returned bitmap (must recycle
      * after inference). Uses a swizzled fragment shader so the byte order
      * matches Android Bitmap.ARGB_8888 on little-endian.
+     *
+     * Note: an earlier rewrite tried `swizzleRb = false` reasoning that
+     * Android's ARGB_8888 stores pixels as RGBA in memory (the "ARGB" name
+     * being only historical) — but on-device testing showed worse vehicle
+     * detection. Empirically the swizzle is what the YOLO inference path
+     * actually wants, so leave it on.
      */
     fun snapshotForInference(): Bitmap {
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, snapshotFboId)

@@ -80,8 +80,17 @@ fun HomeScreen(
     val isScanning      = uiState is DashcamUiState.ScanningWifi
     val availableNets   = (uiState as? DashcamUiState.WifiFound)?.networks ?: emptyList()
     val defaultDeviceName = stringResource(R.string.home_default_device_name)
-    val deviceName      = (uiState as? DashcamUiState.Connected)?.device?.protocol?.displayName
-        ?: defaultDeviceName
+    // Resolve the friendly Trafy product name from the device's `model`
+    // string (returned by getdeviceattr.cgi). Falls back to the chipset's
+    // generic name (e.g. "HiSilicon DVR") for unmapped Trafy SKUs — keeps
+    // unknown future hardware connectable while still showing a name.
+    val connectedDevice = (uiState as? DashcamUiState.Connected)?.device
+    val deviceName = connectedDevice?.let {
+        com.example.trafykamerasikotlin.data.model.TrafyModelIdentifier.displayName(
+            device   = it,
+            fallback = it.protocol.displayName,
+        )
+    } ?: defaultDeviceName
 
     Column(
         modifier = modifier

@@ -148,6 +148,7 @@ class HiDvrSettingsRepository(private val context: Context) {
                         currentValue      = "",
                         currentValueLabel = "",
                         options           = options,
+                        description       = HiDvrTranslations.description(context, key),
                     )
                 }
             }
@@ -160,6 +161,7 @@ class HiDvrSettingsRepository(private val context: Context) {
                 currentValue      = "",
                 currentValueLabel = "",
                 options           = emptyList(),
+                description       = HiDvrTranslations.description(context, key),
             )
         }
 
@@ -343,6 +345,7 @@ class HiDvrSettingsRepository(private val context: Context) {
                                 currentValue     = "",
                                 currentValueLabel = "",
                                 options          = menuOptions.toList(),
+                                description      = HiDvrTranslations.description(context, menuKey),
                             ))
                         }
                     }

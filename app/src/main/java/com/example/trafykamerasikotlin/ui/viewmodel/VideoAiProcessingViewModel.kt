@@ -85,10 +85,21 @@ class VideoAiProcessingViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
-                // Surface-to-Surface GL pipeline decodes via MediaCodec
-                // (handles MP4/H.264, MOV, WebM, MKV) directly into a GPU
-                // texture and re-encodes without CPU YUV→ARGB conversion.
-                proc.process(uri, outFile)
+                // Open the picked video via MediaMetadataRetriever-backed
+                // Mp4VideoSource — handles whatever the platform decoder
+                // accepts (MP4 H.264/H.265, MOV, WebM, MKV, some AVIs).
+                val source = try {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.example.trafykamerasikotlin.data.video.Mp4VideoSource
+                            .open(getApplication(), uri)
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Mp4VideoSource.open failed: ${t.message}")
+                    _state.value = UiState.Failed("Could not open the selected video: ${t.message ?: ""}")
+                    progressJob.cancel()
+                    return@launch
+                }
+                source.use { proc.process(it, outFile) }
                 progressJob.cancel()
                 // proc.state emits Done which the collector mapped above.
                 // Poke MediaScanner so the file shows in Files/Gallery.

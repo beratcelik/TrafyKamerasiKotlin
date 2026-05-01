@@ -408,14 +408,16 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 if (device.protocol == ChipsetProtocol.GENERALPLUS) {
-                    proc.processAvi(tempIn, outFile)
-                } else {
-                    // HiSilicon-family dashcams produce MP4s. The Surface-to-
-                    // Surface GL pipeline decodes the H.264 bitstream straight
-                    // into a GPU texture and re-encodes without ever touching
-                    // CPU pixels — much faster than the old MediaCodec→Bitmap
-                    // path on 2K dashcam footage.
+                    // GP path: AVI/MJPEG, handled by the File overload
+                    // (uses AviMjpegVideoSource internally).
                     proc.process(tempIn, outFile)
+                } else {
+                    // HiSilicon-family: open the MP4 via MediaCodecVideoSource
+                    // (sequential MediaExtractor + MediaCodec, no MMR seek
+                    // dependence — survives the cam's broken sample tables).
+                    val source = com.example.trafykamerasikotlin.data.video.MediaCodecVideoSource
+                        .open(tempIn)
+                    source.use { proc.process(it, outFile) }
                 }
                 stateJob.cancel()
 

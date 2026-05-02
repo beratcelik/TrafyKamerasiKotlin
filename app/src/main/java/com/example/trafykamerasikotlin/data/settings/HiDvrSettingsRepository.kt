@@ -282,7 +282,12 @@ class HiDvrSettingsRepository(private val context: Context) {
         }
         val body = DashcamHttpClient.get(url)
         val rawValue = body?.let { parseVarValue(it, "value") } ?: ""
-        val label = options.find { it.value == rawValue }?.label ?: rawValue
+        // If the picker options (built from cammenu.xml) don't include the
+        // cam's current value — e.g. SPEECH=2 (Çince) on G3518 firmware that
+        // only advertises 0/1 in its menu — fall back to the translations
+        // table so the row shows "Çince" instead of bare "2".
+        val label = options.find { it.value == rawValue }?.label
+            ?: HiDvrTranslations.optionLabel(context, key, rawValue, rawValue)
         Log.v(TAG, "  $key → value='$rawValue' label='$label'")
         return copy(currentValue = rawValue, currentValueLabel = label)
     }
@@ -339,6 +344,17 @@ class HiDvrSettingsRepository(private val context: Context) {
                     XmlPullParser.END_TAG -> if (parser.name == "menu" && insideMenu) {
                         insideMenu = false
                         if (menuKey.isNotEmpty()) {
+                            // SPEECH: G3518 export firmware advertises only 0/1 in
+                            // its menu, but the underlying firmware also accepts 2
+                            // (Chinese voice commands) — surface it so users whose
+                            // cam is currently set to 2 can switch back to it after
+                            // testing other options.
+                            if (menuKey == "SPEECH" && menuOptions.none { it.value == "2" }) {
+                                menuOptions.add(SettingOption(
+                                    "2",
+                                    HiDvrTranslations.optionLabel(context, menuKey, "2", "2"),
+                                ))
+                            }
                             result.add(SettingItem(
                                 key              = menuKey,
                                 title            = menuTitle,

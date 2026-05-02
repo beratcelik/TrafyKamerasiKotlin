@@ -453,7 +453,7 @@ private fun PreparingPlaceholder() {
 // ── Camera tab bar ─────────────────────────────────────────────────────────
 
 /**
- * Horizontal tab bar for switching between cameras on multi-camera Easytech devices.
+ * Horizontal tab bar for switching between cameras on multi-camera dashcams.
  * Each tab index corresponds directly to the switchcam parameter value (0, 1, 2).
  */
 @Composable

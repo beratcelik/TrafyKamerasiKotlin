@@ -4,9 +4,11 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.SettingItem
+import com.example.trafykamerasikotlin.data.model.TrafyModelIdentifier
 import com.example.trafykamerasikotlin.data.settings.AllwinnerSettingsRepository
 import com.example.trafykamerasikotlin.data.settings.EeasytechSettingsRepository
 import com.example.trafykamerasikotlin.data.settings.GeneralplusSettingsRepository
@@ -57,6 +59,8 @@ sealed class SettingsActionFeedback {
     data object WifiSaved   : SettingsActionFeedback()
     data object ApnSaved    : SettingsActionFeedback()
     data class  Raw(val message: String) : SettingsActionFeedback()
+    /** "Kamera Hakkında" summary — gets its own dialog title. */
+    data class  AboutCamera(val message: String) : SettingsActionFeedback()
 }
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -190,10 +194,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         if (result != null) {
                             val trimmed = result.trim()
                             when {
-                                key == "format"     -> SettingsActionFeedback.FormatOk
-                                key == "reset.cgi?" -> SettingsActionFeedback.ResetOk
-                                trimmed.isEmpty()   -> SettingsActionFeedback.GenericOk
-                                else                -> SettingsActionFeedback.Raw(trimmed)
+                                key == "format"               -> SettingsActionFeedback.FormatOk
+                                key == "reset.cgi?"           -> SettingsActionFeedback.ResetOk
+                                key == "getdeviceattr.cgi?"   ->
+                                    SettingsActionFeedback.AboutCamera(formatAboutCamera(trimmed, device))
+                                trimmed.isEmpty()             -> SettingsActionFeedback.GenericOk
+                                else                          -> SettingsActionFeedback.Raw(trimmed)
                             }
                         } else SettingsActionFeedback.GenericFail
                     }
@@ -370,8 +376,34 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             else                           -> getHiDvrRepo().applySetting(device.protocol.deviceIp, key, value)
         }
 
+    /**
+     * Re-formats the cam's `getdeviceattr.cgi` body (which arrives as a stream
+     * of `var key="value";` lines) into the human-friendly summary the
+     * "Kamera Hakkında" dialog displays. Internal-only fields like
+     * `boardversion`, `product`, `sp`, `soc` are dropped — they're meaningless
+     * to end users and would only resurface the original "raw dump" UX.
+     */
+    private fun formatAboutCamera(rawBody: String, device: DeviceInfo): String {
+        val ctx = getApplication<Application>()
+        val attrs = parseVarPairs(rawBody)
+        val unknown = ctx.getString(R.string.about_cam_unknown)
+        val rawModel = attrs["model"]
+        val modelLine = ctx.getString(R.string.about_cam_label_model) + ": " +
+            TrafyModelIdentifier.displayName(device, rawModel ?: unknown)
+        val softLine = ctx.getString(R.string.about_cam_label_software) + ": " +
+            (attrs["softversion"] ?: unknown)
+        val rtcLine = ctx.getString(R.string.about_cam_label_clock) + ": " +
+            (attrs["rtc"] ?: unknown)
+        return listOf(modelLine, softLine, rtcLine).joinToString("\n")
+    }
+
+    private fun parseVarPairs(body: String): Map<String, String> {
+        val regex = Regex("""var\s+(\w+)="([^"]*)";""")
+        return regex.findAll(body).associate { it.groupValues[1] to it.groupValues[2] }
+    }
+
     private fun getEeasyRepo(): EeasytechSettingsRepository =
-        eeasyRepo ?: EeasytechSettingsRepository().also { eeasyRepo = it }
+        eeasyRepo ?: EeasytechSettingsRepository(getApplication()).also { eeasyRepo = it }
 
     private fun getHiDvrRepo(): HiDvrSettingsRepository =
         hiDvrRepo ?: HiDvrSettingsRepository(getApplication()).also { hiDvrRepo = it }

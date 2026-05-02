@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.trafykamerasikotlin.data.allwinner.AllwinnerRtp2pClient
 import com.example.trafykamerasikotlin.data.media.AllwinnerMediaRepository
 import com.example.trafykamerasikotlin.data.media.AllwinnerSdInfo
+import com.example.trafykamerasikotlin.data.media.CamHttpGate
 import com.example.trafykamerasikotlin.data.media.EeasytechMediaRepository
 import com.example.trafykamerasikotlin.data.media.GeneralplusMediaRepository
 import com.example.trafykamerasikotlin.data.media.HiDvrMediaRepository
@@ -165,6 +166,21 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         }
         loadedDevice = device
         loadJob?.cancel()
+        // Cancel any pending idle-exit timer from a previous successful
+        // load. Otherwise that 30s timer fires mid-load, calls
+        // leavePlayback (= startRecording for HiDvr), flips the cam back
+        // to RECORD, and every subsequent `getdirfilecount` returns
+        // SvrFuncResult="-2222" because the cam refuses listing requests
+        // while recording.
+        idleJob?.cancel()
+        idleJob = null
+        idleExited = false
+        // Invalidate any stale Coil thumbnail extractions queued behind
+        // CamHttpGate — they would otherwise tie up the gate (each MMR can
+        // hang for the kernel TCP timeout, ~minutes) and starve this fresh
+        // listing pass. New thumbnail requests for the new file list run
+        // under the bumped generation and proceed normally.
+        CamHttpGate.bumpGeneration()
         loadJob = viewModelScope.launch {
             Log.i(TAG, "load: fetching for $ip")
             _uiState.value = MediaUiState.Loading
@@ -577,7 +593,11 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         idleJob = viewModelScope.launch {
             delay(IDLE_PLAYBACK_TIMEOUT_MS)
             // Don't exit if active work needs PLAYBACK mode. Re-arm and probe again.
-            if (downloading.value.isNotEmpty() ||
+            // A load() in-flight is the most subtle case — the cam must stay in
+            // PLAYBACK for getdirfilecount, otherwise it returns -2222.
+            if (loadJob?.isActive == true ||
+                _uiState.value !is MediaUiState.Loaded ||
+                downloading.value.isNotEmpty() ||
                 _playbackUri.value != null ||
                 _allwinnerPlaybackUri.value != null ||
                 allwinnerStreamActive
@@ -644,14 +664,14 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         when (device.protocol) {
             ChipsetProtocol.EEASYTECH      -> eeasyRepo.fetchVideos(device.protocol.deviceIp)
             ChipsetProtocol.ALLWINNER_V853 -> allwinnerRepo.fetchVideos(device.protocol.deviceIp)
-            else                           -> hiDvrRepo.fetchVideos(device.protocol.deviceIp)
+            else                           -> hiDvrRepo.fetchVideos(device.protocol.deviceIp, device.clientIp)
         }
 
     private suspend fun fetchPhotos(device: DeviceInfo): List<MediaFile> =
         when (device.protocol) {
             ChipsetProtocol.EEASYTECH      -> eeasyRepo.fetchPhotos(device.protocol.deviceIp)
             ChipsetProtocol.ALLWINNER_V853 -> allwinnerRepo.fetchPhotos(device.protocol.deviceIp)
-            else                           -> hiDvrRepo.fetchPhotos(device.protocol.deviceIp)
+            else                           -> hiDvrRepo.fetchPhotos(device.protocol.deviceIp, device.clientIp)
         }
 
     private suspend fun deleteFile(device: DeviceInfo, file: MediaFile): Boolean =

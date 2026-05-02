@@ -209,8 +209,15 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         Log.i(TAG, "proceedWithHandshake: calling manager.connect()")
         when (val result = manager.connect()) {
             is HandshakeResult.Success -> {
-                Log.i(TAG, "Handshake SUCCESS: ${result.deviceInfo}")
-                _uiState.update { DashcamUiState.Connected(result.deviceInfo) }
+                // Stamp the connected SSID onto the DeviceInfo so the rest of
+                // the app (TrafyModelIdentifier in particular) can identify
+                // products whose firmware doesn't expose a model string —
+                // Easytech-based cams only advertise a feature bitmask over
+                // HTTP, so the SSID prefix is our only distinguishing signal.
+                val ssid = wifiManager.getCurrentDashcamSsid()
+                val device = result.deviceInfo.copy(ssid = ssid)
+                Log.i(TAG, "Handshake SUCCESS: $device")
+                _uiState.update { DashcamUiState.Connected(device) }
                 wifiManager.startWatchingConnection(network) { onConnectionLost() }
             }
             is HandshakeResult.Failure -> {

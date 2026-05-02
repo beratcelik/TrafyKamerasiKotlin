@@ -1,129 +1,167 @@
 package com.example.trafykamerasikotlin.data.settings
 
+import android.content.Context
+import androidx.annotation.StringRes
+import com.example.trafykamerasikotlin.R
+
 /**
- * English display strings for Easytech/Allwinner camera settings.
+ * Localized labels and descriptions for Easytech camera settings
+ * (Trafy Dos / Dos Pro / Tres family).
  *
- * Key names sourced from EeasytechConst.java in golook-jadx.
- * Option values are the raw strings returned by /app/getparamitems.
+ * Key names sourced from EeasytechConst.java in golook-jadx; option values
+ * are the raw strings returned by `/app/getparamitems`.
+ *
+ * Reuses `hidvr_opt_*` resources where the option label is locale-agnostic
+ * shared vocabulary (Açık / Kapalı / Yüksek / Düşük / Orta / Sessiz, plus
+ * the minutes_fmt and hours_fmt format strings) so we don't duplicate them.
  */
 object EeasytechTranslations {
 
-    private val TITLES = mapOf(
-        "rec_resolution"    to "Video Resolution",
-        "rec_split_duration" to "Clip Length",
-        "mic"               to "Audio",
-        "light_fre"         to "Anti-Flicker",
-        "encodec"           to "Video Codec",
-        "video_flip"        to "Flip & Mirror",
-        "gsr_sensitivity"   to "G-Sensor Sensitivity",
-        "parking_mode"      to "Parking Mode",
-        "ev"                to "Exposure",
-        "speaker"           to "Volume",
-        "screen_standby"    to "Screen Sleep",
-        "osd"               to "Date Stamp",
-        "speed_unit"        to "Speed Unit",
-        "lowfps_rec"        to "Timelapse Recording",
-        "timelapse_rate"    to "Timelapse Rate",
-        "park_gsr_sensitivity" to "Parking G-Sensor",
-        "park_record_time"  to "Parking Record Time",
-        "parking_monitor"   to "Parking Monitor",
-        "lowbat_protect"    to "Low Battery Protection",
-        "bat_vol"           to "Cutoff Voltage",
-        "voice_control"     to "Voice Control",
-        "audio_change"      to "Audio Output",
-        "gps"               to "GPS",
+    @StringRes
+    private val TITLE_RES = mapOf(
+        "rec_resolution"        to R.string.eeasy_title_rec_resolution,
+        "rec_split_duration"    to R.string.eeasy_title_rec_split_duration,
+        "mic"                   to R.string.eeasy_title_mic,
+        "light_fre"             to R.string.eeasy_title_light_fre,
+        "encodec"               to R.string.eeasy_title_encodec,
+        "video_flip"            to R.string.eeasy_title_video_flip,
+        "gsr_sensitivity"       to R.string.eeasy_title_gsr_sensitivity,
+        "parking_mode"          to R.string.eeasy_title_parking_mode,
+        "ev"                    to R.string.eeasy_title_ev,
+        "speaker"               to R.string.eeasy_title_speaker,
+        "screen_standby"        to R.string.eeasy_title_screen_standby,
+        "osd"                   to R.string.eeasy_title_osd,
+        "speed_unit"            to R.string.eeasy_title_speed_unit,
+        "lowfps_rec"            to R.string.eeasy_title_lowfps_rec,
+        "timelapse_rate"        to R.string.eeasy_title_timelapse_rate,
+        "park_gsr_sensitivity"  to R.string.eeasy_title_park_gsr_sensitivity,
+        "park_record_time"      to R.string.eeasy_title_park_record_time,
+        "parking_monitor"       to R.string.eeasy_title_parking_monitor,
+        "lowbat_protect"        to R.string.eeasy_title_lowbat_protect,
+        "bat_vol"               to R.string.eeasy_title_bat_vol,
+        "voice_control"         to R.string.eeasy_title_voice_control,
+        "audio_change"          to R.string.eeasy_title_audio_change,
+        "gps"                   to R.string.eeasy_title_gps,
+        "adas"                  to R.string.eeasy_title_adas,
     )
 
-    // Generic option-value → label. Applied when no context-specific entry exists.
-    private val GENERIC_OPTIONS = mapOf(
-        "on"         to "On",
-        "off"        to "Off",
-        "high"       to "High",
-        "middle"     to "Middle",
-        "low"        to "Low",
-        "very high"  to "Very High",
-        "front"      to "Front",
-        "back"       to "Back",
-        "normrec"    to "Normal Recording",
-        "timelapse"  to "Timelapse",
-        // Time durations
-        "1MIN"       to "1 min",
-        "2MIN"       to "2 min",
-        "3MIN"       to "3 min",
-        "5MIN"       to "5 min",
-        "15min"      to "15 min",
-        "1h"         to "1 hour",
-        "2h"         to "2 hours",
-        "3h"         to "3 hours",
-        "4h"         to "4 hours",
-        "5h"         to "5 hours",
-        "6h"         to "6 hours",
-        "7h"         to "7 hours",
-        "8h"         to "8 hours",
-        "9h"         to "9 hours",
-        "10h"        to "10 hours",
-        "12h"        to "12 hours",
-        "24h"        to "24 hours",
-        "48h"        to "48 hours",
-        "1hour"      to "1 hour",
-        "2hour"      to "2 hours",
-        "3hour"      to "3 hours",
-        "4hour"      to "4 hours",
-        "5hour"      to "5 hours",
-        "6hour"      to "6 hours",
-        "7hour"      to "7 hours",
-        "8hour"      to "8 hours",
-        "9hour"      to "9 hours",
-        "10hour"     to "10 hours",
-        "11hour"     to "11 hours",
-        "12hour"     to "12 hours",
-        "24hour"     to "24 hours",
-        "48hour"     to "48 hours",
-        // Frequency
-        "50hz"       to "50 Hz",
-        "60hz"       to "60 Hz",
-        "50HZ"       to "50 Hz",
-        "60HZ"       to "60 Hz",
-        // EV
-        "-3"         to "-3",
-        "-2"         to "-2",
-        "-1"         to "-1",
-        "0"          to "0",
-        "1"          to "+1",
-        "2"          to "+2",
-        "3"          to "+3",
-        // Speed unit
-        "kmh"        to "km/h",
-        "mph"        to "mph",
-        "KMH"        to "km/h",
-        "MPH"        to "mph",
+    /** One-line explanations for non-obvious settings. */
+    @StringRes
+    private val DESC_RES = mapOf(
+        "rec_split_duration"    to R.string.eeasy_desc_rec_split_duration,
+        "mic"                   to R.string.eeasy_desc_mic,
+        "light_fre"             to R.string.eeasy_desc_light_fre,
+        "encodec"               to R.string.eeasy_desc_encodec,
+        "gsr_sensitivity"       to R.string.eeasy_desc_gsr_sensitivity,
+        "parking_mode"          to R.string.eeasy_desc_parking_mode,
+        "ev"                    to R.string.eeasy_desc_ev,
+        "screen_standby"        to R.string.eeasy_desc_screen_standby,
+        "lowfps_rec"            to R.string.eeasy_desc_lowfps_rec,
+        "timelapse_rate"        to R.string.eeasy_desc_timelapse_rate,
+        "park_gsr_sensitivity"  to R.string.eeasy_desc_park_gsr_sensitivity,
+        "park_record_time"      to R.string.eeasy_desc_park_record_time,
+        "parking_monitor"       to R.string.eeasy_desc_parking_monitor,
+        "lowbat_protect"        to R.string.eeasy_desc_lowbat_protect,
+        "bat_vol"               to R.string.eeasy_desc_bat_vol,
+        "voice_control"         to R.string.eeasy_desc_voice_control,
+        "audio_change"          to R.string.eeasy_desc_audio_change,
+        "gps"                   to R.string.eeasy_desc_gps,
+        "video_flip"            to R.string.eeasy_desc_video_flip,
+        "adas"                  to R.string.eeasy_desc_adas,
     )
 
-    // Context-specific overrides: (paramKey to optionValue) → label
-    private val CONTEXT_OPTIONS = mapOf(
-        ("encodec" to "H264")       to "H.264",
-        ("encodec" to "H265")       to "H.265",
-        ("encodec" to "h264")       to "H.264",
-        ("encodec" to "h265")       to "H.265",
-        ("video_flip" to "normal")  to "Normal",
-        ("video_flip" to "flip")    to "Flip",
-        ("video_flip" to "mirror")  to "Mirror",
-        ("video_flip" to "flip_mirror") to "Flip & Mirror",
-        ("speaker" to "0")          to "Mute",
-        ("speaker" to "1")          to "Low",
-        ("speaker" to "2")          to "Medium",
-        ("speaker" to "3")          to "High",
-        ("osd" to "0")              to "Off",
-        ("osd" to "1")              to "On",
-        ("parking_mode" to "0")     to "Off",
-        ("parking_mode" to "1")     to "On",
+    /** Generic on/off/high/low/etc — case-folded so "ON"/"on"/"On" all map. */
+    @StringRes
+    private val GENERIC_OPTION_RES = mapOf(
+        "on"        to R.string.hidvr_opt_on,
+        "off"       to R.string.hidvr_opt_off,
+        "high"      to R.string.hidvr_opt_high,
+        "middle"    to R.string.hidvr_opt_medium,
+        "medium"    to R.string.hidvr_opt_medium,
+        "low"       to R.string.hidvr_opt_low,
+        "very high" to R.string.eeasy_opt_very_high,
+        "front"     to R.string.eeasy_opt_front,
+        "back"      to R.string.eeasy_opt_back,
+        "normrec"   to R.string.eeasy_opt_normrec,
+        "timelapse" to R.string.eeasy_opt_timelapse,
+        "mute"      to R.string.hidvr_opt_mute,
     )
 
-    fun title(key: String, fallback: String = key): String =
-        TITLES[key] ?: fallback
+    @StringRes
+    private val CONTEXT_OPTION_RES = mapOf(
+        ("video_flip" to "normal")      to R.string.eeasy_opt_flip_normal,
+        ("video_flip" to "flip")        to R.string.eeasy_opt_flip_flip,
+        ("video_flip" to "mirror")      to R.string.eeasy_opt_flip_mirror,
+        ("video_flip" to "flip_mirror") to R.string.eeasy_opt_flip_flip_mirror,
+        ("speaker"    to "0")           to R.string.hidvr_opt_mute,
+        ("speaker"    to "1")           to R.string.hidvr_opt_low,
+        ("speaker"    to "2")           to R.string.hidvr_opt_medium,
+        ("speaker"    to "3")           to R.string.hidvr_opt_high,
+        ("osd"          to "0")         to R.string.hidvr_opt_off,
+        ("osd"          to "1")         to R.string.hidvr_opt_on,
+        ("parking_mode" to "0")         to R.string.hidvr_opt_off,
+        ("parking_mode" to "1")         to R.string.hidvr_opt_on,
+        ("mic"          to "0")         to R.string.hidvr_opt_off,
+        ("mic"          to "1")         to R.string.hidvr_opt_on,
+        ("gps"          to "0")         to R.string.hidvr_opt_off,
+        ("gps"          to "1")         to R.string.hidvr_opt_on,
+        ("voice_control" to "0")        to R.string.hidvr_opt_off,
+        ("voice_control" to "1")        to R.string.hidvr_opt_on,
+        ("lowbat_protect" to "0")       to R.string.hidvr_opt_off,
+        ("lowbat_protect" to "1")       to R.string.hidvr_opt_on,
+        ("lowfps_rec"   to "0")         to R.string.hidvr_opt_off,
+        ("lowfps_rec"   to "1")         to R.string.hidvr_opt_on,
+    )
 
-    fun optionLabel(key: String, value: String, fallback: String = value): String =
-        CONTEXT_OPTIONS[key to value]
-            ?: GENERIC_OPTIONS[value]
-            ?: fallback
+    /** Locale-neutral option labels (codecs / units / voltages). */
+    private val NEUTRAL_OPTIONS = mapOf(
+        "H264" to "H.264", "H265" to "H.265",
+        "h264" to "H.264", "h265" to "H.265",
+        "kmh"  to "km/h",  "mph"  to "mph",
+        "KMH"  to "km/h",  "MPH"  to "mph",
+        "50hz" to "50 Hz", "60hz" to "60 Hz",
+        "50HZ" to "50 Hz", "60HZ" to "60 Hz",
+    )
+
+    /** Numeric duration ids — "1MIN", "5MIN", "1h", "12hour" → formatted strings. */
+    private val MIN_ID_REGEX  = Regex("""^(\d+)\s*MIN$""", RegexOption.IGNORE_CASE)
+    private val HOUR_ID_REGEX = Regex("""^(\d+)\s*(?:H|HOUR)$""", RegexOption.IGNORE_CASE)
+
+    // ── Public API ─────────────────────────────────────────────────────────
+
+    fun title(ctx: Context, key: String, fallback: String = key): String =
+        TITLE_RES[key]?.let { ctx.getString(it) } ?: fallback
+
+    fun description(ctx: Context, key: String): String? =
+        DESC_RES[key]?.let { ctx.getString(it) }
+
+    /**
+     * Returns a localized label for an option.
+     * Priority: context-specific resource → generic resource (case-folded) →
+     * minutes/hours format → neutral (codec/voltage/Hz) → EV signed → fallback.
+     */
+    fun optionLabel(ctx: Context, menuKey: String, value: String, fallback: String = value): String {
+        CONTEXT_OPTION_RES[menuKey to value]?.let { return ctx.getString(it) }
+        GENERIC_OPTION_RES[value.lowercase()]?.let { return ctx.getString(it) }
+
+        MIN_ID_REGEX.matchEntire(value)?.let {
+            return ctx.getString(R.string.hidvr_opt_minutes_fmt, it.groupValues[1].toInt())
+        }
+        HOUR_ID_REGEX.matchEntire(value)?.let {
+            return ctx.getString(R.string.hidvr_opt_hours_fmt, it.groupValues[1].toInt())
+        }
+        NEUTRAL_OPTIONS[value]?.let { return it }
+
+        // EV: cam emits "-3".."3"; render with a leading + for positives so the
+        // direction reads at a glance ("+1" vs "1").
+        if (menuKey == "ev") {
+            value.toIntOrNull()?.let { iv ->
+                return when {
+                    iv > 0 -> "+$iv"
+                    else   -> iv.toString()
+                }
+            }
+        }
+        return fallback
+    }
 }

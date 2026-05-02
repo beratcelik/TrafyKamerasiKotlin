@@ -176,14 +176,19 @@ fun SettingsScreen(
                 SettingsActionFeedback.UnsupportedByCamera -> stringResource(R.string.settings_feedback_unsupported)
                 SettingsActionFeedback.WifiSaved   -> stringResource(R.string.settings_feedback_wifi_saved)
                 SettingsActionFeedback.ApnSaved    -> stringResource(R.string.settings_feedback_apn_saved)
-                is SettingsActionFeedback.Raw      -> feedback.message
+                is SettingsActionFeedback.Raw         -> feedback.message
+                is SettingsActionFeedback.AboutCamera -> feedback.message
+            }
+            val titleRes = when (feedback) {
+                is SettingsActionFeedback.AboutCamera -> R.string.about_cam_dialog_title
+                else                                  -> R.string.settings_result_title
             }
             AlertDialog(
                 onDismissRequest = viewModel::clearActionFeedback,
                 containerColor   = ColorSurface,
                 title = {
                     Text(
-                        text  = stringResource(R.string.settings_result_title),
+                        text  = stringResource(titleRes),
                         style = MaterialTheme.typography.titleLarge,
                         color = ColorTextPrimary
                     )

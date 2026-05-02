@@ -67,6 +67,7 @@
     <string name="media_tab_back">Arka</string>
     <string name="media_tab_inside">İç</string>
     <string name="media_tab_photos">Fotoğraflar</string>
+    <string name="media_tab_videos">Videolar</string>
     <string name="media_sd_usage_fmt">SD Kart: %1$.1f / %2$.1f GB</string>
     <string name="media_action_play">Oynat</string>
     <string name="media_action_view">Görüntüle</string>
@@ -116,6 +117,13 @@
     <string name="settings_feedback_unsupported">Kamera bu değişikliği kabul etmedi. Cihazın firmware\'i bu ayarı değiştirmeyi desteklemiyor olabilir.</string>
     <string name="settings_feedback_wifi_saved">Wi-Fi şifresi güncellendi. Yeni şifreyle yeniden bağlanın.</string>
     <string name="settings_feedback_apn_saved">APN güncellendi.</string>
+
+    <!-- "Kamera Hakkında" diyaloğu -->
+    <string name="about_cam_label_model">Model</string>
+    <string name="about_cam_label_software">Yazılım Sürümü</string>
+    <string name="about_cam_label_clock">Kamera Saati</string>
+    <string name="about_cam_unknown">Bilinmiyor</string>
+    <string name="about_cam_dialog_title">Hakkında</string>
 
     <!-- Ham ayarlar -->
     <string name="raw_title">Ham Ayarlar Dökümü</string>
@@ -220,6 +228,65 @@
     <string name="hidvr_desc_speech">Sesli komutlarla kamerayı kontrol etmenizi sağlar. İngilizce seçilirse kamera \"Take a picture\" (fotoğraf çek), \"Start recording\" (kayıt başlat) ve \"Stop recording\" (kayıt durdur) gibi komutları algılar.</string>
     <string name="hidvr_desc_format">Karttaki tüm içerik silinir. Bu işlem geri alınamaz.</string>
     <string name="hidvr_desc_reset">Tüm kamera ayarlarını varsayılan değerlerine geri döndürür.</string>
+
+    <!-- Eeasytech kamera ayarları (Trafy Dos / Dos Pro / Tres) — başlıklar -->
+    <string name="eeasy_title_rec_resolution">Video Çözünürlüğü</string>
+    <string name="eeasy_title_rec_split_duration">Kayıt Bölme Süresi</string>
+    <string name="eeasy_title_mic">Ses Kaydı</string>
+    <string name="eeasy_title_light_fre">Anti-Flicker</string>
+    <string name="eeasy_title_encodec">Video Codec\'i</string>
+    <string name="eeasy_title_video_flip">Çevirme ve Aynalama</string>
+    <string name="eeasy_title_gsr_sensitivity">G-Sensör Hassasiyeti</string>
+    <string name="eeasy_title_parking_mode">Park Modu</string>
+    <string name="eeasy_title_ev">Pozlama</string>
+    <string name="eeasy_title_speaker">Hoparlör Sesi</string>
+    <string name="eeasy_title_screen_standby">Ekran Uyku Süresi</string>
+    <string name="eeasy_title_osd">Tarih Damgası</string>
+    <string name="eeasy_title_speed_unit">Hız Birimi</string>
+    <string name="eeasy_title_lowfps_rec">Hızlandırılmış Kayıt</string>
+    <string name="eeasy_title_timelapse_rate">Hızlandırma Oranı</string>
+    <string name="eeasy_title_park_gsr_sensitivity">Park G-Sensörü</string>
+    <string name="eeasy_title_park_record_time">Park Kayıt Süresi</string>
+    <string name="eeasy_title_parking_monitor">Park İzleme</string>
+    <string name="eeasy_title_lowbat_protect">Düşük Pil Koruması</string>
+    <string name="eeasy_title_bat_vol">Kesim Voltajı</string>
+    <string name="eeasy_title_voice_control">Sesli Komut</string>
+    <string name="eeasy_title_audio_change">Ses Çıkışı</string>
+    <string name="eeasy_title_gps">GPS</string>
+    <string name="eeasy_title_adas">ADAS</string>
+
+    <!-- Eeasytech açıklamalar -->
+    <string name="eeasy_desc_rec_split_duration">Kayıtlar bu sürenin sonunda yeni bir dosyaya bölünür. Daha kısa süre = daha kolay paylaşım.</string>
+    <string name="eeasy_desc_mic">Mikrofonu kullanarak araç içi sesi de kayda alır.</string>
+    <string name="eeasy_desc_light_fre">Florasan ve LED ışıkların oluşturduğu titremeyi azaltır. Türkiye\'de 50 Hz seçili olmalı.</string>
+    <string name="eeasy_desc_encodec">H.265 daha az yer kaplar; H.264 daha geniş cihaz uyumluluğu sağlar.</string>
+    <string name="eeasy_desc_gsr_sensitivity">Çarpma anında otomatik kayıt kilidi için darbe duyarlılığı.</string>
+    <string name="eeasy_desc_parking_mode">Araç park edilmiş haldeyken hareket veya darbe ile kayıt başlatır.</string>
+    <string name="eeasy_desc_ev">Görüntü parlaklığını el ile ayarlar. Negatif değerler daha karanlık, pozitif daha açık.</string>
+    <string name="eeasy_desc_screen_standby">Belirli bir süre işlem yapılmazsa ekran kapanır. Kayıt arka planda devam eder.</string>
+    <string name="eeasy_desc_lowfps_rec">Saniyede çok az kare ile kayıt yaparak uzun süreli özet videolar oluşturur.</string>
+    <string name="eeasy_desc_timelapse_rate">Hızlandırılmış kayıt için kare oranı.</string>
+    <string name="eeasy_desc_park_gsr_sensitivity">Park modunda darbe algılama duyarlılığı.</string>
+    <string name="eeasy_desc_park_record_time">Park modunda darbe veya hareket sonrası ne kadar kayıt yapılacağı.</string>
+    <string name="eeasy_desc_parking_monitor">Park sırasında kaydın sürekli mi yoksa hareket/darbe ile mi başlayacağı.</string>
+    <string name="eeasy_desc_lowbat_protect">Akü voltajı seçilen eşiğin altına düşerse kamera kapanır; aracın aküsünü korur.</string>
+    <string name="eeasy_desc_bat_vol">Düşük pil korumasının devreye gireceği voltaj. 12 V akülerde 11.8 V önerilir.</string>
+    <string name="eeasy_desc_voice_control">Sesli komutlarla kamerayı kontrol etmenizi sağlar (örn. \"take a picture\").</string>
+    <string name="eeasy_desc_audio_change">Sesin nereden duyulacağı (hoparlör veya Bluetooth).</string>
+    <string name="eeasy_desc_gps">Konum verisi video üzerine yazılır; hız ve rota oynatımda görüntülenebilir.</string>
+    <string name="eeasy_desc_video_flip">Görüntüyü aşağı/yukarı veya sağa/sola çevirir. Ters monte edilen kameralar için kullanılır.</string>
+    <string name="eeasy_desc_adas">Gelişmiş Sürücü Destek Sistemi (Advanced Driver-Assistance Systems). Şerit takip uyarısı ve ön araç mesafesi gibi sürüş yardımcı uyarılarını etkinleştirir.</string>
+
+    <!-- Eeasytech seçenek etiketleri -->
+    <string name="eeasy_opt_flip_normal">Normal</string>
+    <string name="eeasy_opt_flip_flip">Aşağı/Yukarı</string>
+    <string name="eeasy_opt_flip_mirror">Sağa/Sola</string>
+    <string name="eeasy_opt_flip_flip_mirror">Çapraz</string>
+    <string name="eeasy_opt_normrec">Normal Kayıt</string>
+    <string name="eeasy_opt_timelapse">Hızlandırılmış</string>
+    <string name="eeasy_opt_very_high">Çok Yüksek</string>
+    <string name="eeasy_opt_front">Ön</string>
+    <string name="eeasy_opt_back">Arka</string>
 
     <!-- Uygulama güncellemeleri -->
     <string name="settings_section_app">Uygulama</string>

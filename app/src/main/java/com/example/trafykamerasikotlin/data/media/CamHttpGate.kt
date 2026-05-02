@@ -1,7 +1,7 @@
 package com.example.trafykamerasikotlin.data.media
 
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Process-wide single-flight gate for any HTTP call to the dashcam.
@@ -15,14 +15,23 @@ import kotlinx.coroutines.sync.withLock
  *
  * Solution: serialise everything that talks to the cam through this
  * mutex. Listing calls (~100 ms) wait at most one in-flight thumbnail
- * extraction (capped at 15 s), then have exclusive access. Subsequent
- * thumbnail jobs queue back up after the listing finishes.
+ * extraction, then have exclusive access. Subsequent thumbnail jobs
+ * queue back up after the listing finishes.
+ *
+ * Generation counter: bumped by [MediaViewModel.load] before every
+ * fresh listing pass. Coil thumbnail fetchers capture the generation
+ * when they start and bail out at the next check if it has changed —
+ * that drains a queue of stale extractions immediately when the user
+ * navigates back into Media, so the new listing isn't stuck behind
+ * 8 × MMR timeouts.
  *
  * Note: this only mutexes the *cam HTTP* side — internet calls to
  * trafy.tr or local file reads aren't gated.
  */
 object CamHttpGate {
-    /** Public so callers can use `CamHttpGate.mutex.withLock { … }` (inline,
-     *  supports non-local returns from inside the block). */
     val mutex = Mutex()
+
+    private val gen = AtomicInteger(0)
+    fun currentGeneration(): Int = gen.get()
+    fun bumpGeneration(): Int = gen.incrementAndGet()
 }

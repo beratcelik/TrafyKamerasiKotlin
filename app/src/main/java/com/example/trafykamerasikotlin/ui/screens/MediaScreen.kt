@@ -220,55 +220,67 @@ fun MediaScreen(
             is MediaUiState.Loading      -> LoadingMediaContent()
             is MediaUiState.Error        -> ErrorMediaContent(onRetry = { viewModel.reload() })
             is MediaUiState.Loaded -> {
-                // Group videos by camera channel (front/back/inside) from filename suffix.
-                // Only tabs for cameras that actually have footage are shown.
-                // Photos tab is hidden when no photos exist — Trafy Uno never
-                // emits photos so the tab would be perpetually empty there.
+                // Tab layout depends on what footage is actually present:
+                //  • multi-cam (rear/inside present): per-camera tabs + Photos.
+                //  • single-cam, no photos: no tab row at all — a redundant
+                //    "Ön" tab adds nothing on units without a rear camera.
+                //  • single-cam, with photos: "Videolar" / "Fotoğraflar".
                 val videosByCamera = groupVideosByCamera(state.videos)
                 val cameraTabs     = listOf("Front", "Back", "Inside")
                     .filter { videosByCamera.containsKey(it) }
-                val tabs           = buildList {
-                    addAll(cameraTabs)
-                    if (state.photos.isNotEmpty()) add("Photos")
+                val multiCamera    = cameraTabs.size > 1
+                val tabs: List<String> = when {
+                    multiCamera -> buildList {
+                        addAll(cameraTabs)
+                        if (state.photos.isNotEmpty()) add("Photos")
+                    }
+                    state.photos.isNotEmpty() -> listOf("Videos", "Photos")
+                    else -> emptyList()
                 }
 
-                if (tabs.isEmpty()) {
+                val totalFiles = state.videos.size + state.photos.size
+                if (totalFiles == 0) {
                     EmptyMediaContent(isPhoto = false)
                 } else {
                 // Clamp in case a reload returns fewer tabs than current index
-                val safeTab        = selectedTab.coerceIn(0, tabs.lastIndex)
+                val safeTab        = selectedTab.coerceIn(0, tabs.lastIndex.coerceAtLeast(0))
 
-                TabRow(
-                    selectedTabIndex = safeTab,
-                    containerColor   = ColorBackground,
-                    contentColor     = ColorPrimary,
-                    indicator        = { positions ->
-                        TabRowDefaults.SecondaryIndicator(
-                            modifier = Modifier.tabIndicatorOffset(positions[safeTab]),
-                            color    = ColorPrimary
-                        )
-                    },
-                    divider = {
-                        Box(modifier = Modifier.fillMaxWidth().background(ColorDivider))
-                    }
-                ) {
-                    tabs.forEachIndexed { index, title ->
-                        Tab(
-                            selected               = safeTab == index,
-                            onClick                = { selectedTab = index },
-                            selectedContentColor   = ColorPrimary,
-                            unselectedContentColor = ColorTextSecondary,
-                            text = {
-                                Text(text = cameraTabLabel(title), style = MaterialTheme.typography.titleMedium)
-                            }
-                        )
+                if (tabs.isNotEmpty()) {
+                    TabRow(
+                        selectedTabIndex = safeTab,
+                        containerColor   = ColorBackground,
+                        contentColor     = ColorPrimary,
+                        indicator        = { positions ->
+                            TabRowDefaults.SecondaryIndicator(
+                                modifier = Modifier.tabIndicatorOffset(positions[safeTab]),
+                                color    = ColorPrimary
+                            )
+                        },
+                        divider = {
+                            Box(modifier = Modifier.fillMaxWidth().background(ColorDivider))
+                        }
+                    ) {
+                        tabs.forEachIndexed { index, title ->
+                            Tab(
+                                selected               = safeTab == index,
+                                onClick                = { selectedTab = index },
+                                selectedContentColor   = ColorPrimary,
+                                unselectedContentColor = ColorTextSecondary,
+                                text = {
+                                    Text(text = cameraTabLabel(title), style = MaterialTheme.typography.titleMedium)
+                                }
+                            )
+                        }
                     }
                 }
 
-                val selectedTitle = tabs[safeTab]
+                val selectedTitle = tabs.getOrNull(safeTab) ?: "Videos"
                 val isPhotoTab = selectedTitle == "Photos"
-                val files      = if (isPhotoTab) state.photos
-                                 else videosByCamera[selectedTitle] ?: emptyList()
+                val files      = when (selectedTitle) {
+                    "Photos" -> state.photos
+                    "Videos" -> state.videos
+                    else     -> videosByCamera[selectedTitle] ?: emptyList()
+                }
 
                 if (files.isEmpty()) {
                     EmptyMediaContent(isPhoto = isPhotoTab)
@@ -472,6 +484,7 @@ private fun cameraTabLabel(key: String): String = when (key) {
     "Back"   -> stringResource(R.string.media_tab_back)
     "Inside" -> stringResource(R.string.media_tab_inside)
     "Photos" -> stringResource(R.string.media_tab_photos)
+    "Videos" -> stringResource(R.string.media_tab_videos)
     else     -> key
 }
 

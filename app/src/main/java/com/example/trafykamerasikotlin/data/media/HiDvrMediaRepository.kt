@@ -4,7 +4,6 @@ import android.util.Log
 import com.example.trafykamerasikotlin.data.model.MediaFile
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.withLock
 
 /**
  * Fetches, deletes and controls recording for HiSilicon (HiDVR) dashcam media files.
@@ -32,6 +31,11 @@ class HiDvrMediaRepository {
         // Default dir set used when getdircapability.cgi is unavailable; matches the
         // single-camera HiSilicon firmware that has always worked here.
         private val FALLBACK_DIRS = listOf(DIR_NORMAL, DIR_EVENT, DIR_PHOTO)
+
+        // Sentinel string the HiDVR firmware returns when our client
+        // registration has expired. Treat it as a recoverable error:
+        // re-register and retry the listing once.
+        private const val NOT_REGISTERED_TOKEN = "SvrFuncResult=\"-2222\""
 
         // Tokens used to classify a directory name reported by getdircapability.cgi.
         // Source: HIDevUtil.getDoubleCameraBack*/In* in the reference golook app.
@@ -127,10 +131,11 @@ class HiDvrMediaRepository {
      * channel directories via getdircapability.cgi; single-camera firmware keeps
      * the long-standing norm+emr behavior.
      */
-    suspend fun fetchVideos(deviceIp: String): List<MediaFile> {
+    suspend fun fetchVideos(deviceIp: String, clientIp: String): List<MediaFile> {
+        prepareSession(deviceIp, clientIp)
         val layout = discoverDirs(deviceIp)
         val all = layout.videoDirs().flatMap { (dir, hint, isPhoto) ->
-            fetchDir(deviceIp, dir, isPhoto, cameraHint = hint)
+            fetchDir(deviceIp, clientIp, dir, isPhoto, cameraHint = hint)
         }
         return all.sortedByDescending { it.name }
     }
@@ -138,12 +143,25 @@ class HiDvrMediaRepository {
     /**
      * Fetches all photo files across every camera channel sorted newest-first.
      */
-    suspend fun fetchPhotos(deviceIp: String): List<MediaFile> {
+    suspend fun fetchPhotos(deviceIp: String, clientIp: String): List<MediaFile> {
+        prepareSession(deviceIp, clientIp)
         val layout = discoverDirs(deviceIp)
         val all = layout.photoDirs().flatMap { (dir, hint, isPhoto) ->
-            fetchDir(deviceIp, dir, isPhoto, cameraHint = hint)
+            fetchDir(deviceIp, clientIp, dir, isPhoto, cameraHint = hint)
         }
         return all.sortedByDescending { it.name }
+    }
+
+    /**
+     * Prepares the cam for a listing pass: stop recording (PLAYBACK mode is
+     * required for `getdirfilecount`/`getdirfilelist`) and (re-)register the
+     * client. Both are idempotent server-side. Called at the head of each
+     * fetch* because Live's `onLeave` can race in mid-load and flip the cam
+     * back to RECORD or unregister us (`SvrFuncResult="-2222"`).
+     */
+    private suspend fun prepareSession(deviceIp: String, clientIp: String) {
+        stopRecording(deviceIp)
+        registerClient(deviceIp, clientIp)
     }
 
     // ── Delete ─────────────────────────────────────────────────────────────
@@ -205,20 +223,30 @@ class HiDvrMediaRepository {
      */
     private suspend fun fetchDir(
         deviceIp: String,
+        clientIp: String,
         sdDir: String,
         isPhoto: Boolean,
         cameraHint: String? = null,
-    ): List<MediaFile> = CamHttpGate.mutex.withLock {
-        // Hold the cam HTTP gate for the full count+list sequence. Without
-        // this, an in-flight thumbnail MMR stream saturates the cam's two
-        // HTTP slots and the listing's TCP connect attempts time out
-        // (`Failed to connect to /192.168.0.1:80`) → user sees empty Media.
+    ): List<MediaFile> {
         val base = "http://$deviceIp$CGI"
 
-        // Step 1: get count AND tell the camera which directory we want
-        val countBody = DashcamHttpClient.get("$base/getdirfilecount.cgi?&-dir=$sdDir")
+        // Step 1: get count AND tell the camera which directory we want.
+        // The HiDVR firmware expires our client registration after a few
+        // seconds of HTTP idleness — when that happens it answers every
+        // listing request with `SvrFuncResult="-2222"`. Detect that
+        // sentinel and re-register before retrying once.
+        var countBody = DashcamHttpClient.get("$base/getdirfilecount.cgi?&-dir=$sdDir")
+        if (countBody?.contains(NOT_REGISTERED_TOKEN) == true) {
+            Log.w(TAG, "fetchDir($sdDir): cam reports not-registered — re-registering and retrying")
+            registerClient(deviceIp, clientIp)
+            countBody = DashcamHttpClient.get("$base/getdirfilecount.cgi?&-dir=$sdDir")
+        }
         if (countBody == null) {
             Log.w(TAG, "getdirfilecount failed for $sdDir")
+            return emptyList()
+        }
+        if (countBody.contains(NOT_REGISTERED_TOKEN)) {
+            Log.w(TAG, "fetchDir($sdDir): still not-registered after retry — giving up")
             return emptyList()
         }
         val count = parseVarInt(countBody, "count")

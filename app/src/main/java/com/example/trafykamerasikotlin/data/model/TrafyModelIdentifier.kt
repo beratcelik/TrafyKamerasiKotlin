@@ -31,13 +31,42 @@ object TrafyModelIdentifier {
     )
 
     /**
-     * Returns the Trafy product name for [device], or [fallback] if the
-     * model isn't recognised. [fallback] is typically
-     * `device.protocol.displayName` (e.g. "HiSilicon DVR").
+     * Wi-Fi SSID prefixes (case-insensitive) keyed to the Trafy product name.
+     * Used when the firmware doesn't expose a model over HTTP — the only
+     * remaining product-identifying signal is the SSID. Order matters: a
+     * longer / more specific prefix should appear before a shorter one if
+     * they overlap. Each entry is paired with the chipset protocol it must
+     * match, since two different products can share an SSID prefix
+     * (HiDvr_… is HI_DVR; HisDvr-… is EEASYTECH).
+     */
+    private val SSID_TO_TRAFY: List<Triple<ChipsetProtocol, String, String>> = listOf(
+        Triple(ChipsetProtocol.EEASYTECH, "HisDvr-", "Trafy Dos Pro"),
+    )
+
+    /**
+     * Last-resort per-chipset fallback: if a chipset currently ships exactly
+     * one Trafy product, return its name even when no model / SSID match
+     * was found. Replace with explicit mappings as the lineup grows.
+     */
+    private val PROTOCOL_DEFAULT_TRAFY = mapOf(
+        ChipsetProtocol.EEASYTECH to "Trafy Dos Pro",
+    )
+
+    /**
+     * Returns the Trafy product name for [device], or [fallback] if no
+     * mapping matches. [fallback] is typically `device.protocol.displayName`.
      */
     fun displayName(device: DeviceInfo?, fallback: String): String {
         if (device == null) return fallback
         device.model?.let { MODEL_TO_TRAFY[it]?.let { return it } }
+        device.ssid?.let { ssid ->
+            SSID_TO_TRAFY
+                .firstOrNull { (proto, prefix, _) ->
+                    proto == device.protocol && ssid.startsWith(prefix, ignoreCase = true)
+                }
+                ?.let { return it.third }
+        }
+        PROTOCOL_DEFAULT_TRAFY[device.protocol]?.let { return it }
         return fallback
     }
 }

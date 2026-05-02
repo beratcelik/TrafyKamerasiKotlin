@@ -9,7 +9,7 @@ enum class ChipsetProtocol(
     MSTAR(      deviceIp = "192.168.1.1",    displayName = "MStar"),
     MSTAR_HZ(   deviceIp = "192.72.1.1",     displayName = "MStar HZ"),
     SIGMA_STAR( deviceIp = "192.168.201.1",  displayName = "SigmaStar"),
-    EEASYTECH(  deviceIp = "192.168.169.1",  displayName = "Eeasytech"),
+    EEASYTECH(  deviceIp = "192.168.169.1",  displayName = "Easytech"),
     GENERALPLUS(deviceIp = "192.168.25.1",   displayName = "Trafy Uno"),
     ALLWINNER_V853(deviceIp = "192.168.35.1", displayName = "Allwinner V853 (A19)"),
 }

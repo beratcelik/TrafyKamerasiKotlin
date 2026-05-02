@@ -17,7 +17,6 @@ import coil.request.Options
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -56,14 +55,23 @@ class HiDvrThumbnailFetcher(
         val cached = File(cacheDir, "$cacheKey.jpg")
 
         if (!cached.exists() || cached.length() == 0L) {
-            // Gate every cam HTTP request through CamHttpGate.mutex so a
-            // Media-tab listing call (also gated) doesn't fight with this
-            // thumbnail extraction for one of the cam's two HTTP slots.
-            // extractSemaphore is the inner cap; the gate is the outer queue.
+            // Snapshot the gate generation at entry. A newer Media load
+            // (e.g. user re-entering the tab) bumps the generation; queued
+            // extractions check at every step and bail before touching the
+            // cam, so the new listing isn't starved by stale thumbnails.
+            //
+            // We deliberately do NOT hold CamHttpGate.mutex during MMR.
+            // MMR's native call ignores coroutine cancellation and can
+            // hold a mutex for tens of seconds while listing's HTTP times
+            // out the cam-side client registration. Listing has its own
+            // -2222 retry, so they coexist via the connection-level
+            // semaphore (1 permit) without a global serialisation lock.
+            val startGen = CamHttpGate.currentGeneration()
             extractSemaphore.withPermit {
-                CamHttpGate.mutex.withLock {
-                    extractFrame(httpUrl, cached)
+                if (CamHttpGate.currentGeneration() != startGen) {
+                    throw RuntimeException("Stale thumbnail request — superseded by a newer Media load")
                 }
+                extractFrame(httpUrl, cached)
             }
         }
 

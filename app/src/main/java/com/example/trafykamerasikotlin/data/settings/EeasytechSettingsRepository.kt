@@ -1,5 +1,6 @@
 package com.example.trafykamerasikotlin.data.settings
 
+import android.content.Context
 import android.util.Log
 import com.example.trafykamerasikotlin.data.model.SettingItem
 import com.example.trafykamerasikotlin.data.model.SettingOption
@@ -23,7 +24,7 @@ import org.json.JSONObject
  *
  * Reference: EeasytechProtocol.java, EeasytechConst.java in golook-jadx
  */
-class EeasytechSettingsRepository {
+class EeasytechSettingsRepository(private val context: Context) {
 
     companion object {
         private const val TAG = "Trafy.EeasytechRepo"
@@ -83,10 +84,11 @@ class EeasytechSettingsRepository {
                 Log.v(TAG, "  $key value='$currentValue' label='$currentLabel'")
                 SettingItem(
                     key               = key,
-                    title             = EeasytechTranslations.title(key),
+                    title             = EeasytechTranslations.title(context, key),
                     currentValue      = currentValue,
                     currentValueLabel = currentLabel,
                     options           = options,
+                    description       = EeasytechTranslations.description(context, key),
                 )
             }
 
@@ -150,7 +152,7 @@ class EeasytechSettingsRepository {
                     val indexVal = "${indexArr.optInt(j, j)}"
                     options.add(SettingOption(
                         value = indexVal,
-                        label = EeasytechTranslations.optionLabel(name, displayStr, displayStr),
+                        label = EeasytechTranslations.optionLabel(context, name, displayStr, displayStr),
                     ))
                 }
                 if (options.isNotEmpty()) result[name] = options

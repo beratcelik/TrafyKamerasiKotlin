@@ -67,6 +67,7 @@
     <string name="media_tab_back">Back</string>
     <string name="media_tab_inside">Inside</string>
     <string name="media_tab_photos">Photos</string>
+    <string name="media_tab_videos">Videos</string>
     <string name="media_sd_usage_fmt">SD card: %1$.1f / %2$.1f GB</string>
     <string name="media_action_play">Play</string>
     <string name="media_action_view">View</string>
@@ -116,6 +117,13 @@
     <string name="settings_feedback_unsupported">The camera didn\'t accept this change. Its firmware may not support modifying this setting.</string>
     <string name="settings_feedback_wifi_saved">Wi-Fi password updated. Reconnect with the new password.</string>
     <string name="settings_feedback_apn_saved">APN updated.</string>
+
+    <!-- "About Camera" dialog -->
+    <string name="about_cam_label_model">Model</string>
+    <string name="about_cam_label_software">Software Version</string>
+    <string name="about_cam_label_clock">Camera Clock</string>
+    <string name="about_cam_unknown">Unknown</string>
+    <string name="about_cam_dialog_title">About</string>
 
     <!-- Raw settings -->
     <string name="raw_title">Raw Settings Dump</string>
@@ -221,6 +229,65 @@
     <string name="hidvr_desc_speech">Lets you control the camera with voice commands. With English selected the camera responds to phrases like \"Take a picture\", \"Start recording\" and \"Stop recording\".</string>
     <string name="hidvr_desc_format">Erases everything on the SD card. This cannot be undone.</string>
     <string name="hidvr_desc_reset">Resets all camera settings to their default values.</string>
+
+    <!-- Eeasytech camera settings (Trafy Dos / Dos Pro / Tres) — titles -->
+    <string name="eeasy_title_rec_resolution">Video Resolution</string>
+    <string name="eeasy_title_rec_split_duration">Clip Length</string>
+    <string name="eeasy_title_mic">Audio Recording</string>
+    <string name="eeasy_title_light_fre">Anti-Flicker</string>
+    <string name="eeasy_title_encodec">Video Codec</string>
+    <string name="eeasy_title_video_flip">Flip &amp; Mirror</string>
+    <string name="eeasy_title_gsr_sensitivity">G-Sensor Sensitivity</string>
+    <string name="eeasy_title_parking_mode">Parking Mode</string>
+    <string name="eeasy_title_ev">Exposure</string>
+    <string name="eeasy_title_speaker">Volume</string>
+    <string name="eeasy_title_screen_standby">Screen Sleep</string>
+    <string name="eeasy_title_osd">Date Stamp</string>
+    <string name="eeasy_title_speed_unit">Speed Unit</string>
+    <string name="eeasy_title_lowfps_rec">Timelapse Recording</string>
+    <string name="eeasy_title_timelapse_rate">Timelapse Rate</string>
+    <string name="eeasy_title_park_gsr_sensitivity">Parking G-Sensor</string>
+    <string name="eeasy_title_park_record_time">Parking Record Time</string>
+    <string name="eeasy_title_parking_monitor">Parking Monitor</string>
+    <string name="eeasy_title_lowbat_protect">Low Battery Protection</string>
+    <string name="eeasy_title_bat_vol">Cutoff Voltage</string>
+    <string name="eeasy_title_voice_control">Voice Control</string>
+    <string name="eeasy_title_audio_change">Audio Output</string>
+    <string name="eeasy_title_gps">GPS</string>
+    <string name="eeasy_title_adas">ADAS</string>
+
+    <!-- Eeasytech descriptions -->
+    <string name="eeasy_desc_rec_split_duration">Recordings are split into a new file at the end of this duration. Shorter = easier sharing.</string>
+    <string name="eeasy_desc_mic">Captures cabin audio via the camera\'s microphone.</string>
+    <string name="eeasy_desc_light_fre">Reduces flicker from fluorescent / LED lights. 50 Hz for Europe (incl. Türkiye); 60 Hz for North America.</string>
+    <string name="eeasy_desc_encodec">H.265 saves space; H.264 has wider device compatibility.</string>
+    <string name="eeasy_desc_gsr_sensitivity">Impact threshold for auto-locking the current clip when a collision is detected.</string>
+    <string name="eeasy_desc_parking_mode">Triggers recording from motion or impact while the car is parked.</string>
+    <string name="eeasy_desc_ev">Manual brightness compensation. Negative = darker, positive = brighter.</string>
+    <string name="eeasy_desc_screen_standby">Turns the screen off after this idle period. Recording continues in the background.</string>
+    <string name="eeasy_desc_lowfps_rec">Records very few frames per second to produce long-duration summary videos.</string>
+    <string name="eeasy_desc_timelapse_rate">Frame rate used for timelapse recording.</string>
+    <string name="eeasy_desc_park_gsr_sensitivity">Impact-detection sensitivity while in parking mode.</string>
+    <string name="eeasy_desc_park_record_time">How long to keep recording after a parked-car impact or motion event.</string>
+    <string name="eeasy_desc_parking_monitor">Whether parked recording is continuous or triggered by motion / impact.</string>
+    <string name="eeasy_desc_lowbat_protect">Cuts power to the camera when battery voltage drops below the chosen threshold; protects the car battery.</string>
+    <string name="eeasy_desc_bat_vol">Voltage threshold at which low-battery protection kicks in. 11.8 V is recommended for 12 V batteries.</string>
+    <string name="eeasy_desc_voice_control">Lets you control the camera by voice (e.g. \"take a picture\").</string>
+    <string name="eeasy_desc_audio_change">Where audio plays from (built-in speaker or Bluetooth).</string>
+    <string name="eeasy_desc_gps">Embeds location data into recordings; speed and route can be displayed during playback.</string>
+    <string name="eeasy_desc_video_flip">Flips the image vertically and/or mirrors it horizontally. Useful for upside-down installations.</string>
+    <string name="eeasy_desc_adas">Advanced Driver-Assistance Systems. Enables driving aids such as lane departure warnings and front-vehicle distance alerts.</string>
+
+    <!-- Eeasytech option labels -->
+    <string name="eeasy_opt_flip_normal">Normal</string>
+    <string name="eeasy_opt_flip_flip">Flip</string>
+    <string name="eeasy_opt_flip_mirror">Mirror</string>
+    <string name="eeasy_opt_flip_flip_mirror">Flip &amp; Mirror</string>
+    <string name="eeasy_opt_normrec">Normal Recording</string>
+    <string name="eeasy_opt_timelapse">Timelapse</string>
+    <string name="eeasy_opt_very_high">Very High</string>
+    <string name="eeasy_opt_front">Front</string>
+    <string name="eeasy_opt_back">Back</string>
 
     <!-- App updates -->
     <string name="settings_section_app">App</string>

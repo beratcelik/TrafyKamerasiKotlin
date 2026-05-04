@@ -187,6 +187,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 ChipsetProtocol.ALLWINNER_V853 -> {
                     _uiState.update { SettingsUiState.Loaded(current) }
                 }
+                ChipsetProtocol.EEASYTECH -> {
+                    val result = getEeasyRepo().executeAction(device.protocol.deviceIp, key)
+                    _uiState.update { SettingsUiState.Loaded(current) }
+                    _actionFeedback.update {
+                        when {
+                            result == null         -> SettingsActionFeedback.GenericFail
+                            key == "format"        -> SettingsActionFeedback.FormatOk
+                            key == "reset.cgi?"    -> SettingsActionFeedback.ResetOk
+                            else                   -> SettingsActionFeedback.GenericOk
+                        }
+                    }
+                }
                 else -> {
                     val result = getHiDvrRepo().executeAction(device.protocol.deviceIp, key)
                     _uiState.update { SettingsUiState.Loaded(current) }
@@ -230,6 +242,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         else WifiDialogState.Error
                     }
                 }
+                ChipsetProtocol.EEASYTECH -> {
+                    // The OEM Waycam app never queries the cam for current Wi-Fi
+                    // settings — there's no `getwifi` endpoint, only the write
+                    // path (`/app/setwifi?wifissid=` and `?wifipwd=`). Use the
+                    // SSID we're connected to and leave the password blank for
+                    // the user to type a new one.
+                    val ssid = device.ssid.orEmpty()
+                    _wifiDialog.update { WifiDialogState.Loaded(ssid, "") }
+                }
                 else -> {
                     val settings = getHiDvrRepo().getWifiSettings(device.protocol.deviceIp)
                     _wifiDialog.update {
@@ -252,11 +273,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     getGeneralplusRepo().setWifiPassword(device.protocol.deviceIp, newPassword)
                 ChipsetProtocol.ALLWINNER_V853 ->
                     getAllwinnerRepo().setWifiAp(device.protocol.deviceIp, ssid, newPassword)
+                ChipsetProtocol.EEASYTECH ->
+                    getEeasyRepo().setWifiPassword(device.protocol.deviceIp, ssid, newPassword)
                 else ->
                     getHiDvrRepo().setWifiPassword(device.protocol.deviceIp, ssid, newPassword)
             }
+            // On success the dialog closes — the WifiSaved snackbar/dialog
+            // tells the user what happened, and keeping the modal open after
+            // a successful write would obscure that feedback. Errors stay
+            // visible so the user can retry.
             _wifiDialog.update {
-                if (ok) WifiDialogState.Loaded(current.ssid, newPassword)
+                if (ok) WifiDialogState.Hidden
                 else WifiDialogState.Error
             }
             if (ok) _actionFeedback.update { SettingsActionFeedback.WifiSaved }

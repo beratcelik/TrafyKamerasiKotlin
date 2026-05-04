@@ -33,8 +33,8 @@ android {
         applicationId = "com.example.trafykamerasikotlin"
         minSdk = 24
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.3.1"
+        versionCode = 7
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -134,6 +134,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.ijkplayer)
     implementation(libs.tink.android)
+    // KCP (reliable UDP) — used by Allwinner V853 cams for live preview and
+    // recorded-file playback. Pure-Java, no Netty dependency.
+    implementation(libs.kcp.base)
     // ONNX Runtime for the plate-OCR model (CCT-S transformer). Kept separate
     // from the NCNN stack because the CCT's attention ops don't convert
     // cleanly to NCNN on this version (same reason YOLO26 CPU backend breaks).

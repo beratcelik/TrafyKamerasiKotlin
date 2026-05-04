@@ -43,6 +43,12 @@ object EeasytechTranslations {
         "audio_change"          to R.string.eeasy_title_audio_change,
         "gps"                   to R.string.eeasy_title_gps,
         "adas"                  to R.string.eeasy_title_adas,
+        // Action sentinel keys reused from the HiDvr settings flow so
+        // SettingsScreen's destructive-confirmation and Wi-Fi-dialog routing
+        // can share the same key constants across chipsets.
+        "getwifi.cgi?"          to R.string.hidvr_title_wifi_settings,
+        "format"                to R.string.hidvr_title_format,
+        "reset.cgi?"            to R.string.hidvr_title_reset,
     )
 
     /** One-line explanations for non-obvious settings. */
@@ -68,6 +74,8 @@ object EeasytechTranslations {
         "gps"                   to R.string.eeasy_desc_gps,
         "video_flip"            to R.string.eeasy_desc_video_flip,
         "adas"                  to R.string.eeasy_desc_adas,
+        "format"                to R.string.hidvr_desc_format,
+        "reset.cgi?"            to R.string.hidvr_desc_reset,
     )
 
     /** Generic on/off/high/low/etc — case-folded so "ON"/"on"/"On" all map. */

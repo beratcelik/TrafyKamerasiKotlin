@@ -762,14 +762,17 @@ private fun WifiPasswordDialog(
     val isError   = state is WifiDialogState.Error
 
     // Only re-initialize from camera data when the Loaded state first arrives.
-    // Using the ssid as the key means the field won't reset while the user types.
+    // Re-keying on the original cam-supplied ssid means switching cams
+    // refreshes the field, but local edits don't get clobbered while the
+    // dialog stays open.
     val loadedState = state as? WifiDialogState.Loaded
+    var ssid         by remember(loadedState?.ssid) {
+        mutableStateOf(loadedState?.ssid ?: "")
+    }
     var password     by remember(loadedState?.ssid) {
         mutableStateOf(loadedState?.password ?: "")
     }
     var showPassword by remember { mutableStateOf(false) }
-
-    val ssid = loadedState?.ssid ?: ""
 
     AlertDialog(
         onDismissRequest = { if (!isLoading) onDismiss() },
@@ -799,8 +802,8 @@ private fun WifiPasswordDialog(
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedTextField(
                             value         = ssid,
-                            onValueChange = {},
-                            readOnly      = true,
+                            onValueChange = { ssid = it },
+                            singleLine    = true,
                             label         = {
                                 Text(
                                     text  = stringResource(R.string.settings_wifi_ssid_label),
@@ -813,7 +816,6 @@ private fun WifiPasswordDialog(
                                 unfocusedBorderColor = ColorTextSecondary,
                                 focusedTextColor     = ColorTextPrimary,
                                 unfocusedTextColor   = ColorTextPrimary,
-                                disabledTextColor    = ColorTextSecondary,
                             )
                         )
                         OutlinedTextField(
@@ -863,7 +865,7 @@ private fun WifiPasswordDialog(
             if (!isError) {
                 TextButton(
                     onClick  = { if (!isLoading) onSave(ssid, password) },
-                    enabled  = !isLoading && password.length >= 8
+                    enabled  = !isLoading && password.length >= 8 && ssid.isNotBlank()
                 ) {
                     Text(
                         text  = stringResource(R.string.common_save),

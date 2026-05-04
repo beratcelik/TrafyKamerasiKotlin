@@ -75,9 +75,17 @@ class EeasytechSettingsRepository(private val context: Context) {
         Log.d(TAG, "getparamvalue received (${valuesJson.length} bytes)")
         val valuesMap = parseParamValues(valuesJson)
 
-        // Build SettingItem list
+        // Build SettingItem list. Drop pickers the firmware reports as having
+        // only one option — there's nothing for the user to switch to and the
+        // dead row would just clutter the screen.
         val items = optionsMap
             .filter { (key, _) -> key !in EXCLUDED_KEYS }
+            .filter { (key, options) ->
+                if (options.size < 2) {
+                    Log.v(TAG, "  $key → only ${options.size} option(s), skipping")
+                    false
+                } else true
+            }
             .map { (key, options) ->
                 val currentValue = valuesMap[key] ?: ""
                 val currentLabel = options.find { it.value == currentValue }?.label ?: currentValue
@@ -92,8 +100,97 @@ class EeasytechSettingsRepository(private val context: Context) {
                 )
             }
 
-        Log.i(TAG, "fetchAll → ${items.size} settings")
-        return items
+        // Append the action rows (Wi-Fi dialog, Format SD, Factory Reset). The
+        // Easytech firmware doesn't surface these via getparamitems — only the
+        // OEM app exposes them, via dedicated `setparamvalue` calls. We reuse
+        // the HiDvr action sentinel keys (`getwifi.cgi?` / `format` /
+        // `reset.cgi?`) so SettingsScreen routing (Wi-Fi dialog,
+        // destructive-confirmation dialog) lights up without per-chipset
+        // branches.
+        val actions = listOf(
+            SettingItem(
+                key               = "getwifi.cgi?",
+                title             = EeasytechTranslations.title(context, "getwifi.cgi?", "Wi-Fi"),
+                currentValue      = "",
+                currentValueLabel = "",
+                options           = emptyList(),
+                description       = EeasytechTranslations.description(context, "getwifi.cgi?"),
+            ),
+            SettingItem(
+                key               = "format",
+                title             = EeasytechTranslations.title(context, "format", "Format"),
+                currentValue      = "",
+                currentValueLabel = "",
+                options           = emptyList(),
+                description       = EeasytechTranslations.description(context, "format"),
+            ),
+            SettingItem(
+                key               = "reset.cgi?",
+                title             = EeasytechTranslations.title(context, "reset.cgi?", "Reset"),
+                currentValue      = "",
+                currentValueLabel = "",
+                options           = emptyList(),
+                description       = EeasytechTranslations.description(context, "reset.cgi?"),
+            ),
+        )
+
+        val combined = items + actions
+        Log.i(TAG, "fetchAll → ${combined.size} settings (${items.size} pickers + ${actions.size} actions)")
+        return combined
+    }
+
+    /**
+     * Runs an Easytech action item. Endpoints sourced from the OEM Waycam
+     * app's own URL traces — they're plain GETs with no params, named
+     * directly after the operation:
+     *   • `/app/sdformat` — start SD card format.
+     *   • `/app/reset`    — factory reset.
+     */
+    suspend fun executeAction(deviceIp: String, key: String): String? {
+        val url = when (key) {
+            "format"     -> "http://$deviceIp/app/sdformat"
+            "reset.cgi?" -> "http://$deviceIp/app/reset"
+            else         -> {
+                Log.w(TAG, "executeAction: unknown key $key")
+                return null
+            }
+        }
+        Log.i(TAG, "executeAction $key → $url")
+        val ok = DashcamHttpClient.probe(url)
+        Log.i(TAG, "executeAction $key → success=$ok")
+        return if (ok) "" else null
+    }
+
+    /**
+     * Updates SSID and/or password via `/app/setwifi?wifissid=…` and
+     * `/app/setwifi?wifipwd=…`, then commits with `/app/wifireboot` —
+     * mirrors the OEM Waycam app exactly (confirmed via its logcat URL
+     * traces). Without the trailing wifireboot the cam silently stages
+     * the values but never rebroadcasts the AP, so the user thinks the
+     * change was lost.
+     *
+     * Blank parameters are skipped so callers can change SSID and password
+     * independently. wifireboot only fires if at least one write happened.
+     */
+    suspend fun setWifiPassword(deviceIp: String, ssid: String, password: String): Boolean {
+        var ssidOk = true
+        var passOk = true
+        var wrote = false
+        if (ssid.isNotBlank()) {
+            ssidOk = DashcamHttpClient.probe("http://$deviceIp/app/setwifi?wifissid=$ssid")
+            wrote = true
+        }
+        if (password.isNotBlank()) {
+            passOk = DashcamHttpClient.probe("http://$deviceIp/app/setwifi?wifipwd=$password")
+            wrote = true
+        }
+        if (wrote) {
+            // Commit. The cam restarts its AP after this returns, so the phone
+            // briefly loses the dashcam Wi-Fi — that's expected, not a failure.
+            DashcamHttpClient.probe("http://$deviceIp/app/wifireboot")
+        }
+        Log.i(TAG, "setWifiPassword: ssidOk=$ssidOk passOk=$passOk wrote=$wrote")
+        return ssidOk && passOk
     }
 
     /**
@@ -109,8 +206,9 @@ class EeasytechSettingsRepository(private val context: Context) {
     }
 
     /**
-     * Tells the camera to exit settings mode.
-     * Called when the user leaves the Settings screen.
+     * Exits settings mode. The cam keeps recording while in settings mode
+     * (no encoder contention), so no explicit resume is needed here —
+     * HomeScreen reaffirms `rec=1` when the user lands on the main page.
      */
     suspend fun exitSettings(deviceIp: String) {
         val ok = DashcamHttpClient.probe("http://$deviceIp/app/setting?param=exit")

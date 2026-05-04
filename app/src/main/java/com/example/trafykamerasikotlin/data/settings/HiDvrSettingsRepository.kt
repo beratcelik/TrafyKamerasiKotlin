@@ -142,14 +142,23 @@ class HiDvrSettingsRepository(private val context: Context) {
                     val options = raw.split(",")
                         .filter { it.isNotEmpty() }
                         .map { value -> SettingOption(value, HiDvrTranslations.optionLabel(context, key, value, value)) }
-                    SettingItem(
-                        key               = key,
-                        title             = HiDvrTranslations.title(context, key, key),
-                        currentValue      = "",
-                        currentValueLabel = "",
-                        options           = options,
-                        description       = HiDvrTranslations.description(context, key),
-                    )
+                    if (options.size < 2) {
+                        // Cam exposes only one value — no choice to offer the user. Hide.
+                        // E.g. Trafy Dos firmware reports MEDIAMODE="1080P_1080P" and
+                        // ENC_PAYLOAD_TYPE="H264" only; rendering a picker with a
+                        // single option is dead UX.
+                        Log.v(TAG, "  $key → only ${options.size} option(s), skipping")
+                        null
+                    } else {
+                        SettingItem(
+                            key               = key,
+                            title             = HiDvrTranslations.title(context, key, key),
+                            currentValue      = "",
+                            currentValueLabel = "",
+                            options           = options,
+                            description       = HiDvrTranslations.description(context, key),
+                        )
+                    }
                 }
             }
         }.awaitAll().filterNotNull()
@@ -355,14 +364,23 @@ class HiDvrSettingsRepository(private val context: Context) {
                                     HiDvrTranslations.optionLabel(context, menuKey, "2", "2"),
                                 ))
                             }
-                            result.add(SettingItem(
-                                key              = menuKey,
-                                title            = menuTitle,
-                                currentValue     = "",
-                                currentValueLabel = "",
-                                options          = menuOptions.toList(),
-                                description      = HiDvrTranslations.description(context, menuKey),
-                            ))
+                            // Hide picker rows the firmware doesn't actually let
+                            // the user change. Action items (Format, Reset, Wi-Fi)
+                            // legitimately have zero <item> children — keep those.
+                            // We only drop pickers whose option list collapsed to
+                            // exactly one entry (no real choice for the user).
+                            if (menuOptions.size == 1) {
+                                Log.v(TAG, "parseMenuXml: $menuKey has only one option, skipping")
+                            } else {
+                                result.add(SettingItem(
+                                    key              = menuKey,
+                                    title            = menuTitle,
+                                    currentValue     = "",
+                                    currentValueLabel = "",
+                                    options          = menuOptions.toList(),
+                                    description      = HiDvrTranslations.description(context, menuKey),
+                                ))
+                            }
                         }
                     }
                 }

@@ -1,6 +1,11 @@
 package com.example.trafykamerasikotlin.data.allwinner
 
 import android.util.Log
+import io.netty.buffer.ByteBuf
+import io.netty.buffer.Unpooled
+import kcp.IKcp
+import kcp.Kcp
+import kcp.KcpOutput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -13,6 +18,8 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.DatagramPacket
@@ -77,6 +84,20 @@ internal class AllwinnerRtp2pClient private constructor(
         private const val RECV_BUFFER_SIZE = 65_536
         private const val HEARTBEAT_SIZE = 340
         private const val MAGIC = 0x00102025
+        /**
+         * Bytes prefixed to each KCP-reassembled media chunk by the cam:
+         * `[4B seq LE][12B opaque header]`. Stripped before the payload is
+         * forwarded to the player. Empirically derived from the cam's
+         * stream — exact layout of the 12-byte header isn't documented;
+         * it varies per packet and may include nonce/timestamp/type fields.
+         */
+        private const val INNER_HEADER_SIZE = 16
+
+        /** Magic bytes that mark a kcp-msg-header inside a KCP message: `d1 1d f2 10`. */
+        private const val MAGIC_B0 = 0xd1.toByte()
+        private const val MAGIC_B1 = 0x1d.toByte()
+        private const val MAGIC_B2 = 0xf2.toByte()
+        private const val MAGIC_B3 = 0x10.toByte()
         /** Bytes 32..35 of the heartbeat — observed as constant across all sessions. */
         private val FIXED_FLAGS = byteArrayOf(0x01, 0x03, 0x01, 0x0a)
 
@@ -218,6 +239,22 @@ internal class AllwinnerRtp2pClient private constructor(
     @Volatile private var closed = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var heartbeatJob: Job? = null
+    /**
+     * Tracks the most recently seen frame type within the receive loop.
+     * Continuation chunks (no `00 11 1?/2? d8` tag) inherit the type of the
+     * frame they're extending. We only forward video continuations; audio
+     * continuations are dropped along with their headers.
+     */
+    @Volatile private var lastFrameWasVideo = false
+    /**
+     * Accumulates the bytes of the current video frame across multiple
+     * inner-frames / KCP messages. Flushed when a new video tag arrives
+     * (start of a different frame) or when an audio tag arrives (current
+     * video frame complete). Each flush emits one [ByteArray] on the
+     * outer Flow — i.e. one logical H.264 access unit — so the muxer can
+     * wrap it in exactly one PES packet with one PTS.
+     */
+    private val frameAccum = java.io.ByteArrayOutputStream(64 * 1024)
     // Sequence byte at heartbeat offset 48; rolls over at 256 in the OEM capture too.
     private var heartbeatSeq = 0
 
@@ -235,6 +272,109 @@ internal class AllwinnerRtp2pClient private constructor(
 
     init {
         Log.i(TAG, "rtp2p socket: local=$localIpLe (LE)/$localPort target=${socket.remoteSocketAddress}")
+    }
+
+    /**
+     * Two kinds of KCP messages from this cam, distinguished by what's at
+     * bytes 4..7 of the message:
+     *
+     *   1. **Frame-start / tagged**: `[4B seq][d11df210 magic][4B][4B] +
+     *      [4B type tag] + payload`. Total 20-byte preamble before the
+     *      payload of the first inner-segment. May contain MULTIPLE
+     *      inner-messages glued together; we scan for additional magics
+     *      to split them apart.
+     *
+     *   2. **Continuation**: `[4B seq] + raw payload bytes`. NO magic, NO
+     *      type tag — the cam just streams the next chunk of the current
+     *      frame's H.264 bytes. Strip only the seq and append.
+     *
+     * Earlier we treated case 2 as if it had a 16B header too, which lost
+     * 12 bytes per continuation message — that's where the vertical-band
+     * corruption was coming from (an IDR slice of ~80 packets was missing
+     * ≈1 KB of slice data).
+     */
+    private fun consumeKcpMessage(kcpMsg: ByteArray, emit: (ByteArray) -> Unit) {
+        if (kcpMsg.size < 4) return
+
+        val hasHeader = kcpMsg.size >= 8 &&
+            kcpMsg[4] == MAGIC_B0 && kcpMsg[5] == MAGIC_B1 &&
+            kcpMsg[6] == MAGIC_B2 && kcpMsg[7] == MAGIC_B3
+
+        if (!hasHeader) {
+            // Pure continuation: seq# followed by raw payload bytes.
+            if (lastFrameWasVideo && kcpMsg.size > 4) {
+                frameAccum.write(kcpMsg, 4, kcpMsg.size - 4)
+            }
+            return
+        }
+
+        // Header-bearing message. Find every embedded inner-message
+        // boundary (additional `d11df210` magics inside the same KCP
+        // message — the cam sometimes packs multiple inner-frames in one
+        // KCP send).
+        val boundaries = ArrayList<Int>(4)
+        boundaries.add(0)
+        var i = 8
+        while (i + 4 <= kcpMsg.size) {
+            if (kcpMsg[i] == MAGIC_B0 && kcpMsg[i + 1] == MAGIC_B1 &&
+                kcpMsg[i + 2] == MAGIC_B2 && kcpMsg[i + 3] == MAGIC_B3
+            ) {
+                boundaries.add(i - 4)
+                i += INNER_HEADER_SIZE
+            } else {
+                i++
+            }
+        }
+
+        for (k in boundaries.indices) {
+            val start = boundaries[k]
+            val end = if (k + 1 < boundaries.size) boundaries[k + 1] else kcpMsg.size
+            if (end - start <= INNER_HEADER_SIZE) continue
+            val afterHdr = kcpMsg.copyOfRange(start + INNER_HEADER_SIZE, end)
+            consumeInnerSegment(afterHdr, emit)
+        }
+    }
+
+    /**
+     * Routes a single inner-segment (post 16B header) into the per-frame
+     * accumulator. Three classes of segment, all detected by the upper
+     * 24 bits of the 4-byte type tag (the low byte's flag bits aren't
+     * part of frame identity):
+     *
+     *   • `00 11 10 ??` — video tag → flush + start new frame.
+     *   • `00 11 20 ??` — audio tag → flush, then drop this segment.
+     *   • no recognisable tag → continuation of current frame; appended
+     *     verbatim if the last typed segment was video, else dropped.
+     */
+    private fun consumeInnerSegment(seg: ByteArray, emit: (ByteArray) -> Unit) {
+        if (seg.size < 4) {
+            if (lastFrameWasVideo) frameAccum.write(seg, 0, seg.size)
+            return
+        }
+        val b0 = seg[0].toInt() and 0xff
+        val b1 = seg[1].toInt() and 0xff
+        val b2 = seg[2].toInt() and 0xff
+        when {
+            b0 == 0x00 && b1 == 0x11 && b2 == 0x10 -> {
+                flushFrame(emit)
+                lastFrameWasVideo = true
+                frameAccum.write(seg, 4, seg.size - 4)
+            }
+            b0 == 0x00 && b1 == 0x11 && b2 == 0x20 -> {
+                flushFrame(emit)
+                lastFrameWasVideo = false
+            }
+            else -> {
+                if (lastFrameWasVideo) frameAccum.write(seg, 0, seg.size)
+            }
+        }
+    }
+
+    private fun flushFrame(emit: (ByteArray) -> Unit) {
+        if (frameAccum.size() > 0) {
+            emit(frameAccum.toByteArray())
+            frameAccum.reset()
+        }
     }
 
     private fun buildHeartbeat(): ByteArray {
@@ -286,24 +426,124 @@ internal class AllwinnerRtp2pClient private constructor(
     }
 
     /**
-     * Cold Flow of raw inbound UDP payloads. Each datagram is emitted as its own
-     * ByteArray with no reassembly. First 3 packets are hex-dumped so the caller can
-     * inspect whether datagrams are raw MPEG-TS, RTP-wrapped, or something else.
+     * Cold Flow of reassembled stream bytes. Inbound UDP datagrams come in two
+     * shapes on this transport:
+     *
+     *   • **340-byte heartbeat ACKs** — first 4 bytes zero, then the same
+     *     `MAGIC` we send out. These echo our keep-alives and carry no media;
+     *     they're filtered out before reaching the player.
+     *   • **KCP-PUSH frames** — non-zero conv (first 4 bytes) followed by the
+     *     standard KCP header (cmd=0x51 for data). Multiple datagrams form
+     *     one logical message via fragmentation/sequencing; KCP handles
+     *     reassembly, ordering, and retransmission. The reassembled payload
+     *     is the actual MPEG-TS chunk we feed the player.
+     *
+     * We use kcp-base's [Kcp] implementation: lazy-init on the first KCP
+     * packet (conv extracted from its header), feed each datagram through
+     * `input()`, drain reassembled bytes via `mergeRecv()`. A periodic
+     * `update()` coroutine drives ACK timing — without it the cam thinks
+     * we never got the data and stalls retransmitting.
      */
     fun packets(): Flow<ByteArray> = callbackFlow {
         val recvBuf = ByteArray(RECV_BUFFER_SIZE)
         val packet = DatagramPacket(recvBuf, recvBuf.size)
-        var n = 0
+        var kcp: IKcp? = null
+        val kcpLock = Mutex()
+        var debugN = 0
+
+        // KCP needs to send ACKs back to the cam — route them through the
+        // already-connected UDP socket. Capture-by-reference is safe; the
+        // socket only closes once at the end of this flow.
+        val kcpOutput = KcpOutput { buf, _ ->
+            val len = buf.readableBytes()
+            if (len <= 0) return@KcpOutput
+            val out = ByteArray(len)
+            buf.readBytes(out)
+            try {
+                socket.send(DatagramPacket(out, len))
+            } catch (e: Exception) {
+                if (!closed) Log.w(TAG, "kcp output send failed: ${e.message}")
+            }
+        }
+
+        // Periodic update — KCP schedules ACKs/retransmits from this tick.
+        val updateScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val updateJob = updateScope.launch {
+            while (isActive && !closed) {
+                kcp?.let { k ->
+                    try { kcpLock.withLock { k.update(System.currentTimeMillis()) } }
+                    catch (e: Exception) { if (!closed) Log.w(TAG, "kcp update: ${e.message}") }
+                }
+                delay(10)
+            }
+        }
+
         try {
             while (!closed) {
                 try {
                     socket.receive(packet)
-                    val copy = recvBuf.copyOfRange(0, packet.length)
-                    if (n < 3) {
-                        Log.d(TAG, "rx UDP #${++n} len=${copy.size} first32=" +
-                            copy.take(32).joinToString("") { "%02x".format(it) })
+                    val len = packet.length
+
+                    // Heartbeat ACK: 340-byte status frame with conv=0.
+                    val isHeartbeatAck = len == HEARTBEAT_SIZE &&
+                        recvBuf[0] == 0.toByte() && recvBuf[1] == 0.toByte() &&
+                        recvBuf[2] == 0.toByte() && recvBuf[3] == 0.toByte()
+                    if (isHeartbeatAck) {
+                        if (debugN < 3) {
+                            Log.d(TAG, "rx UDP #${++debugN} heartbeat-ack ${len}B — drop")
+                        }
+                        continue
                     }
-                    trySend(copy)
+
+                    // First KCP packet: extract conv and instantiate.
+                    if (kcp == null) {
+                        if (len < 24) {
+                            Log.w(TAG, "non-status packet too short for KCP: $len bytes — drop")
+                            continue
+                        }
+                        val conv = (recvBuf[0].toInt() and 0xff) or
+                            ((recvBuf[1].toInt() and 0xff) shl 8) or
+                            ((recvBuf[2].toInt() and 0xff) shl 16) or
+                            ((recvBuf[3].toInt() and 0xff) shl 24)
+                        kcp = Kcp(conv, kcpOutput).apply {
+                            // Stream-friendly defaults: nodelay=on, interval=10ms,
+                            // resend after 2 losses, no congestion control. Cam
+                            // never throttles us so disabling congestion is safe.
+                            nodelay(true, 10, 2, true)
+                            setMtu(1400)
+                        }
+                        Log.i(TAG, "kcp init: conv=0x${"%08x".format(conv)} (first KCP packet)")
+                    }
+
+                    // Feed datagram and drain any newly reassembled messages.
+                    val datagram = recvBuf.copyOfRange(0, len)
+                    kcpLock.withLock {
+                        val k = kcp ?: return@withLock
+                        val inBuf: ByteBuf = Unpooled.wrappedBuffer(datagram)
+                        k.input(inBuf, true, System.currentTimeMillis())
+                        // Use mergeRecv(): kcp-base returns each KCP message as a
+                        // single merged ByteBuf. The earlier worry — that this
+                        // would concatenate multiple distinct messages — was
+                        // actually the cam packing multiple inner-frames into
+                        // one KCP message, which we now handle by scanning for
+                        // the d11df210 magic inside [consumeKcpMessage]. The
+                        // List<ByteBuf> overload of recv() instead splits a
+                        // single message into wire-fragments, and processing
+                        // each fragment independently chops bytes mid-stream.
+                        while (k.canRecv()) {
+                            val merged: ByteBuf = k.mergeRecv() ?: break
+                            val outLen = merged.readableBytes()
+                            if (outLen <= 0) { merged.release(); continue }
+                            val out = ByteArray(outLen)
+                            merged.readBytes(out)
+                            merged.release()
+                            if (debugN < 6) {
+                                Log.d(TAG, "kcp emit #${++debugN} len=${out.size}" +
+                                    " firstBytes=${out.take(16).joinToString("") { "%02x".format(it) }}")
+                            }
+                            consumeKcpMessage(out) { frame -> trySend(frame) }
+                        }
+                    }
                 } catch (e: java.net.SocketTimeoutException) {
                     continue
                 } catch (e: Exception) {
@@ -312,17 +552,15 @@ internal class AllwinnerRtp2pClient private constructor(
                 }
             }
         } finally {
+            updateJob.cancel()
+            updateScope.cancel()
+            kcp?.let { runCatching { it.release() } }
             try { socket.close() } catch (_: Exception) {}
         }
-        // Receive loop is finished — close the producer channel so the
-        // consumer's collect returns and the surrounding coroutineScope can
-        // exit. Without this, awaitClose below would suspend forever waiting
-        // for an external cancel that never comes (the flow has no further
-        // packets to emit, so there's no reason to keep it alive). The
-        // [awaitClose] block is only reached when the consumer cancels first;
-        // it stays in place as a safety hook for socket cleanup.
         close()
         awaitClose {
+            updateJob.cancel()
+            updateScope.cancel()
             try { socket.close() } catch (_: Exception) {}
         }
     }.flowOn(Dispatchers.IO)

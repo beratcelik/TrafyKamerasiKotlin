@@ -57,9 +57,30 @@ fun AllwinnerFilePlayer(
     val player = remember(fileUri) {
         IjkMediaPlayer.loadLibrariesOnce(null)
         IjkMediaPlayer().apply {
+            // The Allwinner cam streams MPEG-TS now (wrapped by MpegTsMuxer
+            // around its raw H.264 elementary stream), so we let FFmpeg
+            // autoprobe — no `f=h264` override — and use live-friendly
+            // probe + buffer settings.
+            //
+            // Small analyzeduration / probesize so playback starts within
+            // ~100 ms instead of waiting on a 5 s probe. PAT/PMT are
+            // re-emitted every ~30 frames by our muxer, well within these
+            // windows.
             setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "analyzeduration", "100000")
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize",       "524288")
+            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize",       "102400")
             setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "fflags",          "discardcorrupt")
+            // Live-stream pacing: keep buffering, skip ahead if we get
+            // behind real-time, no seeking. `framedrop` lets the decoder
+            // drop late frames instead of hanging on them.
+            // Live preview: bound the buffer (infbuf=0 + small max-buffer-size)
+            // so accumulated lag drains by frame-dropping instead of growing.
+            // infbuf=1 (which IjkPlayer docs call "live mode") actually means
+            // unbounded buffering — wrong for our use case.
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "infbuf",           0L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "max-buffer-size",  1_000_000L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "framedrop",        10L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "packet-buffering", 1L)
+            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "min-frames",       2L)
             setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC,  "skip_loop_filter", 48L)
             // Software decoding for the same reason as the HiSilicon-family
             // playback overlay — see IjkVideoPlayerOverlay in MediaScreen.kt.

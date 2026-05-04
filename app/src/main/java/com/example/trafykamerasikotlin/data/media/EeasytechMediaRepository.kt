@@ -46,7 +46,13 @@ class EeasytechMediaRepository {
         return ok
     }
 
-    /** Exits playback mode. Call when the user leaves the Media screen. */
+    /**
+     * Exits playback mode. Playback doesn't compete with the encoder
+     * (file-system access can run alongside SD recording), so we don't
+     * need to explicitly resume recording here — the cam keeps recording
+     * throughout the Media browse session. The HomeScreen reaffirms
+     * `rec=1` as a safety net when the user returns to the main page.
+     */
     suspend fun exitPlayback(deviceIp: String) {
         val ok = DashcamHttpClient.probe("http://$deviceIp/app/playback?param=exit")
         Log.d(TAG, "playback?param=exit → $ok")

@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.trafykamerasikotlin.data.handshake.DashcamHandshakeManager
+import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.FailureReason
 import com.example.trafykamerasikotlin.data.model.HandshakeResult
@@ -160,6 +161,27 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             _uiState.update { DashcamUiState.Connecting }
             connectToSsid(ssid)
+        }
+    }
+
+    /**
+     * Tells the cam to (re-)start SD recording. Idempotent — if recording is
+     * already running, the cam happily ack's and the call is a no-op. Fired
+     * by HomeScreen when the user lands on the main page so any mode that
+     * paused recording (Live preview's `enterrecorder`, etc.) can't leak a
+     * permanently-paused cam.
+     *
+     * Currently only meaningful for Easytech (Trafy Dos / Tres family) —
+     * HiSilicon and GeneralPlus expose their own resume paths that already
+     * fire on screen exit.
+     */
+    fun ensureRecording() {
+        val device = (_uiState.value as? DashcamUiState.Connected)?.device ?: return
+        if (device.protocol != ChipsetProtocol.EEASYTECH) return
+        viewModelScope.launch {
+            DashcamHttpClient.probe(
+                "http://${device.protocol.deviceIp}/app/setparamvalue?param=rec&value=1"
+            )
         }
     }
 

@@ -75,6 +75,15 @@ fun HomeScreen(
         }
     }
 
+    // Belt-and-suspenders: every time the user lands on the Home tab with a
+    // connected cam, tell it to (re-)start recording. Live's `enterrecorder`
+    // pauses the encoder; if the user crashes out of Live or the exit path
+    // gets skipped for any reason, this ensures the cam is back to recording
+    // by the time the user is on the home screen.
+    LaunchedEffect(uiState) {
+        if (uiState is DashcamUiState.Connected) viewModel.ensureRecording()
+    }
+
     val isConnected     = uiState is DashcamUiState.Connected
     val isConnecting    = uiState is DashcamUiState.Connecting
     val isScanning      = uiState is DashcamUiState.ScanningWifi

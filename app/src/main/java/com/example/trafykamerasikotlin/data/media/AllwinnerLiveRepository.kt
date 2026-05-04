@@ -4,6 +4,8 @@ import android.app.Application
 import android.util.Log
 import com.example.trafykamerasikotlin.data.allwinner.AllwinnerRtp2pClient
 import com.example.trafykamerasikotlin.data.allwinner.AllwinnerSessionHolder
+import com.example.trafykamerasikotlin.data.allwinner.LiveTsHttpServer
+import com.example.trafykamerasikotlin.data.allwinner.MpegTsMuxer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -13,7 +15,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.RandomAccessFile
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -43,12 +44,16 @@ class AllwinnerLiveRepository(private val app: Application) {
         private const val INITIAL_RX_TIMEOUT_MS = 6_000L
     }
 
-    /** Cancels any in-flight stream, releases its temp file. Idempotent. */
+    /**
+     * Cancels any in-flight stream. Keeps the temp file in place so the
+     * developer can `adb pull` it for offline analysis (ffplay / mediainfo).
+     * Production behaviour can re-enable the delete once the format is
+     * confirmed end-to-end.
+     */
     fun stop() {
         currentJob?.cancel()
         currentJob = null
-        val tempFile = File(app.cacheDir, "allwinner_live.ts")
-        if (tempFile.exists()) tempFile.delete()
+        // Intentionally not deleting cache/allwinner_live.ts yet.
     }
 
     @Volatile private var currentJob: Job? = null
@@ -75,10 +80,27 @@ class AllwinnerLiveRepository(private val app: Application) {
                 Log.w(TAG, "stream: openLive returned null")
             }
 
-        val tempFile = File(app.cacheDir, "allwinner_live.ts").apply {
+        // Live MPEG-TS over local HTTP. Going via a `file://` path made
+        // FFmpeg stop at EOF as soon as it caught up to the writer; HTTP
+        // keeps the read open as long as the server keeps writing.
+        val tsServer = LiveTsHttpServer()
+        val muxer = MpegTsMuxer(object : java.io.OutputStream() {
+            override fun write(b: Int) {
+                tsServer.write(byteArrayOf(b.toByte()))
+            }
+            override fun write(buf: ByteArray, off: Int, len: Int) {
+                if (off == 0 && len == buf.size) tsServer.write(buf)
+                else tsServer.write(buf.copyOfRange(off, off + len))
+            }
+            override fun flush() { tsServer.flush() }
+        })
+        // DEBUG: dump the raw H.264 stream we're feeding the muxer (one
+        // frame per Flow emission, 4-byte BE length prefix). Used for
+        // offline analysis with ffprobe / hex inspection.
+        val debugRaw = File(app.cacheDir, "allwinner_live_raw.bin").apply {
             if (exists()) delete()
         }
-        val raf = RandomAccessFile(tempFile, "rw").apply { setLength(0) }
+        val debugRawOut = java.io.FileOutputStream(debugRaw)
 
         val receivedBytes = AtomicLong(0)
         val packetsSeen   = AtomicInteger(0)
@@ -105,7 +127,17 @@ class AllwinnerLiveRepository(private val app: Application) {
 
                 try {
                     client.packets().collect { payload ->
-                        raf.write(payload)
+                        // Debug dump first: 4-byte BE length prefix, then payload.
+                        debugRawOut.write(byteArrayOf(
+                            (payload.size ushr 24 and 0xFF).toByte(),
+                            (payload.size ushr 16 and 0xFF).toByte(),
+                            (payload.size ushr  8 and 0xFF).toByte(),
+                            (payload.size        and 0xFF).toByte(),
+                        ))
+                        debugRawOut.write(payload)
+                        debugRawOut.flush()
+                        muxer.writeFrame(payload)
+                        muxer.flush()
                         val total = receivedBytes.addAndGet(payload.size.toLong())
                         val n = packetsSeen.incrementAndGet()
                         lastRxTime.set(System.currentTimeMillis())
@@ -118,7 +150,7 @@ class AllwinnerLiveRepository(private val app: Application) {
                              System.currentTimeMillis() - started >= BUFFERED_EMIT_DELAY_MS)
                         ) {
                             bufferedEmitted = true
-                            onBuffered("file://${tempFile.absolutePath}")
+                            onBuffered(tsServer.url)
                         }
                     }
                 } finally {
@@ -130,7 +162,8 @@ class AllwinnerLiveRepository(private val app: Application) {
         } catch (e: Exception) {
             Log.w(TAG, "stream: collect failed: ${e.message}")
         } finally {
-            try { raf.close() } catch (_: Exception) {}
+            try { tsServer.close() } catch (_: Exception) {}
+            try { debugRawOut.close() } catch (_: Exception) {}
             try { client.close() } catch (_: Exception) {}
         }
         val n = packetsSeen.get()

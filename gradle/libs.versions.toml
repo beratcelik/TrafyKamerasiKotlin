@@ -15,6 +15,7 @@ media3 = "1.4.1"
 libvlc = "3.6.2"
 ijkplayer = "2024.9.7.1"
 tink = "1.13.0"
+kcpBase = "1.6"
 # Native vision backend — pinned versions. The NDK version is set via
 # android.ndkVersion in app/build.gradle.kts (Gradle does not consume these
 # version-catalog entries directly for NDK or prebuilt C++ libs). These keys
@@ -51,6 +52,10 @@ libvlc-all = { group = "org.videolan.android", name = "libvlc-all", version.ref 
 ijkplayer = { module = "com.github.RelinRan:IJKPlayer", version.ref = "ijkplayer" }
 tink-android = { group = "com.google.crypto.tink", name = "tink-android", version.ref = "tink" }
 onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
+# Pure-Java KCP (reliable UDP transport) used by the Allwinner V853 cams
+# (Trafy Dos Internet) — wraps live + playback streams. l42111996/java-Kcp's
+# `kcp-base` is the protocol-only artifact with no Netty dependency.
+kcp-base = { group = "com.github.l42111996", name = "kcp-base", version.ref = "kcpBase" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

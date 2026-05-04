@@ -52,11 +52,20 @@ class EeasytechLiveRepository {
     }
 
     /**
-     * Unregisters the client. Must be called when the user leaves the Live screen.
+     * Unregisters the client and tells the cam to resume SD recording.
+     * The 500ms gap between `exitrecorder` and `rec=1` is intentional —
+     * sending the resume immediately while the cam is still transitioning
+     * out of recorder mode produces `{"result":1,"info":"set fail"}` and
+     * has been observed to wedge the HTTP server entirely (firmware bug
+     * on the HI3516CV610-class boards used by Trafy Tres Pro). Letting
+     * the cam settle first avoids the lockup.
      */
     suspend fun exitLive(deviceIp: String) {
-        val ok = DashcamHttpClient.probe("http://$deviceIp/app/exitrecorder")
-        Log.d(TAG, "exitrecorder → $ok")
+        val exitOk = DashcamHttpClient.probe("http://$deviceIp/app/exitrecorder")
+        Log.d(TAG, "exitrecorder → $exitOk")
+        kotlinx.coroutines.delay(500)
+        val resumeOk = DashcamHttpClient.probe("http://$deviceIp/app/setparamvalue?param=rec&value=1")
+        Log.d(TAG, "resume rec → $resumeOk")
     }
 
     // ── Private helpers ────────────────────────────────────────────────────

@@ -74,7 +74,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         // Emit the Allwinner playback URI once we have ~512 KB or 2 s of buffered data.
         const val BUFFERED_EMIT_BYTES     = 512L * 1024L
         const val BUFFERED_EMIT_DELAY_MS  = 2_000L
-        const val EOF_IDLE_MS             = 3_000L
+        const val EOF_IDLE_MS             = 15_000L
         // If the device doesn't send a single UDP packet within this window, give up —
         // the firmware is refusing to stream (same behaviour the OEM app hits).
         const val INITIAL_RX_TIMEOUT_MS   = 6_000L
@@ -713,41 +713,49 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         }
         Log.i(TAG, "startAllwinnerStream: ${file.name}")
         allwinnerStreamActive = true
-        val ctx = getApplication<Application>()
-        val tempFile = File(ctx.cacheDir, "allwinner_play.ts").also {
-            if (it.exists()) it.delete()
-        }
         _allwinnerPlaybackUri.value = null
 
         allwinnerStreamJob = viewModelScope.launch {
+            // Stream MPEG-TS over loopback HTTP — same plumbing as the Live
+            // tab. file:// URLs would freeze the moment FFmpeg caught up to
+            // the writer (read() returns 0 at EOF on a regular file); HTTP
+            // keeps the socket open and FFmpeg keeps reading until we close.
+            val tsServer = com.example.trafykamerasikotlin.data.allwinner.LiveTsHttpServer()
+            val tsOut = object : java.io.OutputStream() {
+                override fun write(b: Int) { tsServer.write(byteArrayOf(b.toByte())) }
+                override fun write(buf: ByteArray, off: Int, len: Int) {
+                    if (off == 0 && len == buf.size) tsServer.write(buf)
+                    else tsServer.write(buf.copyOfRange(off, off + len))
+                }
+                override fun flush() { tsServer.flush() }
+                override fun close() { tsServer.close() }
+            }
             try {
                 val ok = streamAllwinnerFile(
                     deviceIp = device.protocol.deviceIp,
                     file     = file,
-                    outFile  = tempFile,
-                    onBuffered = { uri -> _allwinnerPlaybackUri.value = uri },
+                    tsOut    = tsOut,
+                    onBuffered = { _allwinnerPlaybackUri.value = tsServer.url },
                     progress = null,
                 )
                 if (!ok && _allwinnerPlaybackUri.value == null) {
                     _userMessages.emit(MediaUserMessage.PlaybackFailed)
                 }
             } finally {
-                // Reset the single-stream guard so the user can retry. stopAllwinnerStream
-                // also sets this false, but only runs if the user dismisses the overlay —
-                // which they can't do when the stream produces no data (no overlay appears).
                 allwinnerStreamActive = false
+                try { tsServer.close() } catch (_: Exception) {}
             }
         }
     }
 
-    /** Stops the active Allwinner playback stream and clears the temp file + URI. */
+    /** Stops the active Allwinner playback stream. The HTTP server bound by
+     *  [startAllwinnerStream] is closed in that coroutine's `finally` block
+     *  when the cancellation propagates. */
     fun stopAllwinnerStream() {
         allwinnerStreamJob?.cancel()
         allwinnerStreamJob = null
         _allwinnerPlaybackUri.value = null
         allwinnerStreamActive = false
-        val tempFile = File(getApplication<Application>().cacheDir, "allwinner_play.ts")
-        if (tempFile.exists()) tempFile.delete()
     }
 
     private fun downloadAllwinner(file: MediaFile) {
@@ -769,10 +777,11 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 withContext(Dispatchers.IO) { dir.mkdirs() }
                 val totalBytes = file.sizeBytes ?: 0L
+                val tsOut = java.io.BufferedOutputStream(java.io.FileOutputStream(outFile))
                 val ok = streamAllwinnerFile(
                     deviceIp = device.protocol.deviceIp,
                     file     = file,
-                    outFile  = outFile,
+                    tsOut    = tsOut,
                     onBuffered = null,
                     progress = { received ->
                         val now = System.currentTimeMillis()
@@ -820,20 +829,21 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Shared RTP2P-to-file pipeline used by both playback and download. Returns true
-     * iff at least one UDP packet was received and written. Closes the RTP2P client
-     * in all paths. Honors coroutine cancellation by closing the client immediately.
+     * Shared RTP2P pipeline for both playback and download. Each H.264 access
+     * unit emitted by [AllwinnerRtp2pClient] is wrapped in MPEG-TS via
+     * [com.example.trafykamerasikotlin.data.allwinner.MpegTsMuxer] and pushed
+     * to [tsOut] — IjkPlayer's lite FFmpeg only ships the mpegts demuxer, so
+     * raw H.264 wouldn't play. Returns true iff at least one frame arrived.
      *
-     * EOF heuristic: 3 s of RX inactivity after ≥1 packet OR `max(60 s, duration × 4)`
-     * absolute ceiling (duration parsed from filename). Neither is confirmed against
-     * the real device; they're pragmatic defaults matching the observed OEM behaviour
-     * ("gets stuck" instead of cleanly ending).
+     * EOF heuristic: 3 s of RX inactivity after ≥1 packet OR `max(60 s,
+     * duration × 4)` absolute ceiling (duration parsed from filename). The
+     * cam doesn't cleanly EOF — same firmware behaviour the OEM app hits.
      */
     private suspend fun streamAllwinnerFile(
         deviceIp: String,
         file: MediaFile,
-        outFile: File,
-        onBuffered: ((String) -> Unit)?,
+        tsOut: java.io.OutputStream,
+        onBuffered: (() -> Unit)?,
         progress: ((Long) -> Unit)?,
     ): Boolean = withContext(Dispatchers.IO) {
         val session = allwinnerRepo.session(deviceIp)
@@ -842,7 +852,11 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
             return@withContext false
         }
         val camid = AllwinnerMediaRepository.cameraIdFromName(file.name)
-        val epoch = parseEpochFromFileName(file.name)
+        // Prefer the cam-reported mtime; falling back to a filename parse only
+        // when the listing didn't include it. Sending the wrong value puts the
+        // cam into a degraded mode that drops most audio frames (verified
+        // against a CloudSpirit PCAP — the OEM uses mtime here).
+        val epoch = file.mtimeEpoch ?: parseEpochFromFileName(file.name)
         val durationSec = AllwinnerMediaRepository.parseDurationSecondsFromName(file.name)
         // If the device never sends the first packet within INITIAL_RX_TIMEOUT_MS,
         // the session is a dud — same firmware bug the OEM app hits. Fail fast so
@@ -860,7 +874,11 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         var bufferedEmitted = false
         val started = System.currentTimeMillis()
         val lastRxTime = AtomicLong(started)
-        val raf = RandomAccessFile(outFile, "rw").apply { setLength(0) }
+        val muxer = com.example.trafykamerasikotlin.data.allwinner.MpegTsMuxer(tsOut)
+        var videoCount = 0
+        var audioCount = 0
+        var audioBytes = 0L
+        var audioFrames = 0
         try {
             coroutineScope {
                 // Watchdog: cancel this scope if (a) no packet within INITIAL_RX_TIMEOUT_MS,
@@ -891,15 +909,42 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 try {
-                    client.packets().collect { payload ->
-                        raf.write(payload)
+                    client.packets().collect { sample ->
+                        // Playback mode: each video "frame" the cam ships is
+                        // actually a multi-AU chunk (the inner-segment framing
+                        // only marks the video stream once, not per-AU); each
+                        // audio chunk may carry several ADTS frames. The muxer
+                        // wants one AU and one ADTS frame per call, so split
+                        // before handing over.
+                        val payload = sample.data
+                        when (sample) {
+                            is com.example.trafykamerasikotlin.data.allwinner.AllwinnerRtp2pClient.Sample.Video -> {
+                                videoCount++
+                                val aus = com.example.trafykamerasikotlin.data.allwinner
+                                    .splitAnnexBIntoAccessUnits(payload)
+                                for (au in aus) muxer.writeFrame(au)
+                                if (videoCount <= 3) {
+                                    Log.d(TAG, "rx V #$videoCount len=${payload.size}" +
+                                        " firstBytes=${payload.take(16).joinToString("") { "%02x".format(it) }}")
+                                }
+                            }
+                            is com.example.trafykamerasikotlin.data.allwinner.AllwinnerRtp2pClient.Sample.Audio -> {
+                                audioCount++
+                                audioBytes += payload.size
+                                val frames = com.example.trafykamerasikotlin.data.allwinner
+                                    .splitAdtsFrames(payload)
+                                audioFrames += frames.size
+                                for (f in frames) muxer.writeAdtsFrame(f)
+                                if (audioCount <= 3) {
+                                    Log.d(TAG, "rx A #$audioCount len=${payload.size} adtsFrames=${frames.size}" +
+                                        " firstBytes=${payload.take(16).joinToString("") { "%02x".format(it) }}")
+                                }
+                            }
+                        }
+                        muxer.flush()
                         val total = receivedBytes.addAndGet(payload.size.toLong())
                         val n = packetsSeen.incrementAndGet()
                         lastRxTime.set(System.currentTimeMillis())
-                        if (n <= 3) {
-                            Log.d(TAG, "rx packet #$n len=${payload.size}" +
-                                " firstBytes=${payload.take(16).joinToString("") { "%02x".format(it) }}")
-                        }
                         progress?.invoke(total)
 
                         if (!bufferedEmitted && onBuffered != null &&
@@ -907,7 +952,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                              System.currentTimeMillis() - started >= BUFFERED_EMIT_DELAY_MS)
                         ) {
                             bufferedEmitted = true
-                            onBuffered("file://${outFile.absolutePath}")
+                            onBuffered()
                         }
                     }
                 } finally {
@@ -919,11 +964,12 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             Log.w(TAG, "streamAllwinnerFile: collect failed: ${e.message}")
         } finally {
-            try { raf.close() } catch (_: Exception) {}
+            try { tsOut.close() } catch (_: Exception) {}
             try { client.close() } catch (_: Exception) {}
         }
         val finalCount = packetsSeen.get()
-        Log.i(TAG, "streamAllwinnerFile: done, $finalCount packets, ${receivedBytes.get()} bytes")
+        Log.i(TAG, "streamAllwinnerFile: done, $finalCount packets, ${receivedBytes.get()} bytes" +
+            " (V=$videoCount A=$audioCount audioBytes=$audioBytes adtsFrames=$audioFrames)")
         if (finalCount == 0) {
             Log.w(TAG, "streamAllwinnerFile: device refused to stream (0 packets received)")
         }

@@ -24,4 +24,10 @@ data class MediaFile(
     // response unambiguously identifies the channel (dual-cam HiDVR); filename
     // suffix rules (_f/_b/_i) are the fallback when this is null.
     val cameraHint: String? = null,
+    // File mtime as a UNIX epoch (seconds), when reported by the protocol.
+    // Allwinner V853 returns this in `getvideos`; the cam's rtp2p file-open
+    // handshake takes the same value back as `time` to authenticate the file
+    // identity — sending 0 puts the cam into a degraded mode that drops most
+    // audio frames. Null for chipsets that don't expose mtime.
+    val mtimeEpoch: Long? = null,
 )

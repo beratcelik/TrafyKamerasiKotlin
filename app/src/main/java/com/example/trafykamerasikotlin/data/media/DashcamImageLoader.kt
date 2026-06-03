@@ -32,6 +32,10 @@ fun rememberDashcamImageLoader(network: Network?): ImageLoader {
                 // frame of the MP4 client-side. Used for HiDVR-family cams
                 // whose firmware doesn't generate `.thm` sidecars.
                 add(HiDvrThumbnailFetcher.Factory(context.applicationContext, network))
+                // allwinner-thumb://<ip>/<filename> → open a brief rtp2p
+                // session per file, decode the first frame, cache as JPEG.
+                // Allwinner V853 cams expose no server-side thumbnail RPC.
+                add(AllwinnerThumbnailFetcher.Factory(context.applicationContext))
             }
         if (network != null) {
             val ok = OkHttpClient.Builder()

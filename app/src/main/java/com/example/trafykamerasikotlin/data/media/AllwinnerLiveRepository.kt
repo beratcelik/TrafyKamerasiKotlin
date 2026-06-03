@@ -126,7 +126,12 @@ class AllwinnerLiveRepository(private val app: Application) {
                 }
 
                 try {
-                    client.packets().collect { payload ->
+                    client.packets().collect { sample ->
+                        // Live preview is video-only (Easytech-pattern: cam audio
+                        // is intentionally not surfaced for low-latency preview).
+                        // We still receive Sample.Audio events but skip muxing them.
+                        if (sample !is com.example.trafykamerasikotlin.data.allwinner.AllwinnerRtp2pClient.Sample.Video) return@collect
+                        val payload = sample.data
                         // Debug dump first: 4-byte BE length prefix, then payload.
                         debugRawOut.write(byteArrayOf(
                             (payload.size ushr 24 and 0xFF).toByte(),

@@ -96,13 +96,18 @@ class AllwinnerMediaRepository {
                 val v = vids.optJSONObject(j) ?: continue
                 val name = v.optString("name").takeIf { it.isNotEmpty() } ?: continue
                 val sizeBytes = v.optLong("size", -1L).takeIf { it > 0L }
+                val mtime = v.optLong("mtime", -1L).takeIf { it > 0L }
                 out += MediaFile(
                     path         = "allwinner://$date/$name",
                     httpUrl      = "",   // playback goes through the RTP2P UDP transport, not HTTP
-                    thumbnailUrl = "",   // device doesn't expose thumbnails; UI falls back to Movie icon
+                    // Cam has no thumbnail RPC (confirmed by reverse-engineering
+                    // CloudSpirit). [AllwinnerThumbnailFetcher] opens a brief
+                    // rtp2p session per file and decodes the first frame.
+                    thumbnailUrl = AllwinnerThumbnailFetcher.urlFor(deviceIp, name),
                     name         = name,
                     isPhoto      = false,
                     sizeBytes    = sizeBytes,
+                    mtimeEpoch   = mtime,
                 )
             }
         }

@@ -46,9 +46,22 @@ class OfflineVideoProcessor(
     sealed class State {
         object Idle : State()
         object WarmingUp : State()
-        data class Processing(val fractionDone: Float, val frameIndex: Long, val totalFrames: Long) : State()
+        /**
+         * `phase` exposes which of the two passes is running. `fractionDone`
+         * spans both passes — 0..0.5 is scan, 0.5..1.0 is encode. Callers
+         * that only display a single bar can use it directly; callers that
+         * want a label can read [phase].
+         */
+        data class Processing(
+            val fractionDone: Float,
+            val frameIndex:   Long,
+            val totalFrames:  Long,
+            val phase:        Phase = Phase.ENCODE,
+        ) : State()
         data class Done(val outputFile: File, val frameCount: Long) : State()
         data class Failed(val message: String) : State()
+
+        enum class Phase { SCAN, ENCODE }
     }
 
     private val _state = MutableStateFlow<State>(State.Idle)
@@ -97,28 +110,47 @@ class OfflineVideoProcessor(
             ocr.initialize()
             Log.i(TAG, "detectors warm: vehicle + plate + OCR ready")
 
-            encoder = OverlayVideoEncoder(
-                outputFile = outputMp4,
-                width = outW,
-                height = outH,
-                frameRate = fps.coerceAtLeast(15).coerceAtMost(60),
-            )
             Log.i(TAG, "processing → ${outputMp4.name}  src=${srcW}x${srcH} out=${outW}x${outH}@${fps}fps totalFrames=${source.totalFrames}")
+
+            val sourceSize = Size(srcW, srcH)
+            val totalFrames = source.totalFrames.takeIf { it > 0 } ?: -1L
+
+            // ── Pass 1: scan for the best plate crop per vehicle track ──
+            // We iterate the entire video once just to find the largest
+            // OCR-corroborated plate sample per track id. ByteTracker's id
+            // assignment is deterministic on the same input, so the ids we
+            // produce here will match the ones produced in pass 2 and the
+            // crops will pair up. We pay one extra decode + AI run; in
+            // exchange the burned-in video shows the SHARPEST sample of
+            // each plate from frame 1 (no need to wait for the car to come
+            // close before the plate becomes readable).
+            Log.i(TAG, "pass 1: scanning for best plate samples")
+            val bestPlates = scanForBestPlates(
+                source     = source,
+                sourceSize = sourceSize,
+                vehicle    = vehicle,
+                plate      = plate,
+                ocr        = ocr,
+                totalFrames = totalFrames,
+            )
+            Log.i(TAG, "pass 1 done: locked ${bestPlates.size} plates")
+
+            // ── Pass 2: encode, with pass 1's crops handed to the encoder ──
+            encoder = OverlayVideoEncoder(
+                outputFile        = outputMp4,
+                width             = outW,
+                height            = outH,
+                frameRate         = fps.coerceAtLeast(15).coerceAtMost(60),
+                initialPlateCrops = bestPlates,
+            )
 
             val tracker  = ByteTracker()
             val voteBook = PlateVoteBook()
-            val sourceSize = Size(srcW, srcH)
             var lastScene: TrackedScene? = null
 
-            val totalFrames = source.totalFrames.takeIf { it > 0 } ?: -1L
             var encoded = 0L
-
             for (frame in source.frames()) {
-                val argb = frame.bitmap  // already ARGB_8888 per the source contract
-
-                // Run inference on every Nth frame. On skipped frames we
-                // re-use the previous scene (Chunk 5's tracker already
-                // smooths motion between inference ticks).
+                val argb = frame.bitmap
                 val runInference = (frame.frameIndex % inferenceEveryN == 0L)
                 if (runInference) {
                     val scene = runSyncInference(
@@ -139,8 +171,9 @@ class OfflineVideoProcessor(
                 encoded++
 
                 if (encoded % 4L == 0L) {
-                    val fraction = if (totalFrames > 0) (encoded.toFloat() / totalFrames).coerceIn(0f, 1f) else 0f
-                    _state.value = State.Processing(fraction, encoded, totalFrames)
+                    val encodeFraction = if (totalFrames > 0) (encoded.toFloat() / totalFrames).coerceIn(0f, 1f) else 0f
+                    val overall = 0.5f + 0.5f * encodeFraction
+                    _state.value = State.Processing(overall, encoded, totalFrames, State.Phase.ENCODE)
                 }
             }
 
@@ -160,6 +193,70 @@ class OfflineVideoProcessor(
             try { plate?.release()   } catch (_: Throwable) {}
             try { ocr?.release()     } catch (_: Throwable) {}
         }
+    }
+
+    /**
+     * Pass 1: iterate the entire video and pick the largest plate crop per
+     * track id. "Largest" is a good proxy for "sharpest" — at the offline
+     * stage we have no real-time deadline, so spending one extra decode is
+     * fine, and the resulting per-track best sample is dramatically more
+     * legible than whatever happened to be visible at lock-on-the-fly time.
+     *
+     * We DON'T persist the per-frame [TrackedScene]s — pass 2 re-runs the
+     * tracker from scratch on the same video, which (with deterministic
+     * detectors + same input order) produces matching track ids.
+     */
+    private suspend fun scanForBestPlates(
+        source: VideoFrameSource,
+        sourceSize: Size,
+        vehicle: NcnnVehicleDetector,
+        plate:   NcnnPlateDetector,
+        ocr:     OnnxPlateOcr,
+        totalFrames: Long,
+    ): Map<Int, Bitmap> {
+        val tracker  = ByteTracker()
+        val voteBook = PlateVoteBook()
+        val bestArea = HashMap<Int, Float>()
+        val bestCrop = HashMap<Int, Bitmap>()
+
+        var scanned = 0L
+        for (frame in source.frames()) {
+            val argb = frame.bitmap
+            val runInference = (frame.frameIndex % inferenceEveryN == 0L)
+            if (runInference) {
+                val scene = runSyncInference(
+                    frameBitmap = argb,
+                    frameSource = sourceSize,
+                    tracker     = tracker,
+                    voteBook    = voteBook,
+                    vehicle     = vehicle,
+                    plate       = plate,
+                    ocr         = ocr,
+                    timestampNs = frame.presentationTimeUs * 1000L,
+                )
+                scene.plates?.forEach { p ->
+                    val trackId = p.parentTrackId ?: return@forEach
+                    val area = p.bbox.width() * p.bbox.height()
+                    if (area < MIN_PLATE_AREA_FOR_LOCK) return@forEach
+                    val prev = bestArea[trackId] ?: 0f
+                    if (area > prev) {
+                        val crop = cropBitmap(argb, p.bbox) ?: return@forEach
+                        bestCrop[trackId]?.recycle()
+                        bestCrop[trackId] = crop
+                        bestArea[trackId] = area
+                    }
+                }
+            }
+            argb.recycle()
+            scanned++
+
+            if (scanned % 4L == 0L) {
+                val scanFraction = if (totalFrames > 0) (scanned.toFloat() / totalFrames).coerceIn(0f, 1f) else 0f
+                val overall = 0.5f * scanFraction
+                _state.value = State.Processing(overall, scanned, totalFrames, State.Phase.SCAN)
+            }
+        }
+        return bestCrop
     }
 
     /**
@@ -241,5 +338,14 @@ class OfflineVideoProcessor(
         return w to h
     }
 
-    companion object { private const val TAG = "Trafy.OfflineVideo" }
+    companion object {
+        private const val TAG = "Trafy.OfflineVideo"
+
+        /**
+         * Below this source-pixel area we don't bother locking a crop —
+         * the resulting billboard would be a blur regardless. Tuned to
+         * roughly match the size at which our OCR starts being reliable.
+         */
+        private const val MIN_PLATE_AREA_FOR_LOCK = 20f * 8f
+    }
 }

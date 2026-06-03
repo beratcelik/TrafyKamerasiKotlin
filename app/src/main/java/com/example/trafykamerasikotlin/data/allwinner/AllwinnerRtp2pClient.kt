@@ -9,6 +9,7 @@ import kcp.KcpOutput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -93,6 +94,14 @@ internal class AllwinnerRtp2pClient private constructor(
          */
         private const val INNER_HEADER_SIZE = 16
 
+        /**
+         * Early-flush threshold — see [maybeFlushOnSize]. 128 KB is enough
+         * to hold a whole IDR plus parameter sets at 1080p, so the first
+         * decode can begin within ~250 ms of cam data instead of waiting
+         * for the next video tag.
+         */
+        private const val EARLY_FLUSH_BYTES = 128 * 1024
+
         /** Magic bytes that mark a kcp-msg-header inside a KCP message: `d1 1d f2 10`. */
         private const val MAGIC_B0 = 0xd1.toByte()
         private const val MAGIC_B1 = 0x1d.toByte()
@@ -113,6 +122,13 @@ internal class AllwinnerRtp2pClient private constructor(
                 put("start", 1)
                 put("camid", camid)
                 put("file", fileName)
+                // `time` is the file's mtime epoch — the cam uses it as a
+                // file-identity check. Wrong/zero values make the cam stream
+                // in a degraded mode that emits video but only ~4 ADTS audio
+                // frames in 60 seconds (verified by capturing CloudSpirit's
+                // request and comparing). Caller derives this from the cam's
+                // own getvideos response when possible; a filename-parsed
+                // fallback works only if local-time TZ matches the cam's.
                 put("time", epoch)
                 put("timeout", 600)
                 put("flag", 0)
@@ -242,19 +258,25 @@ internal class AllwinnerRtp2pClient private constructor(
     /**
      * Tracks the most recently seen frame type within the receive loop.
      * Continuation chunks (no `00 11 1?/2? d8` tag) inherit the type of the
-     * frame they're extending. We only forward video continuations; audio
-     * continuations are dropped along with their headers.
+     * frame they're extending. Both video and audio continuations are
+     * accumulated; the next tag transition flushes the right buffer.
      */
     @Volatile private var lastFrameWasVideo = false
     /**
      * Accumulates the bytes of the current video frame across multiple
      * inner-frames / KCP messages. Flushed when a new video tag arrives
      * (start of a different frame) or when an audio tag arrives (current
-     * video frame complete). Each flush emits one [ByteArray] on the
-     * outer Flow — i.e. one logical H.264 access unit — so the muxer can
-     * wrap it in exactly one PES packet with one PTS.
+     * video frame complete). Each flush emits one [Sample.Video] — i.e.
+     * one logical H.264 access unit — so the muxer can wrap it in exactly
+     * one PES packet with one PTS.
      */
-    private val frameAccum = java.io.ByteArrayOutputStream(64 * 1024)
+    private val videoAccum = java.io.ByteArrayOutputStream(64 * 1024)
+    /**
+     * Mirrors [videoAccum] for audio. Cam interleaves audio (`?? 11 20 ??`)
+     * and video tags; we keep both streams alive so the muxer can produce a
+     * file with sound. Flushed on every video↔audio transition.
+     */
+    private val audioAccum = java.io.ByteArrayOutputStream(8 * 1024)
     // Sequence byte at heartbeat offset 48; rolls over at 256 in the OEM capture too.
     private var heartbeatSeq = 0
 
@@ -293,7 +315,7 @@ internal class AllwinnerRtp2pClient private constructor(
      * corruption was coming from (an IDR slice of ~80 packets was missing
      * ≈1 KB of slice data).
      */
-    private fun consumeKcpMessage(kcpMsg: ByteArray, emit: (ByteArray) -> Unit) {
+    private fun consumeKcpMessage(kcpMsg: ByteArray, emit: (Sample) -> Unit) {
         if (kcpMsg.size < 4) return
 
         val hasHeader = kcpMsg.size >= 8 &&
@@ -301,9 +323,15 @@ internal class AllwinnerRtp2pClient private constructor(
             kcpMsg[6] == MAGIC_B2 && kcpMsg[7] == MAGIC_B3
 
         if (!hasHeader) {
-            // Pure continuation: seq# followed by raw payload bytes.
-            if (lastFrameWasVideo && kcpMsg.size > 4) {
-                frameAccum.write(kcpMsg, 4, kcpMsg.size - 4)
+            // Pure continuation: seq# followed by raw payload bytes,
+            // belonging to whichever stream we last saw a tag for.
+            if (kcpMsg.size > 4) {
+                if (lastFrameWasVideo) {
+                    videoAccum.write(kcpMsg, 4, kcpMsg.size - 4)
+                    maybeFlushOnSize(emit)
+                } else {
+                    audioAccum.write(kcpMsg, 4, kcpMsg.size - 4)
+                }
             }
             return
         }
@@ -336,45 +364,80 @@ internal class AllwinnerRtp2pClient private constructor(
     }
 
     /**
-     * Routes a single inner-segment (post 16B header) into the per-frame
-     * accumulator. Three classes of segment, all detected by the upper
-     * 24 bits of the 4-byte type tag (the low byte's flag bits aren't
-     * part of frame identity):
+     * Routes a single inner-segment (post 16B header) into the right
+     * stream accumulator. Tags are 4 bytes; bytes 1..2 identify the stream
+     * type, byte 0 is a source flag (`00` for live, `02` for SD-card
+     * playback) and byte 3 is per-segment metadata. We match on bytes 1..2:
      *
-     *   • `00 11 10 ??` — video tag → flush + start new frame.
-     *   • `00 11 20 ??` — audio tag → flush, then drop this segment.
-     *   • no recognisable tag → continuation of current frame; appended
-     *     verbatim if the last typed segment was video, else dropped.
+     *   • `?? 11 10 ??` — video tag → flush both buffers, accumulate video.
+     *   • `?? 11 20 ??` — audio tag → flush both buffers, accumulate audio.
+     *   • no recognisable tag → continuation of whichever stream we last
+     *     saw; bytes appended verbatim.
      */
-    private fun consumeInnerSegment(seg: ByteArray, emit: (ByteArray) -> Unit) {
+    private fun consumeInnerSegment(seg: ByteArray, emit: (Sample) -> Unit) {
         if (seg.size < 4) {
-            if (lastFrameWasVideo) frameAccum.write(seg, 0, seg.size)
+            if (lastFrameWasVideo) videoAccum.write(seg, 0, seg.size)
+            else audioAccum.write(seg, 0, seg.size)
             return
         }
-        val b0 = seg[0].toInt() and 0xff
         val b1 = seg[1].toInt() and 0xff
         val b2 = seg[2].toInt() and 0xff
         when {
-            b0 == 0x00 && b1 == 0x11 && b2 == 0x10 -> {
-                flushFrame(emit)
+            b1 == 0x11 && b2 == 0x10 -> {
+                flushVideo(emit)
+                flushAudio(emit)
                 lastFrameWasVideo = true
-                frameAccum.write(seg, 4, seg.size - 4)
+                videoAccum.write(seg, 4, seg.size - 4)
             }
-            b0 == 0x00 && b1 == 0x11 && b2 == 0x20 -> {
-                flushFrame(emit)
+            b1 == 0x11 && b2 == 0x20 -> {
+                flushVideo(emit)
+                flushAudio(emit)
                 lastFrameWasVideo = false
+                audioAccum.write(seg, 4, seg.size - 4)
             }
             else -> {
-                if (lastFrameWasVideo) frameAccum.write(seg, 0, seg.size)
+                if (lastFrameWasVideo) {
+                    videoAccum.write(seg, 0, seg.size)
+                    maybeFlushOnSize(emit)
+                } else {
+                    audioAccum.write(seg, 0, seg.size)
+                }
             }
         }
     }
 
-    private fun flushFrame(emit: (ByteArray) -> Unit) {
-        if (frameAccum.size() > 0) {
-            emit(frameAccum.toByteArray())
-            frameAccum.reset()
+    private fun flushVideo(emit: (Sample) -> Unit) {
+        if (videoAccum.size() > 0) {
+            emit(Sample.Video(videoAccum.toByteArray()))
+            videoAccum.reset()
         }
+    }
+
+    private fun flushAudio(emit: (Sample) -> Unit) {
+        if (audioAccum.size() > 0) {
+            emit(Sample.Audio(audioAccum.toByteArray()))
+            audioAccum.reset()
+        }
+    }
+
+    /**
+     * Emit early once enough video has buffered. In SD-card playback mode
+     * the cam can go 4+ seconds between `02 11 10 ??` tags, batching whole
+     * IDR-to-IDR runs into a single inner-segment. Holding it all back makes
+     * the player wait that long for its first frame. Downstream
+     * [splitAnnexBIntoAccessUnits] handles per-AU PES boundaries, so we
+     * don't need to align on tag boundaries — flushing every ~128 KB keeps
+     * latency bounded without breaking the H.264 stream.
+     */
+    private fun maybeFlushOnSize(emit: (Sample) -> Unit) {
+        if (videoAccum.size() >= EARLY_FLUSH_BYTES) flushVideo(emit)
+    }
+
+    /** Either a video access-unit chunk or an audio (ADTS) byte run. */
+    sealed class Sample {
+        abstract val data: ByteArray
+        data class Video(override val data: ByteArray) : Sample()
+        data class Audio(override val data: ByteArray) : Sample()
     }
 
     private fun buildHeartbeat(): ByteArray {
@@ -444,12 +507,23 @@ internal class AllwinnerRtp2pClient private constructor(
      * `update()` coroutine drives ACK timing — without it the cam thinks
      * we never got the data and stalls retransmitting.
      */
-    fun packets(): Flow<ByteArray> = callbackFlow {
+    fun packets(): Flow<Sample> = callbackFlow {
         val recvBuf = ByteArray(RECV_BUFFER_SIZE)
         val packet = DatagramPacket(recvBuf, recvBuf.size)
         var kcp: IKcp? = null
         val kcpLock = Mutex()
         var debugN = 0
+        // Audio-debug: dump up to 30 KCP messages verbatim to /sdcard/Download
+        // so we can inspect byte layout offline. Disabled in production; toggle
+        // by changing the limit. Without this it's near-impossible to see what
+        // sits beyond the first inner-segment of a KCP message.
+        val dumpLimit = 300
+        var dumpCount = 0
+        val dumpOut: java.io.OutputStream? = try {
+            val f = java.io.File("/sdcard/Download/allwinner_kcp_dump.bin")
+            f.delete()
+            java.io.BufferedOutputStream(java.io.FileOutputStream(f))
+        } catch (e: Exception) { Log.w(TAG, "dump open failed: ${e.message}"); null }
 
         // KCP needs to send ACKs back to the cam — route them through the
         // already-connected UDP socket. Capture-by-reference is safe; the
@@ -539,9 +613,23 @@ internal class AllwinnerRtp2pClient private constructor(
                             merged.release()
                             if (debugN < 6) {
                                 Log.d(TAG, "kcp emit #${++debugN} len=${out.size}" +
-                                    " firstBytes=${out.take(16).joinToString("") { "%02x".format(it) }}")
+                                    " firstBytes=${out.take(64).joinToString("") { "%02x".format(it) }}")
                             }
-                            consumeKcpMessage(out) { frame -> trySend(frame) }
+                            // Dump raw message: 4B BE length prefix, then payload
+                            if (dumpOut != null && dumpCount < dumpLimit) {
+                                try {
+                                    dumpOut.write(byteArrayOf(
+                                        (out.size ushr 24 and 0xFF).toByte(),
+                                        (out.size ushr 16 and 0xFF).toByte(),
+                                        (out.size ushr  8 and 0xFF).toByte(),
+                                        (out.size        and 0xFF).toByte(),
+                                    ))
+                                    dumpOut.write(out)
+                                    dumpOut.flush()
+                                    dumpCount++
+                                } catch (_: Exception) {}
+                            }
+                            consumeKcpMessage(out) { sample -> trySend(sample) }
                         }
                     }
                 } catch (e: java.net.SocketTimeoutException) {
@@ -556,6 +644,7 @@ internal class AllwinnerRtp2pClient private constructor(
             updateScope.cancel()
             kcp?.let { runCatching { it.release() } }
             try { socket.close() } catch (_: Exception) {}
+            try { dumpOut?.close() } catch (_: Exception) {}
         }
         close()
         awaitClose {
@@ -569,13 +658,19 @@ internal class AllwinnerRtp2pClient private constructor(
      * Sends the rtp2p stop command and tears the UDP side down. Idempotent.
      * Live-mode stops use the same JSON shape as start (no `file` field) per
      * the CloudSpirit PCAP (cookie 71).
+     *
+     * Wrapped in [NonCancellable]: when the caller's coroutine is being
+     * cancelled (e.g. user backed out of playback), the stop request still
+     * needs to reach the cam — without it the cam keeps the session alive
+     * and the next start with the same uidx races against the orphan port,
+     * yielding ICMP Port Unreachable on the heartbeat.
      */
     suspend fun close() {
         if (closed) return
         closed = true
         heartbeatJob?.cancel()
         scope.cancel()
-        withContext(Dispatchers.IO) {
+        withContext(NonCancellable + Dispatchers.IO) {
             try {
                 val isLive = fileName == "<live>"
                 val stopBody = JSONObject().apply {

@@ -12,6 +12,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,9 +31,18 @@ import kotlinx.coroutines.flow.asStateFlow
  *   — fine for a fancy compass widget but not for nav.
  */
 data class LiveSensorData(
-    val speedKmh:   Int?    = null,
-    val altitudeM:  Int?    = null,
-    val headingDeg: Float?  = null,
+    val speedKmh:      Int?    = null,
+    val altitudeM:     Int?    = null,
+    val headingDeg:    Float?  = null,
+    /**
+     * Longitudinal "G" — derivative of GPS ground speed, in units of g
+     * (9.8 m/s²). Sign convention: positive = car accelerating (gaining
+     * speed), negative = decelerating, ~0 = constant. We use GPS deltas
+     * rather than the raw accelerometer because the latter depends on the
+     * phone's mount orientation (landscape vs portrait vs random) which we
+     * have no way to calibrate; GPS speed change is unambiguous.
+     */
+    val accelerationG: Float?  = null,
 )
 
 /**
@@ -61,11 +71,44 @@ class LiveSensorProvider(private val context: Context) {
 
     private var started = false
 
+    // Per-update state for longitudinal-G derivation.
+    private var lastSpeedMs: Float = Float.NaN
+    private var lastSpeedAtNs: Long = 0L
+    private var emaAccelG: Float = 0f
+
     private val locListener = object : LocationListener {
         override fun onLocationChanged(loc: Location) {
+            val newSpeedMs = if (loc.hasSpeed()) loc.speed else Float.NaN
+            val now = SystemClock.elapsedRealtimeNanos()
+
+            // dV/dt → g. Skip the first fix (no previous speed) and skip
+            // updates that are unrealistically close in time (would
+            // produce a divide-by-near-zero spike). 0.20 s lower bound is
+            // generous — typical providers fire at 1 Hz.
+            val accelG: Float? = if (!newSpeedMs.isNaN() && !lastSpeedMs.isNaN()) {
+                val dt = (now - lastSpeedAtNs) / 1_000_000_000f
+                if (dt >= 0.20f) {
+                    val raw = (newSpeedMs - lastSpeedMs) / dt / 9.80665f
+                    // EMA smoothing — at 1 Hz updates a raw delta jumps too
+                    // visibly between frames. 0.35 trades off responsiveness
+                    // vs jitter; tune if it feels laggy.
+                    emaAccelG = emaAccelG + (raw.coerceIn(-2f, 2f) - emaAccelG) * 0.35f
+                    emaAccelG
+                } else emaAccelG
+            } else null
+
+            if (!newSpeedMs.isNaN()) {
+                lastSpeedMs = newSpeedMs
+                lastSpeedAtNs = now
+            }
+
             val speedKmh = if (loc.hasSpeed()) (loc.speed * 3.6f).toInt().coerceIn(0, 300) else null
             val altitudeM = if (loc.hasAltitude()) loc.altitude.toInt() else null
-            _data.value = _data.value.copy(speedKmh = speedKmh, altitudeM = altitudeM)
+            _data.value = _data.value.copy(
+                speedKmh      = speedKmh,
+                altitudeM     = altitudeM,
+                accelerationG = accelG,
+            )
         }
         @Deprecated("Required by API <29")
         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}

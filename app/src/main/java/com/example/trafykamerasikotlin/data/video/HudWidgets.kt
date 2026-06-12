@@ -168,6 +168,83 @@ internal object HudWidgets {
         canvas.drawText(numText,   left + (pillW - numW)   / 2, top + 44f * scale, numPaint)
     }
 
+    /**
+     * Horizontal G-meter pill. Bar fills from the centre line toward the
+     * right (green) when accelerating and toward the left (red) when
+     * decelerating. Centre vertical tick stays visible so "constant speed"
+     * reads cleanly. [accelG] is signed g (positive = car gaining speed).
+     */
+    fun drawGForceBar(
+        canvas: Canvas,
+        centerX: Float,
+        centerY: Float,
+        width: Float,
+        accelG: Float,
+        scale: Float = 1f,
+    ) {
+        val height = 22f * scale
+        val pad    = 4f  * scale
+        val track = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = DISC_FILL
+            style = Paint.Style.FILL
+        }
+        val trackRect = RectF(
+            centerX - width / 2, centerY - height / 2,
+            centerX + width / 2, centerY + height / 2,
+        )
+        canvas.drawRoundRect(trackRect, height / 2, height / 2, track)
+
+        // Outer ring matches the dial style for visual cohesion.
+        val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = GREEN_OPAQUE
+            style = Paint.Style.STROKE
+            strokeWidth = 2f
+        }
+        canvas.drawRoundRect(trackRect, height / 2, height / 2, ring)
+
+        // Fill bar — clamp to ±0.6 g for visual headroom (real values from
+        // GPS deltas rarely exceed ±0.5 even with hard braking).
+        val saturationG = 0.6f
+        val pct = (accelG / saturationG).coerceIn(-1f, 1f)
+        val maxHalf = width / 2 - pad
+        val barFillRect = if (pct >= 0f) {
+            RectF(centerX, centerY - height / 2 + pad, centerX + pct * maxHalf, centerY + height / 2 - pad)
+        } else {
+            RectF(centerX + pct * maxHalf, centerY - height / 2 + pad, centerX, centerY + height / 2 - pad)
+        }
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = when {
+                accelG >  0.04f -> 0xCC30D158.toInt() // green (accel)
+                accelG < -0.04f -> 0xCCFF453A.toInt() // red (decel)
+                else            -> 0x66FFFFFF        // near-constant: faint white
+            }
+        }
+        canvas.drawRoundRect(barFillRect, (height - pad * 2) / 2, (height - pad * 2) / 2, fill)
+
+        // Centre tick — vertical line down the middle of the bar.
+        val centreTick = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xE6FFFFFF.toInt()
+            style = Paint.Style.STROKE
+            strokeWidth = 2f * scale
+        }
+        canvas.drawLine(
+            centerX, centerY - height / 2 + pad,
+            centerX, centerY + height / 2 - pad,
+            centreTick,
+        )
+
+        // "G" label centred above (small, dimmed).
+        val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xB0FFFFFF.toInt()
+            isFakeBoldText = true
+            textSize = 11f * scale
+        }
+        val labelText = "G"
+        val labelW = labelPaint.measureText(labelText)
+        canvas.drawText(labelText, centerX - labelW / 2, centerY - height / 2 - 3f * scale, labelPaint)
+    }
+
     fun drawCompassDisc(
         canvas: Canvas,
         cx: Float,

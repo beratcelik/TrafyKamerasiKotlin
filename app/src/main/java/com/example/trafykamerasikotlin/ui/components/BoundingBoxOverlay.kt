@@ -10,7 +10,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.platform.LocalDensity
 import com.example.trafykamerasikotlin.data.sensors.rememberLiveSensorData
 import com.example.trafykamerasikotlin.data.video.HudWidgets
 import com.example.trafykamerasikotlin.data.vision.OVERLAY_DEDUPE_IOU
@@ -55,11 +54,6 @@ fun BoundingBoxOverlay(
     if (scene == null || sourceSize.width <= 0 || sourceSize.height <= 0) return
 
     val sensorData by rememberLiveSensorData()
-
-    // Density: a 70 px disc on a 720p video frame looks fine, but on a 1080p
-    // phone screen at 3× density it's a tiny ~23 dp dot. We render all HUD
-    // chrome scaled by device density so widgets stay readable.
-    val density = LocalDensity.current.density
 
     // Locked plate text per track id. Once OCR's vote book is confident
     // about a track's plate we commit to that text for the rest of the
@@ -115,7 +109,7 @@ fun BoundingBoxOverlay(
                 val locked = lockedPlateText[td.trackId]
                     ?: plate?.let { tryLockPlateText(it) }
                         ?.also { lockedPlateText[td.trackId] = it }
-                if (locked != null) drawPlateTextAbove(r, locked, density)
+                if (locked != null) drawPlateTextAbove(r, locked)
             }
         } else {
             scene.detections.forEachIndexed { idx, det ->
@@ -130,12 +124,16 @@ fun BoundingBoxOverlay(
 
         // ── HUD chrome (corners) ────────────────────────────────────────────
         if (showHud) {
-            // Density-scaled so the same dp values render the same physical
-            // size across phones. dialR ≈ 56 dp at default density, big
-            // enough to read from arm's length without dominating the frame.
-            val margin = 16f * density
-            val dialR  = (minOf(vw, vh) * 0.10f).coerceIn(56f * density, 110f * density)
-            val pillScale = density.coerceAtLeast(1.5f)
+            // Size off the smaller Canvas dimension, NOT density. The
+            // earlier density-floor of 56 dp blew up to 168 px on 3× phones
+            // and ate half the portrait-mode live canvas. Plain proportional
+            // sizing with raw-px clamps keeps widgets readable on small
+            // canvases and prevents them from dominating big ones.
+            val margin = (minOf(vw, vh) * 0.05f).coerceIn(20f, 56f)
+            val dialR  = (minOf(vw, vh) * 0.12f).coerceIn(68f, 180f)
+            // Altitude pill internal sizes scale with dial radius so it
+            // visually matches the dials next to it.
+            val pillScale = (dialR / 48f).coerceIn(1.5f, 3.8f)
             val canvas = drawContext.canvas.nativeCanvas
 
             sensorData.headingDeg?.let { headingDeg ->
@@ -159,10 +157,25 @@ fun BoundingBoxOverlay(
             sensorData.altitudeM?.let { altitudeM ->
                 HudWidgets.drawAltitudePill(
                     canvas    = canvas,
-                    rightX    = vw - margin - dialR * 2f - 16f * density,
+                    rightX    = vw - margin - dialR * 2f - 10f,
                     centerY   = vh - margin - dialR,
                     altitudeM = altitudeM,
                     scale     = pillScale,
+                )
+            }
+            // Top-right: G-meter bar. Positioned near the speed dial since
+            // the two concepts (speed + change-in-speed) read together.
+            sensorData.accelerationG?.let { accelG ->
+                val gWidth  = dialR * 2.4f
+                val gCenter = vw - margin - gWidth / 2
+                val gY      = margin + 18f * pillScale
+                HudWidgets.drawGForceBar(
+                    canvas  = canvas,
+                    centerX = gCenter,
+                    centerY = gY,
+                    width   = gWidth,
+                    accelG  = accelG,
+                    scale   = pillScale,
                 )
             }
         }
@@ -209,12 +222,15 @@ private fun tryLockPlateText(p: PlateDetection): String? {
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPlateTextAbove(
     slab: Rect,
     text: String,
-    density: Float,
 ) {
     val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFD60A.toInt()                                          // bright yellow
         isFakeBoldText = true
-        textSize = (slab.width * 0.18f).coerceIn(20f * density, 60f * density)
+        // Proportional to slab width with raw-px clamps — density coupling
+        // forced too-large text on portrait canvases. The slab itself is
+        // already canvas-proportional via the contain-fit scale, so this
+        // grows / shrinks naturally with the visible video area.
+        textSize = (slab.width * 0.15f).coerceIn(18f, 56f)
         setShadowLayer(8f, 0f, 0f, android.graphics.Color.BLACK)
     }
     val canvas = drawContext.canvas.nativeCanvas

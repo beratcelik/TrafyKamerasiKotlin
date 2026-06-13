@@ -326,15 +326,35 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     /**
      * Called when the user leaves the Settings screen.
      * For Easytech devices, tells the camera to exit settings mode.
+     *
+     * Run on a long-lived application-scoped coroutine so the cleanup
+     * survives activity destruction. If we used `viewModelScope.launch`
+     * here, killing the app from the Settings screen would cancel the
+     * HTTP call mid-flight and leave the cam stuck in settings mode
+     * (showing "continue in app" on its OWN display until power-cycled).
      */
     fun onLeave() {
         val device = loadedForDevice ?: return
         if (device.protocol == ChipsetProtocol.EEASYTECH) {
-            viewModelScope.launch {
-                getEeasyRepo().exitSettings(device.protocol.deviceIp)
+            val ip = device.protocol.deviceIp
+            cleanupScope.launch {
+                kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+                    getEeasyRepo().exitSettings(ip)
+                }
             }
         }
     }
+
+    /**
+     * Application-scoped supervisor + IO dispatcher. Coroutines launched
+     * here survive `ViewModel.onCleared()` and `Activity.onDestroy()` — the
+     * exact lifetime window where viewModelScope would cut us off. Used
+     * for cleanups that must reach the cam even if the user just killed
+     * the app.
+     */
+    private val cleanupScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+    )
 
     // ── Repository dispatch ────────────────────────────────────────────────
 
@@ -393,26 +413,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         kotlinx.coroutines.delay(GP_RETRY_DELAY_MS)
         val second = action()
         return if (second) ApplyResult.SUCCESS else ApplyResult.NETWORK_UNAVAILABLE
-    }
-
-    /**
-     * Best-effort: flips the cam's hardware-GPS setting (where one exists),
-     * called from the unified "GPS kaydı" toggle. Quietly no-ops on chipsets
-     * that don't expose a separate cam-GPS switch — Allwinner / HiDvr have
-     * built-in modules with no user-facing on/off, and GeneralPlus has no
-     * GPS at all.
-     *
-     * Doesn't block, doesn't show an "applying" state — the cam may need to
-     * reboot to power-cycle its GPS module (Easytech does), and we don't
-     * want the Settings UI to lock up for that. Failures are logged.
-     */
-    fun toggleCamGpsIfSupported(enabled: Boolean) {
-        val device = loadedForDevice ?: return
-        if (device.protocol != ChipsetProtocol.EEASYTECH) return
-        viewModelScope.launch {
-            val ok = applySetting(device, "gps", if (enabled) "1" else "0")
-            Log.i(TAG, "toggleCamGpsIfSupported(enabled=$enabled) → $ok")
-        }
     }
 
     private suspend fun applySetting(device: DeviceInfo, key: String, value: String): Boolean =

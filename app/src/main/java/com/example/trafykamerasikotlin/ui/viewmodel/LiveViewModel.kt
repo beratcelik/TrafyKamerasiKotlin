@@ -96,6 +96,15 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     val captureMessages: SharedFlow<String> = _captureMessages.asSharedFlow()
 
     private var loadedDevice: DeviceInfo? = null
+    // Network the current stream was started with — remembered so [onForeground]
+    // can re-enter live preview with the same dashcam-bound network after the
+    // app returns from the background.
+    private var loadedNetwork: Network? = null
+    // True between [onBackground] and [onForeground]: the app was backgrounded
+    // while the Live tab was on screen, so the stream was torn down (and the
+    // cam told to resume recording) and should be re-entered on return. Keeps
+    // [onForeground] a no-op on initial composition.
+    @Volatile private var pausedForBackground: Boolean = false
     // HiDVR camera channel keys in the order the user sees them in the tab bar;
     // each key maps to a camid via [hiDvrCamid] when we call getcamchnl.cgi.
     private var hiDvrCameraKeys: List<String> = emptyList()
@@ -112,7 +121,8 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun startStream(device: DeviceInfo, network: Network?) {
         if (loadedDevice == device && _uiState.value is LiveUiState.Playing) return
-        loadedDevice = device
+        loadedDevice  = device
+        loadedNetwork = network
         viewModelScope.launch {
             _uiState.value = LiveUiState.Preparing
 
@@ -226,12 +236,66 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         }
     )
 
+    /**
+     * Called from [LiveScreen]'s `onDispose` when the user navigates away from
+     * the Live tab in-app. Resumes recording, releases the stream, and forgets
+     * the device entirely — the user chose to leave, so no auto-restart.
+     */
     fun onLeave() {
         val device = loadedDevice ?: return
-        loadedDevice   = null
-        _uiState.value = LiveUiState.NotConnected
+        loadedDevice        = null
+        loadedNetwork       = null
+        pausedForBackground = false
+        _uiState.value      = LiveUiState.NotConnected
         _captureState.value = CaptureState.Idle
         Log.d(TAG, "onLeave: for ${device.protocol.deviceIp}")
+        teardownLive(device)
+    }
+
+    /**
+     * App went to background while the Live tab was on screen (Home button,
+     * app switcher, or about to be killed). Compose `onDispose` does NOT fire
+     * in this case, so without this hook the cam stays paused — entering live
+     * stopped the encoder (`enterrecorder` / `stopRecording` / `enterLive`) and
+     * only [onLeave]/[onForeground] resume it. Running here (on ON_STOP, while
+     * the process is still alive) also lets `exitLive`'s 500ms-gated `rec=1`
+     * complete before any kill. [loadedDevice]/[loadedNetwork] are kept so
+     * [onForeground] can re-enter the stream on return.
+     */
+    fun onBackground() {
+        val device = loadedDevice ?: return
+        if (pausedForBackground) return
+        pausedForBackground = true
+        Log.i(TAG, "onBackground: leaving live so cam can record — ${device.protocol.deviceIp}")
+        _uiState.value      = LiveUiState.NotConnected
+        _captureState.value = CaptureState.Idle
+        teardownLive(device)
+    }
+
+    /**
+     * App returned to the foreground on the Live tab. Re-enters the stream only
+     * if we'd actually been backgrounded. No-op on initial composition — that
+     * case is handled by [LiveScreen]'s `LaunchedEffect(device)` which already
+     * calls [startStream], and a duplicate call would race it.
+     */
+    fun onForeground() {
+        if (!pausedForBackground) return
+        pausedForBackground = false
+        val device  = loadedDevice ?: return
+        val network = loadedNetwork
+        Log.i(TAG, "onForeground: re-entering live — ${device.protocol.deviceIp}")
+        loadedDevice = null   // clear the no-op guard so startStream re-runs
+        startStream(device, network)
+    }
+
+    /**
+     * Resumes SD recording on the cam (chipset-specific) and releases the live
+     * stream + process network binding. Shared by [onLeave] (tab navigation)
+     * and [onBackground] (app backgrounded). The recording resume MUST run —
+     * for Easytech it's `exitrecorder` → 500ms → `rec=1`; skipping it leaves
+     * the cam permanently paused.
+     */
+    private fun teardownLive(device: DeviceInfo) {
         // Cancel any active Allwinner live stream synchronously so its
         // resources are released before we even return from this method.
         allwinnerLiveJob?.cancel()
@@ -250,7 +314,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
             }
             // Unbind AFTER exit calls complete so they still route through dashcam WiFi
             connectivityManager.bindProcessToNetwork(null)
-            Log.i(TAG, "onLeave: process unbound from dashcam network")
+            Log.i(TAG, "teardownLive: process unbound from dashcam network")
         }
     }
 

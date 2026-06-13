@@ -57,6 +57,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.trafykamerasikotlin.R
@@ -123,8 +126,28 @@ fun LiveScreen(
         viewModel.captureMessages.collect { msg -> snackbarHost.showSnackbar(msg) }
     }
 
-    DisposableEffect(Unit) {
-        onDispose { viewModel.onLeave() }
+    // Entering live preview pauses the cam's SD recording (Easytech
+    // `enterrecorder`, HiDVR `stopRecording`, GeneralPlus `enterLive`); it must
+    // be resumed when we leave. Compose `onDispose` covers in-app tab
+    // navigation, but NOT the app being backgrounded/killed while the Live tab
+    // is still on screen — that path needs the ON_STOP hook, otherwise the cam
+    // stays paused until the next launch happens to land on Home (`ensureRecording`).
+    // ON_START re-enters the stream on return (no-op on initial compose, where
+    // LaunchedEffect(device) already started it). Mirrors MediaScreen.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP  -> viewModel.onBackground()
+                Lifecycle.Event.ON_START -> viewModel.onForeground()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.onLeave()
+        }
     }
 
     Box(

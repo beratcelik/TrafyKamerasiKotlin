@@ -54,8 +54,15 @@ class EeasytechMediaRepository {
      * `rec=1` as a safety net when the user returns to the main page.
      */
     suspend fun exitPlayback(deviceIp: String) {
-        val ok = DashcamHttpClient.probe("http://$deviceIp/app/playback?param=exit")
-        Log.d(TAG, "playback?param=exit → $ok")
+        val ok1 = DashcamHttpClient.probe("http://$deviceIp/app/playback?param=exit")
+        Log.d(TAG, "playback?param=exit → $ok1")
+        // Belt-and-braces: also exit settings mode in case we ended up there
+        // via a diagnostic flow, and re-arm recording so the cam isn't left
+        // stuck on the "continue in app" banner with the encoder paused.
+        val ok2 = DashcamHttpClient.probe("http://$deviceIp/app/setting?param=exit")
+        Log.d(TAG, "setting?param=exit → $ok2")
+        val ok3 = DashcamHttpClient.probe("http://$deviceIp/app/setparamvalue?param=rec&value=1")
+        Log.d(TAG, "setparamvalue?param=rec&value=1 → $ok3")
     }
 
     /**

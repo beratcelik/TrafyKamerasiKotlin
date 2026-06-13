@@ -90,6 +90,16 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     private val gpRepo        = GeneralplusMediaRepository()
     private val allwinnerRepo = AllwinnerMediaRepository()
 
+    /**
+     * Application-scoped supervisor for cam-side cleanup calls (exit
+     * playback / settings, re-arm rec=1). Survives activity death so the
+     * cam doesn't stay stuck on "continue in app" when the user kills
+     * the app from the Media tab. See [onLeave].
+     */
+    private val cleanupScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+    )
+
     private val _uiState = MutableStateFlow<MediaUiState>(MediaUiState.NotConnected)
     val uiState: StateFlow<MediaUiState> = _uiState
 
@@ -634,7 +644,14 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         idleJob = null
         idleExited = false
         pausedForBackground = false
-        viewModelScope.launch { leavePlayback(device) }
+        // Launch the cleanup on an application-scoped supervisor so the cam
+        // exit-playback / exit-settings call survives the activity dying.
+        // viewModelScope would cancel the in-flight HTTP if the user kills
+        // the app from the Media tab, leaving the cam stuck on its own
+        // "continue in app" banner until power-cycled.
+        cleanupScope.launch {
+            kotlinx.coroutines.withTimeoutOrNull(8_000L) { leavePlayback(device) }
+        }
         // Allwinner uses a single-stream busy guard (see startAllwinnerStream).
         // If the user backs out of the Media tab while a stream is in-flight,
         // the playback overlay never appears so they have nothing to dismiss

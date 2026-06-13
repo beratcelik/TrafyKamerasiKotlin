@@ -78,6 +78,21 @@ class LiveSensorProvider(private val context: Context) {
 
     private val locListener = object : LocationListener {
         override fun onLocationChanged(loc: Location) {
+            // Verbose per-fix log so the user can confirm the phone IS
+            // receiving locations from the platform — indispensable when
+            // testing indoors where speed/altitude/heading might all be
+            // null even with a valid lat/lon fix.
+            Log.i(
+                TAG,
+                "phone fix: lat=%.6f lon=%.6f acc=%.1fm spd=%s alt=%s hdg=%s provider=%s".format(
+                    loc.latitude, loc.longitude,
+                    if (loc.hasAccuracy()) loc.accuracy else -1f,
+                    if (loc.hasSpeed())     "%.2fm/s".format(loc.speed)     else "—",
+                    if (loc.hasAltitude())  "%.0fm".format(loc.altitude)    else "—",
+                    if (loc.hasBearing())   "%.1f°".format(loc.bearing)     else "—",
+                    loc.provider ?: "?",
+                ),
+            )
             val newSpeedMs = if (loc.hasSpeed()) loc.speed else Float.NaN
             val now = SystemClock.elapsedRealtimeNanos()
 

@@ -32,17 +32,15 @@ class EeasytechSettingsRepository(private val context: Context) {
         /**
          * Keys that are action-type (format, reset, WiFi) — skipped in settings list.
          *
-         * `gps` is also hidden here even though it's a normal picker: the unified
-         * "GPS kaydı" toggle at the bottom of the screen now owns both the
-         * cam-side toggle and the phone-side logger. Surfacing the raw cam
-         * setting in addition would let the user disable cam GPS while leaving
-         * our toggle ON — confusing and easy to miss.
+         * `gps` is intentionally NOT hidden: enabling the cam's GPS module
+         * reboots the firmware (~minutes back online), so it has to stay as
+         * a deliberate, user-driven action with its own row. Our "GPS kaydı"
+         * toggle at the bottom only drives phone-side logging.
          */
         private val EXCLUDED_KEYS = setOf(
             "format", "SD0", "reset_to_default",
             "Net.WIFI_AP", "Net.WIFI_AP.SSID", "Net.WIFI_AP.CryptoKey",
             "switchcam", "rec",
-            "gps",
         )
     }
 
@@ -218,10 +216,21 @@ class EeasytechSettingsRepository(private val context: Context) {
      * Exits settings mode. The cam keeps recording while in settings mode
      * (no encoder contention), so no explicit resume is needed here —
      * HomeScreen reaffirms `rec=1` when the user lands on the main page.
+     *
+     * Also fires `playback?param=exit` as a belt-and-braces cleanup —
+     * during diagnostic flows (e.g. `GpsSelfTest` probing getfilelist) the
+     * cam may transition into a playback-like state. A redundant exit is
+     * a no-op when not in playback; missing one leaves the cam showing
+     * "continue in app" until power-cycled.
      */
     suspend fun exitSettings(deviceIp: String) {
-        val ok = DashcamHttpClient.probe("http://$deviceIp/app/setting?param=exit")
-        Log.d(TAG, "setting?param=exit → $ok")
+        val ok1 = DashcamHttpClient.probe("http://$deviceIp/app/setting?param=exit")
+        Log.d(TAG, "setting?param=exit → $ok1")
+        val ok2 = DashcamHttpClient.probe("http://$deviceIp/app/playback?param=exit")
+        Log.d(TAG, "playback?param=exit → $ok2")
+        // And re-arm recording so the cam isn't left paused either.
+        val ok3 = DashcamHttpClient.probe("http://$deviceIp/app/setparamvalue?param=rec&value=1")
+        Log.d(TAG, "setparamvalue?param=rec&value=1 → $ok3")
     }
 
     // ── JSON parsers ───────────────────────────────────────────────────────

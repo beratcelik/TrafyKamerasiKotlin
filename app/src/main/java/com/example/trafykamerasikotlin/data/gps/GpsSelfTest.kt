@@ -95,7 +95,7 @@ object GpsSelfTest {
         val ip = protocol.deviceIp
         val base = sampleBasename ?: "TEST_PROBE"
         return when (protocol) {
-            ChipsetProtocol.EEASYTECH -> probeEasytech(ip, base)
+            ChipsetProtocol.EEASYTECH -> probeEasytech(context, ip, base)
             ChipsetProtocol.HI_DVR    -> probeHiDvr(ip, base)
             ChipsetProtocol.ALLWINNER_V853 ->
                 listOf("△ Allwinner — RPC henüz keşfedilmedi (stub)")
@@ -106,7 +106,7 @@ object GpsSelfTest {
         }
     }
 
-    private suspend fun probeEasytech(ip: String, base: String): List<String> {
+    private suspend fun probeEasytech(context: Context, ip: String, base: String): List<String> {
         // Discovery sweep: enumerate the SD root via getfilelist, then probe
         // the most plausible sidecar URLs. GoLook's static URL inventory
         // contains NO Easytech-specific GPS path (all GPS code is for
@@ -139,13 +139,22 @@ object GpsSelfTest {
             lines += "△ /getfilelist?folder=/ yanıt yok"
         }
 
-        // 3. Try the candidate sidecar URL patterns. None of these is
-        //    documented for Easytech — we're probing common variants.
+        // Note: an earlier version probed TCP :5000 directly here. On at
+        // least one Trafy Dos Pro unit that raw connect caused the cam
+        // firmware to reboot — its TCP listener apparently expects a
+        // specific handshake the OEM app sends, and silence wedges it.
+        // We've removed the probe to avoid further reboots. Keep the
+        // information line so the user knows the channel exists but is
+        // currently considered unsafe to talk to without the handshake.
+        lines += "△ tcp://$ip:5000 (cam reboots on raw probe — handshake unknown)"
+
+        // 4. HTTP sidecar URL variants — kept for completeness, but
+        //    these all timed out in earlier runs because Easytech firmware
+        //    does not expose GPS over HTTP CGI. Probing only adds 7s if
+        //    they fail, so still useful as a sanity check.
         val urls = listOf(
             "http://$ip/upload/mnt/sdcard/GPSdata/$base.TXT",
             "http://$ip/upload/mnt/sdcard/$base.gps",
-            "http://$ip/upload/mnt/sdcard/MOVIE/$base.gps",
-            "http://$ip/upload/mnt/sdcard/MOVIE/GPSdata/$base.TXT",
             "http://$ip/app/getgps?file=$base",
         )
         urls.forEach { url ->
@@ -154,6 +163,54 @@ object GpsSelfTest {
         }
         return lines
     }
+
+    /**
+     * One-shot TCP probe of the push-GPS channel. Connect, read for
+     * [READ_WINDOW_MS], then close — reports connect success/failure +
+     * a preview of the first few bytes received (if any).
+     *
+     * This is THE definitive check: if the cam answers, the push channel
+     * is the right mechanism. If `connection refused` / timeout, either
+     * the cam doesn't speak it (different firmware variant) or the GPS
+     * module isn't fully initialised yet.
+     */
+    private suspend fun probeTcpPush(ip: String, port: Int, network: android.net.Network?): String {
+        val urlLabel = "tcp://$ip:$port" + (if (network == null) " (default network)" else "")
+        val factory = network?.socketFactory ?: javax.net.SocketFactory.getDefault()
+        val sock = try {
+            factory.createSocket().apply {
+                tcpNoDelay = true
+                soTimeout  = READ_WINDOW_MS
+                connect(java.net.InetSocketAddress(ip, port), CONNECT_TIMEOUT_MS)
+            }
+        } catch (t: Throwable) {
+            return "✗ $urlLabel — ${t.javaClass.simpleName}: ${t.message}"
+        }
+        try {
+            // Best-effort read for a short window. Cam pushes ~1 msg/s; if
+            // the link is healthy we should see at least one line.
+            val deadline = System.currentTimeMillis() + READ_WINDOW_MS
+            val buf = ByteArray(2048)
+            val sb = StringBuilder()
+            val input = sock.getInputStream()
+            while (System.currentTimeMillis() < deadline && sb.length < 1500) {
+                val n = try { input.read(buf) } catch (_: java.net.SocketTimeoutException) { -2 }
+                if (n == -1) break
+                if (n == -2) break
+                sb.append(String(buf, 0, n, Charsets.UTF_8))
+            }
+            val text = sb.toString().replace('\n', ' ').take(200)
+            return if (text.isEmpty())
+                "△ $urlLabel — bağlandı ama veri yok (modül henüz hazır değil)"
+            else
+                "✓ $urlLabel — preview=\"$text\""
+        } finally {
+            runCatching { sock.close() }
+        }
+    }
+
+    private const val READ_WINDOW_MS = 3_500
+    private const val CONNECT_TIMEOUT_MS = 2_500
 
     private suspend fun probeHiDvr(ip: String, base: String): List<String> {
         val urls = listOf(

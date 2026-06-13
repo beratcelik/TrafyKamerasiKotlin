@@ -3,6 +3,9 @@ package com.example.trafykamerasikotlin.data.sensors
 import android.app.Application
 import android.content.Context
 import android.util.Log
+import android.net.wifi.WifiManager
+import com.example.trafykamerasikotlin.data.gps.EeasytechGpsPushClient
+import com.example.trafykamerasikotlin.data.sensors.GpsFix
 import com.example.trafykamerasikotlin.data.settings.GpsLoggingPreferences
 import com.example.trafykamerasikotlin.data.wifi.DashcamWifiManager
 import kotlinx.coroutines.CoroutineScope
@@ -59,6 +62,7 @@ object GpsLogger {
     @Volatile private var scope: CoroutineScope? = null
     @Volatile private var runJob: Job? = null
     @Volatile private var sensorProvider: LiveSensorProvider? = null
+    @Volatile private var camPushClient: EeasytechGpsPushClient? = null
     @Volatile private var currentWriter: BufferedWriter? = null
     @Volatile private var currentFileDate: String = ""
 
@@ -101,7 +105,7 @@ object GpsLogger {
                             stop()
                             return@collect
                         }
-                        write(app, snapshot)
+                        writePhone(app, snapshot)
                     }
             } catch (t: Throwable) {
                 Log.w(TAG, "writer loop ended: ${t.message}")
@@ -117,6 +121,32 @@ object GpsLogger {
                 runCatching { currentWriter?.flush() }
             }
         }
+
+        // Easytech cam push GPS over TCP :5000 is intentionally NOT auto-
+        // started. On Trafy Dos Pro the cam reboots when we open that
+        // socket without the OEM-specific handshake — we'd take the cam
+        // down on every Settings entry. The parser and client class are
+        // kept (see [EeasytechGpsPushClient]) so a future reverse-engineering
+        // session can re-enable it once the handshake is known.
+    }
+
+    /**
+     * True when the current Wi-Fi network looks like an Easytech dashcam
+     * (gateway 192.168.169.x). We avoid hammering 192.168.169.1:5000
+     * with retries when we're not actually attached to such a cam.
+     */
+    private fun isOnEasytechSubnet(context: Context): Boolean {
+        val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            ?: return false
+        val ip = wm.connectionInfo?.ipAddress ?: 0
+        if (ip == 0) return false
+        // Android encodes IPv4 as int in LITTLE-endian order — `192.168.169.x`
+        // packs to the same first three bytes regardless, so we can compare
+        // the low 24 bits as `(b0)|(b1<<8)|(b2<<16)`.
+        val b0 = ip and 0xFF
+        val b1 = (ip ushr 8) and 0xFF
+        val b2 = (ip ushr 16) and 0xFF
+        return b0 == 192 && b1 == 168 && b2 == 169
     }
 
     /** Stops the writer, releases the sensor provider, closes today's file. */
@@ -125,6 +155,8 @@ object GpsLogger {
         runJob = null
         sensorProvider?.stop()
         sensorProvider = null
+        camPushClient?.stop()
+        camPushClient = null
         runCatching { currentWriter?.flush() }
         runCatching { currentWriter?.close() }
         currentWriter = null
@@ -142,7 +174,7 @@ object GpsLogger {
 
     // ── Internals ────────────────────────────────────────────────────────
 
-    private fun write(context: Context, snapshot: LiveSensorData) {
+    private fun writePhone(context: Context, snapshot: LiveSensorData) {
         val nowMs = System.currentTimeMillis()
         // Skip when neither lat/lon nor any sensor reading is available
         // yet — keeps the file from being littered with empty objects
@@ -152,10 +184,20 @@ object GpsLogger {
 
         val writer = writerForToday(context, nowMs)
         try {
-            writer.write(toNdjson(nowMs, snapshot))
+            writer.write(toNdjsonPhone(nowMs, snapshot))
             writer.newLine()
         } catch (t: Throwable) {
             Log.w(TAG, "write failed: ${t.message}")
+        }
+    }
+
+    private fun writeCamFix(context: Context, fix: GpsFix) {
+        val writer = writerForToday(context, fix.tEpochMs)
+        try {
+            writer.write(toNdjsonCam(fix))
+            writer.newLine()
+        } catch (t: Throwable) {
+            Log.w(TAG, "cam write failed: ${t.message}")
         }
     }
 
@@ -178,11 +220,16 @@ object GpsLogger {
      * Plain hand-rolled JSON — avoids pulling kotlinx.serialization for one
      * small object. Numbers without decimals stay compact; nullable fields
      * are omitted rather than written as "null" to save bytes.
+     *
+     * `src` distinguishes phone-derived rows from cam-push rows — the
+     * read side ([GpsLogStore]) uses it so cam rows win when both sources
+     * have a fix for the same second.
      */
-    private fun toNdjson(tMs: Long, s: LiveSensorData): String {
+    private fun toNdjsonPhone(tMs: Long, s: LiveSensorData): String {
         val sb = StringBuilder(160)
         sb.append('{')
         sb.append("\"t\":").append(tMs)
+        sb.append(",\"src\":\"phone\"")
         // LiveSensorData speed is already km/h — store as m/s for consistency
         // with future raw-Location-based sources, so callers can convert
         // uniformly at read time.
@@ -190,6 +237,21 @@ object GpsLogger {
         s.altitudeM?.let { sb.append(",\"alt\":").append(it) }
         s.headingDeg?.let { sb.append(",\"hdg\":").append(String.format(Locale.US, "%.1f", it)) }
         s.accelerationG?.let { sb.append(",\"g\":").append(String.format(Locale.US, "%.3f", it)) }
+        sb.append('}')
+        return sb.toString()
+    }
+
+    private fun toNdjsonCam(f: GpsFix): String {
+        val sb = StringBuilder(220)
+        sb.append('{')
+        sb.append("\"t\":").append(f.tEpochMs)
+        sb.append(",\"src\":\"cam\"")
+        f.lat?.let       { sb.append(",\"lat\":").append(String.format(Locale.US, "%.6f", it)) }
+        f.lon?.let       { sb.append(",\"lon\":").append(String.format(Locale.US, "%.6f", it)) }
+        f.speedMs?.let   { sb.append(",\"spd\":").append(String.format(Locale.US, "%.2f", it)) }
+        f.altitudeM?.let { sb.append(",\"alt\":").append(it) }
+        f.headingDeg?.let{ sb.append(",\"hdg\":").append(String.format(Locale.US, "%.1f", it)) }
+        f.accelG?.let    { sb.append(",\"g\":").append(String.format(Locale.US, "%.3f", it)) }
         sb.append('}')
         return sb.toString()
     }

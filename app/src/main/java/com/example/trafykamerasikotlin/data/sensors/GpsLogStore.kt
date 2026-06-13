@@ -96,19 +96,22 @@ class GpsLogStore(private val context: Context) {
      * (no kotlinx.serialization) and tolerates missing fields. Skips on
      * unparseable timestamp — every other field is nullable so partial
      * lines still produce a usable [GpsFix].
+     *
+     * Keys: `t` (epoch ms), `src` ("phone"|"cam"), `lat`, `lon`, `spd`
+     * (m/s), `alt` (int m), `hdg` (deg), `g` (signed g).
      */
     private fun parseLine(line: String): GpsFix? {
-        // Tiny key-by-key scan rather than a real JSON parser. Keys we
-        // expect are tight: t, spd, alt, hdg, g.
         val t = extractLong(line, "\"t\"")    ?: return null
+        val lat = extractDouble(line, "\"lat\"")
+        val lon = extractDouble(line, "\"lon\"")
         val spd = extractDouble(line, "\"spd\"")
         val alt = extractLong(line, "\"alt\"")?.toInt()
         val hdg = extractDouble(line, "\"hdg\"")?.toFloat()
         val g   = extractDouble(line, "\"g\"")?.toFloat()
         return GpsFix(
             tEpochMs   = t,
-            lat        = null,
-            lon        = null,
+            lat        = lat,
+            lon        = lon,
             speedMs    = spd?.toFloat(),
             altitudeM  = alt,
             headingDeg = hdg,

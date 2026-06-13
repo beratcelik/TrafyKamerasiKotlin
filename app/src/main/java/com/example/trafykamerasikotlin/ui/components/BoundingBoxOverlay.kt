@@ -10,6 +10,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
+import com.example.trafykamerasikotlin.data.sensors.LiveSensorData
 import com.example.trafykamerasikotlin.data.sensors.rememberLiveSensorData
 import com.example.trafykamerasikotlin.data.video.HudWidgets
 import com.example.trafykamerasikotlin.data.vision.OVERLAY_DEDUPE_IOU
@@ -23,10 +24,9 @@ import kotlin.math.tan
 /**
  * Live AI overlay: paints each tracked vehicle as a translucent green slab
  * with the estimated distance-to-vehicle written over it, plus the four HUD
- * chrome widgets (clip-clock, compass, speed dial, altitude pill) driven
- * by [rememberLiveSensorData]. Visually mirrors the offline burn-in
- * produced by `OverlayVideoEncoder` so a clip recorded live and re-encoded
- * later look identical.
+ * chrome widgets (clip-clock, compass, speed dial, altitude pill). Visually
+ * mirrors the offline burn-in produced by `OverlayVideoEncoder` so a clip
+ * recorded live and re-encoded later look identical.
  *
  * Coordinate spaces:
  *  - `scene.detections / tracks / plates` bboxes are in source-frame px
@@ -43,6 +43,14 @@ import kotlin.math.tan
  * @param sourceSize the dimensions of the frame the detections reference
  * @param showHud false hides the corner widgets (used when caller already
  *                stacks a separate chrome layer)
+ * @param sensorData snapshot to drive the HUD widgets. Null means "live
+ *                  phone state via [rememberLiveSensorData]" — that's the
+ *                  default for the cam/live overlay paths. Sidecar-driven
+ *                  playback supplies a non-null recorded value derived
+ *                  from the GPS log so the HUD reads what was true at
+ *                  recording time. Null is resolved AFTER the early-return
+ *                  below — the LiveSensorProvider doesn't start when the
+ *                  overlay has nothing to draw.
  */
 @Composable
 fun BoundingBoxOverlay(
@@ -50,10 +58,17 @@ fun BoundingBoxOverlay(
     sourceSize: Size,
     modifier: Modifier = Modifier,
     showHud: Boolean = true,
+    sensorData: LiveSensorData? = null,
 ) {
     if (scene == null || sourceSize.width <= 0 || sourceSize.height <= 0) return
 
-    val sensorData by rememberLiveSensorData()
+    // After the early-return so we don't spin up the GPS listener +
+    // rotation-vector subscription for a Composable that has nothing to
+    // draw. `rememberLiveSensorData` is called UNCONDITIONALLY here so the
+    // Compose call graph stays deterministic across recompositions; we
+    // just ignore the value when the caller supplied a recorded fix.
+    val liveSensor by rememberLiveSensorData()
+    val effectiveSensor = sensorData ?: liveSensor
 
     // Locked plate text per track id. Once OCR's vote book is confident
     // about a track's plate we commit to that text for the rest of the
@@ -136,7 +151,7 @@ fun BoundingBoxOverlay(
             val pillScale = (dialR / 48f).coerceIn(1.5f, 3.8f)
             val canvas = drawContext.canvas.nativeCanvas
 
-            sensorData.headingDeg?.let { headingDeg ->
+            effectiveSensor.headingDeg?.let { headingDeg ->
                 HudWidgets.drawCompassDisc(
                     canvas     = canvas,
                     cx         = margin + dialR,
@@ -145,7 +160,7 @@ fun BoundingBoxOverlay(
                     headingDeg = headingDeg,
                 )
             }
-            sensorData.speedKmh?.let { speedKmh ->
+            effectiveSensor.speedKmh?.let { speedKmh ->
                 HudWidgets.drawSpeedDial(
                     canvas   = canvas,
                     cx       = vw - margin - dialR,
@@ -154,7 +169,7 @@ fun BoundingBoxOverlay(
                     speedKmh = speedKmh,
                 )
             }
-            sensorData.altitudeM?.let { altitudeM ->
+            effectiveSensor.altitudeM?.let { altitudeM ->
                 HudWidgets.drawAltitudePill(
                     canvas    = canvas,
                     rightX    = vw - margin - dialR * 2f - 10f,
@@ -165,7 +180,7 @@ fun BoundingBoxOverlay(
             }
             // Top-right: G-meter bar. Positioned near the speed dial since
             // the two concepts (speed + change-in-speed) read together.
-            sensorData.accelerationG?.let { accelG ->
+            effectiveSensor.accelerationG?.let { accelG ->
                 val gWidth  = dialR * 2.4f
                 val gCenter = vw - margin - gWidth / 2
                 val gY      = margin + 18f * pillScale

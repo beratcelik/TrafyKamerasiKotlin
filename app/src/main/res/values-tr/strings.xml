@@ -73,6 +73,7 @@
     <string name="media_action_view">Görüntüle</string>
     <string name="media_action_download">İndir</string>
     <string name="media_action_cancel_download">İndirmeyi İptal Et</string>
+    <string name="media_action_export_with_overlay">Üzerine işleyip kaydet (yavaş)</string>
     <string name="media_dialog_delete_title">Dosya silinsin mi?</string>
     <string name="media_downloading_indeterminate">İndiriliyor…</string>
     <string name="media_download_progress_fmt">İndiriliyor %1$d%%  •  %2$.1f MB/s</string>

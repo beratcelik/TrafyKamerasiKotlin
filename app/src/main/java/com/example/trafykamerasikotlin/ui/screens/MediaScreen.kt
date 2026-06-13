@@ -171,9 +171,13 @@ fun MediaScreen(
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    // In-app overlay URL for HiSilicon/Easytech/etc. HTTP file playback. GeneralPlus
-    // and Allwinner have their own VM-driven flows (playbackUri / allwinnerPlaybackUri).
-    var inAppVideoUrl by remember { mutableStateOf<String?>(null) }
+    // In-app overlay descriptor for HiSilicon/Easytech/etc. file playback.
+    // Carries the playback URL, plus optional sidecar / clip-start metadata
+    // when we're opening a LOCAL downloaded file (so the overlay can read
+    // from the precomputed sidecar instead of re-running live inference).
+    // GeneralPlus and Allwinner have their own VM-driven flows
+    // (playbackUri / allwinnerPlaybackUri).
+    var inAppPlayback by remember { mutableStateOf<InAppPlayback?>(null) }
     // Full-screen photo viewer URL.
     var inAppPhotoUrl by remember { mutableStateOf<String?>(null) }
 
@@ -295,12 +299,34 @@ fun MediaScreen(
                         imageLoader       = dashcamImageLoader,
                         onPlay            = { viewModel.playFile(it) },
                         onPlayAllwinner   = { viewModel.startAllwinnerStream(it) },
-                        onPlayInApp       = { url -> inAppVideoUrl = url },
+                        // HiSilicon/Easytech in-app play: prefer the local
+                        // downloaded file when present so the precomputed
+                        // sidecar can drive the overlay. Falls back to
+                        // streaming from the cam URL when nothing's been
+                        // downloaded yet.
+                        onPlayInApp       = { f ->
+                            val local = viewModel.localDownloadedFile(f)
+                            val basename = f.name.substringBeforeLast('.')
+                            inAppPlayback = if (local != null) {
+                                InAppPlayback(
+                                    url               = android.net.Uri.fromFile(local).toString(),
+                                    sidecarBasename   = basename.takeIf { viewModel.hasSidecar(f) },
+                                    clipStartEpochMs  = viewModel.clipStartEpochMs(f),
+                                )
+                            } else {
+                                InAppPlayback(
+                                    url               = f.httpUrl,
+                                    sidecarBasename   = null,
+                                    clipStartEpochMs  = null,
+                                )
+                            }
+                        },
                         onViewPhoto       = { url -> inAppPhotoUrl = url },
-                        // Route through the burn-in flow when the AI toggle is on
-                        // AND the camera supports it (GP via AVI/MJPEG, HiSilicon
-                        // family via HTTP MP4). Allwinner and toggle-off both
-                        // fall through to the plain download.
+                        // Route through the fast sidecar-scan flow when the AI
+                        // toggle is on AND the chipset supports it (GP via
+                        // AVI/MJPEG, HiSilicon-family via HTTP MP4). Allwinner
+                        // and toggle-off both fall through to the plain
+                        // download with no sidecar.
                         onDownload        = { f ->
                             val aiBurnIn = aiOverlayEnabled && device != null &&
                                 device.protocol != ChipsetProtocol.ALLWINNER_V853
@@ -311,7 +337,9 @@ fun MediaScreen(
                             }
                         },
                         onCancelDownload  = { viewModel.cancelDownload(it) },
-                        onDelete          = { viewModel.delete(it) }
+                        onDelete          = { viewModel.delete(it) },
+                        // Opt-in slow pixel-bake for sharing externally.
+                        onExportWithOverlay = { viewModel.exportWithBakedOverlay(it) },
                     )
                 }
                 }
@@ -338,11 +366,13 @@ fun MediaScreen(
         AllwinnerPlaybackOverlay(url = uri, onDismiss = { viewModel.stopAllwinnerStream() })
     }
 
-    inAppVideoUrl?.let { url ->
+    inAppPlayback?.let { ctx ->
         IjkVideoPlayerOverlay(
-            url       = url,
-            network   = network,
-            onDismiss = { inAppVideoUrl = null },
+            url               = ctx.url,
+            network           = network,
+            sidecarBasename   = ctx.sidecarBasename,
+            clipStartEpochMs  = ctx.clipStartEpochMs,
+            onDismiss         = { inAppPlayback = null },
         )
     }
 
@@ -442,6 +472,25 @@ private fun AllwinnerPlaybackOverlay(url: String, onDismiss: () -> Unit) {
         }
     }
 }
+
+// ── In-app playback descriptor ──────────────────────────────────────────────
+
+/**
+ * Routing context for the HiSilicon/Easytech in-app player overlay.
+ *
+ * [url] may be a `file://` for a downloaded clip or an `http://` cam URL.
+ * When [sidecarBasename] is non-null we have a precomputed overlay
+ * sidecar for this clip — the player loads it on entry and drives the
+ * overlay from playhead position lookups instead of re-running live
+ * inference. [clipStartEpochMs] anchors the GPS log so HUD chrome (speed
+ * dial, altitude pill, compass, G-meter) reads the recorded fix rather
+ * than the phone's *now*.
+ */
+data class InAppPlayback(
+    val url: String,
+    val sidecarBasename: String?,
+    val clipStartEpochMs: Long?,
+)
 
 // ── Camera grouping helpers ─────────────────────────────────────────────────
 
@@ -602,11 +651,12 @@ private fun MediaGrid(
     imageLoader: ImageLoader,
     onPlay: (MediaFile) -> Unit,
     onPlayAllwinner: (MediaFile) -> Unit,
-    onPlayInApp: (String) -> Unit,
+    onPlayInApp: (MediaFile) -> Unit,
     onViewPhoto: (String) -> Unit,
     onDownload: (MediaFile) -> Unit,
     onCancelDownload: (String) -> Unit,
     onDelete: (MediaFile) -> Unit,
+    onExportWithOverlay: (MediaFile) -> Unit,
 ) {
     var actionTarget by remember { mutableStateOf<MediaFile?>(null) }
     var deleteTarget by remember { mutableStateOf<MediaFile?>(null) }
@@ -674,7 +724,7 @@ private fun MediaGrid(
                                         // Allwinner: buffer RTP2P to a temp .ts then play via IjkPlayer.
                                         onPlayAllwinner(file)
                                     }
-                                    else -> onPlayInApp(file.httpUrl)
+                                    else -> onPlayInApp(file)
                                 }
                             }
                         )
@@ -747,6 +797,24 @@ private fun MediaGrid(
                                 }
                             }
                         }
+                    }
+                    // Opt-in slow pixel-bake — produces a shareable MP4 with the
+                    // AI / HUD overlay burned into pixels. Hidden for Allwinner
+                    // (no OfflineVideoProcessor wiring) and for photos.
+                    if (!file.isPhoto &&
+                        device?.protocol != null &&
+                        device.protocol != ChipsetProtocol.ALLWINNER_V853
+                    ) {
+                        HorizontalDivider(color = ColorDivider, thickness = 0.5.dp)
+                        DialogActionRow(
+                            icon    = Icons.Filled.AutoAwesome,
+                            label   = stringResource(R.string.media_action_export_with_overlay),
+                            color   = ColorTextPrimary,
+                            onClick = {
+                                actionTarget = null
+                                onExportWithOverlay(file)
+                            }
+                        )
                     }
                     // Delete — Allwinner firmware doesn't support deletion (the OEM app
                     // has no delete button either), so we hide the option entirely.
@@ -1184,7 +1252,25 @@ private fun AiOverlayToggleButton(
  * same as the original SurfaceView path.
  */
 @Composable
-private fun IjkVideoPlayerOverlay(url: String, network: Network?, onDismiss: () -> Unit) {
+private fun IjkVideoPlayerOverlay(
+    url: String,
+    network: Network?,
+    onDismiss: () -> Unit,
+    /**
+     * When non-null, the player loads
+     * `filesDir/overlay_sidecars/<basename>.ndjson` and renders the AI
+     * chrome from it instead of re-running live inference on TextureView
+     * bitmap polls — same overlay, deterministic, zero per-frame cost.
+     */
+    sidecarBasename: String? = null,
+    /**
+     * Wall-clock epoch (ms) corresponding to playhead position 0. When set,
+     * the HUD widgets read from the recorded GPS log keyed by
+     * `clipStartEpochMs + currentPosition`. When null, the HUD falls back
+     * to the live phone sensor (the default `BoundingBoxOverlay` behaviour).
+     */
+    clipStartEpochMs: Long? = null,
+) {
     BackHandler(onBack = onDismiss)
 
     val bufferingState = remember { mutableStateOf(true) }
@@ -1245,7 +1331,35 @@ private fun IjkVideoPlayerOverlay(url: String, network: Network?, onDismiss: () 
     val (aiOverlayEnabled, setAiOverlay) =
         com.example.trafykamerasikotlin.data.settings.rememberAiOverlayPreference()
     val aiViewModel: LiveVisionOverlayViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-    val aiScene by aiViewModel.scene.collectAsStateWithLifecycle()
+    val liveScene by aiViewModel.scene.collectAsStateWithLifecycle()
+
+    // ── Sidecar-mode state ────────────────────────────────────────────────
+    // When the caller supplied a basename and the matching NDJSON exists,
+    // we precompute the overlay timeline once and read from it during
+    // playback — no bitmap polling, no live inference, no per-frame battery
+    // cost. The polling effect below drives `sidecarScene` from playhead
+    // position. When the sidecar can't load (missing / corrupt) we fall
+    // back to the live-inference path so the overlay still works.
+    val sidecarReader by androidx.compose.runtime.produceState<com.example.trafykamerasikotlin.data.overlay.OverlaySidecarStore.Reader?>(
+        initialValue = null, key1 = sidecarBasename,
+    ) {
+        value = sidecarBasename?.let {
+            com.example.trafykamerasikotlin.data.overlay.OverlaySidecarStore.load(ctx, it)
+        }
+    }
+    val sidecarScene = remember { mutableStateOf<com.example.trafykamerasikotlin.data.vision.TrackedScene?>(null) }
+    val playbackSensor = remember { mutableStateOf(com.example.trafykamerasikotlin.data.sensors.LiveSensorData()) }
+    val gpsTrack by androidx.compose.runtime.produceState<com.example.trafykamerasikotlin.data.sensors.GpsTrack?>(
+        initialValue = null, key1 = clipStartEpochMs,
+    ) {
+        value = clipStartEpochMs?.let {
+            // 1 hour window covers anything the dashcam can record into a
+            // single clip — overshoot is free because IndexedGpsTrack does
+            // a binary search per lookup.
+            com.example.trafykamerasikotlin.data.sensors.GpsLogStore(ctx)
+                .load(it, it + 3_600_000L)
+        }
+    }
 
     // TextureView reference for the polling coroutine — assigned by the
     // SurfaceTextureListener once the GL surface is ready.
@@ -1310,17 +1424,44 @@ private fun IjkVideoPlayerOverlay(url: String, network: Network?, onDismiss: () 
                 .aspectRatio(16f / 9f)
         )
 
-        // ── AI bitmap polling ──────────────────────────────────────────────
-        // Only active when the toggle is on AND the player has rendered its
-        // first frame. We poll at ~10 fps (100 ms tick); the pipeline's own
-        // sampler then drops 2 of every 3 (`inferenceEveryN = 3`) so actual
-        // inference runs ~3 fps. Each `getBitmap` allocates ~5 MB at 1080p
-        // letterboxed; we recycle right after submit since the pipeline
-        // copies internally before parking on its inference channel.
-        val aiActive = aiOverlayEnabled && !bufferingState.value
+        // ── Overlay source selection ───────────────────────────────────────
+        // Sidecar mode (preferred for downloaded files): poll player
+        // position and look up the precomputed TrackedScene + recorded
+        // sensor values. No bitmap polling, no live inference.
+        //
+        // Live-inference fallback: previous behaviour — poll the
+        // TextureView bitmap and feed the AI pipeline. Used when no
+        // sidecar exists (e.g. files downloaded before this feature, or
+        // streaming directly from the cam URL).
+        val sidecarActive = aiOverlayEnabled && sidecarReader != null
+        val liveActive = aiOverlayEnabled && !sidecarActive && !bufferingState.value
         val pollKey = textureViewRef.value
-        LaunchedEffect(aiActive, pollKey) {
-            if (!aiActive || pollKey == null) return@LaunchedEffect
+
+        // Sidecar mode — position-driven overlay. Keyed on textureViewRef
+        // so the polling stops promptly when the player tears down (surface
+        // destroyed → textureViewRef goes null) instead of spinning a 30 Hz
+        // tight loop writing sceneAt(0) into nowhere.
+        val sidecarSurface = textureViewRef.value
+        LaunchedEffect(sidecarActive, sidecarReader, gpsTrack, clipStartEpochMs, sidecarSurface) {
+            if (!sidecarActive || sidecarSurface == null) return@LaunchedEffect
+            val reader = sidecarReader ?: return@LaunchedEffect
+            val track  = gpsTrack
+            val clipStart = clipStartEpochMs
+            while (true) {
+                kotlinx.coroutines.delay(33)   // ~30 Hz lookup, cheap
+                val posMs = try { ijkPlayer.currentPosition } catch (_: Throwable) { 0L }
+                sidecarScene.value = reader.sceneAt(posMs * 1_000L)
+                if (track != null && clipStart != null) {
+                    val fix = track.fixAt(clipStart + posMs)
+                    playbackSensor.value = if (fix != null) liveSensorDataFromFix(fix)
+                        else com.example.trafykamerasikotlin.data.sensors.LiveSensorData()
+                }
+            }
+        }
+
+        // Live-inference fallback (only when no sidecar)
+        LaunchedEffect(liveActive, pollKey) {
+            if (!liveActive || pollKey == null) return@LaunchedEffect
             var firstFrameLogged = false
             while (true) {
                 kotlinx.coroutines.delay(100)
@@ -1344,17 +1485,26 @@ private fun IjkVideoPlayerOverlay(url: String, network: Network?, onDismiss: () 
 
         // AI bounding-box overlay — always composed (handles null scene
         // internally) so the Canvas node is in the tree before the first
-        // scene arrives. Mirrors the GP playback overlay pattern.
-        val overlayScene = if (aiOverlayEnabled) aiScene else null
-        val overlaySourceSize = overlayScene?.let {
+        // scene arrives. Sensor data: recorded GPS when we have a clip
+        // start anchor, otherwise null → BoundingBoxOverlay falls back to
+        // the live phone state (its default behaviour).
+        val effectiveScene = when {
+            !aiOverlayEnabled -> null
+            sidecarActive     -> sidecarScene.value
+            else              -> liveScene
+        }
+        val overlaySourceSize = effectiveScene?.let {
             android.util.Size(it.sourceFrameSize.width, it.sourceFrameSize.height)
         } ?: android.util.Size(0, 0)
+        val effectiveSensor = if (sidecarActive && clipStartEpochMs != null)
+            playbackSensor.value else null
         BoundingBoxOverlay(
-            scene = overlayScene,
+            scene = effectiveScene,
             sourceSize = overlaySourceSize,
             modifier = Modifier
                 .then(if (isLandscape) Modifier.fillMaxHeight() else Modifier.fillMaxWidth())
                 .aspectRatio(16f / 9f),
+            sensorData = effectiveSensor,
         )
 
         if (bufferingState.value) {
@@ -1474,3 +1624,21 @@ private fun PhotoViewerOverlay(url: String, network: Network?, onDismiss: () -> 
         }
     }
 }
+
+/**
+ * Project the sparse GPS log fix back into the [LiveSensorData] shape the
+ * HUD widgets expect. `speedMs` is in metres-per-second (sidecar storage
+ * convention); the HUD wants km/h. `accelG` carries the GPS-speed-delta-
+ * derived longitudinal G that the live phone sensor pipeline computes —
+ * preserving it makes playback HUD parity-correct with what was visible
+ * at recording time.
+ */
+private fun liveSensorDataFromFix(
+    fix: com.example.trafykamerasikotlin.data.sensors.GpsFix,
+): com.example.trafykamerasikotlin.data.sensors.LiveSensorData =
+    com.example.trafykamerasikotlin.data.sensors.LiveSensorData(
+        speedKmh      = fix.speedMs?.let { (it * 3.6f).toInt().coerceAtLeast(0) },
+        altitudeM     = fix.altitudeM,
+        headingDeg    = fix.headingDeg,
+        accelerationG = fix.accelG,
+    )

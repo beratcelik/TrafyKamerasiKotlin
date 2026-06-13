@@ -73,6 +73,7 @@
     <string name="media_action_view">View</string>
     <string name="media_action_download">Download</string>
     <string name="media_action_cancel_download">Cancel Download</string>
+    <string name="media_action_export_with_overlay">Bake overlay into pixels (slow)</string>
     <string name="media_dialog_delete_title">Delete file?</string>
     <string name="media_downloading_indeterminate">Downloading…</string>
     <string name="media_download_progress_fmt">Downloading %1$d%%  •  %2$.1f MB/s</string>

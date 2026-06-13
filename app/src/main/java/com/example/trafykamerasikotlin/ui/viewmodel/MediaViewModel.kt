@@ -17,6 +17,8 @@ import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.MediaFile
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
+import com.example.trafykamerasikotlin.data.overlay.OverlaySidecarStore
+import com.example.trafykamerasikotlin.data.overlay.SidecarScanner
 import com.example.trafykamerasikotlin.data.settings.AiOverlayPreferences
 import com.example.trafykamerasikotlin.data.video.OfflineVideoProcessor
 import kotlinx.coroutines.CancellationException
@@ -34,7 +36,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.RandomAccessFile
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -329,35 +330,35 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Download + AI-burn variant. GeneralPlus only — other chipsets need the
-     * Chunk 4b H.264 pipeline before this can help them.
+     * Fast "Download + AI" path. Replaces the old multi-minute pixel-bake
+     * with **plain download + one-pass overlay scan**:
+     *   0–50% download to user's `Downloads/<original-name>`.
+     *   50–99% [SidecarScanner] walks the local file at the same 1-in-N
+     *          sampling cadence the live pipeline uses, writing a
+     *          deterministic per-frame sidecar to
+     *          `filesDir/overlay_sidecars/<basename>.ndjson`.
+     *   100%   done — file appears in Gallery, sidecar drives the in-app
+     *          playback overlay (the playback player composes the same
+     *          `BoundingBoxOverlay` the live stream uses, reading from the
+     *          sidecar — see MediaScreen's `IjkVideoPlayerOverlay`).
      *
-     * Two stages reported as one bar (0–50 download, 50–100 AI processing):
-     *   1. Download the original ≥1080p AVI to app's cache dir.
-     *   2. Run [OfflineVideoProcessor] to decode → inference → re-encode as
-     *      MP4 with overlays burned into the pixels.
-     *   3. Move the MP4 into the user's Downloads folder with the original
-     *      file's base name but an .mp4 extension so the plain-download and
-     *      AI-download artifacts don't collide on disk.
+     * Sharing externally still gets a plain video (no overlay baked into
+     * pixels). For that, see [exportWithBakedOverlay] — the old slow path
+     * is kept as an explicit opt-in action.
      *
-     * Downloaded AVI in cache is deleted on success or failure — the user
-     * only sees the MP4 they asked for.
+     * Allwinner falls through to plain [download] (the in-app player chain
+     * for downloaded .ts files isn't wired to overlays yet).
      */
     fun downloadWithOverlay(file: MediaFile) {
         if (_downloading.value.contains(file.name)) return
         val device = loadedDevice ?: return
         if (device.protocol == ChipsetProtocol.ALLWINNER_V853) {
-            // Allwinner uses RTP2P → temp .ts; offline processor would need a
-            // separate .ts source before this works. Plain download for now.
             download(file)
             return
         }
 
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val outputName   = file.name.substringBeforeLast('.') + ".mp4"
-        val outFile      = File(downloadsDir, outputName)
-
-        val tempIn = File(getApplication<Application>().cacheDir, "ai_in_${file.name}")
+        val outFile      = File(downloadsDir, file.name)
 
         // Pre-resolve GP file index outside the coroutine so a bad path
         // surfaces immediately.
@@ -374,14 +375,10 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 downloadsDir.mkdirs()
 
-                // ── Stage 1: download to cache ────────────────────────────
-                // GP uses the GPSOCKET GetRawData flow (chunked, with progress).
-                // HiSilicon-family uses a plain HTTP stream from `httpUrl`,
-                // with progress derived from Content-Length when available.
-                // Either way maps to the 0..50% band of the combined bar.
+                // ── Stage 1: download (0–50%) ─────────────────────────────
                 if (device.protocol == ChipsetProtocol.GENERALPLUS) {
                     val ok = gpRepo.downloadFile(
-                        device.protocol.deviceIp, gpFileIndex, tempIn,
+                        device.protocol.deviceIp, gpFileIndex, outFile,
                     ) { received, total ->
                         val halfPct = ((received * 50L) / total.coerceAtLeast(1L)).toInt().coerceIn(0, 50)
                         _downloadProgress.value = _downloadProgress.value + (file.name to DownloadState(
@@ -393,7 +390,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     if (!ok) throw Exception("GetRawData returned no data")
                 } else {
-                    httpDownloadToFile(file.httpUrl, tempIn) { received, total ->
+                    httpDownloadToFile(file.httpUrl, outFile) { received, total ->
                         val halfPct = if (total > 0L)
                             ((received * 50L) / total).toInt().coerceIn(0, 50)
                         else 0
@@ -406,21 +403,17 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
-                // ── Stage 2: offline process ──────────────────────────────
-                // GP path: AVI/MJPEG → `processAvi` (each JPEG decoded to
-                //          ARGB on CPU, uploaded as a 2D source texture).
-                // HiSilicon-family: MP4/H.264 → `process(file)` Surface-to-
-                //          Surface GL pipeline (zero CPU YUV→ARGB cost).
-                // Both share the same encoder, overlay renderer, and AI
-                // inference logic via [GlOverlayPipeline].
-                val proc = OfflineVideoProcessor(context = getApplication())
+                // ── Stage 2: sidecar scan (50–99%) ────────────────────────
+                // No re-encode, no pixel-bake. Walks the local file once with
+                // the same 1-in-N inference cadence as the live pipeline.
+                val scanner = SidecarScanner(getApplication())
                 val stateJob = launch {
-                    proc.state.collect { s ->
+                    scanner.state.collect { s ->
                         val pct = when (s) {
-                            is OfflineVideoProcessor.State.Processing ->
-                                (50 + (s.fractionDone * 50).toInt()).coerceIn(50, 99)
-                            is OfflineVideoProcessor.State.Done -> 100
-                            is OfflineVideoProcessor.State.Failed -> -1
+                            is SidecarScanner.State.Scanning ->
+                                (50 + (s.fractionDone * 49).toInt()).coerceIn(50, 99)
+                            is SidecarScanner.State.Done   -> 100
+                            is SidecarScanner.State.Failed -> -1
                             else -> 50
                         }
                         if (pct >= 0) {
@@ -433,23 +426,135 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                 }
-                // ── Real-GPS HUD: resolve clip start from the cam file ──
-                // mtimeEpoch is the authoritative wall-clock the cam stamped
-                // the file with (when available). Filename-parse fallback
-                // mirrors the rest of the codebase. The processor pulls the
-                // phone GPS log for this window itself.
+                val basename = file.name.substringBeforeLast('.')
+                // Scanner failure is non-fatal: the user still has a plain
+                // playable video in Downloads. We just won't have an overlay
+                // on in-app playback. Toast tells the truth either way.
+                scanner.scan(inputVideo = outFile, videoBasename = basename)
+                stateJob.cancel()
+
+                MediaScannerConnection.scanFile(getApplication(), arrayOf(outFile.absolutePath), null, null)
+                _userMessages.emit(MediaUserMessage.DownloadComplete(file.name))
+                completed = true
+            } catch (e: CancellationException) {
+                Log.i(TAG, "downloadWithOverlay cancelled: ${file.name}")
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "downloadWithOverlay failed: ${e.message}")
+                _userMessages.emit(MediaUserMessage.DownloadFailed)
+            } finally {
+                _downloading.value      = _downloading.value - file.name
+                _downloadProgress.value = _downloadProgress.value - file.name
+                downloadJobs.remove(file.name)
+                if (!completed) {
+                    if (outFile.exists()) outFile.delete()
+                    OverlaySidecarStore.deleteFor(getApplication(), file.name.substringBeforeLast('.'))
+                }
+            }
+        }
+        downloadJobs[file.name] = job
+    }
+
+    /**
+     * Slow opt-in pixel-bake — reuses [OfflineVideoProcessor] to produce a
+     * shareable MP4 with the AI / HUD overlay baked into every frame's
+     * pixels. Output goes to `Downloads/<basename>_overlay.mp4` so it lives
+     * alongside the plain download instead of overwriting it.
+     *
+     * This is the only flow that exists for "I want to share the video on
+     * WhatsApp / Photos WITH overlay." It's the same multi-minute path that
+     * used to be the default behaviour of [downloadWithOverlay] before the
+     * sidecar-based playback overlay was introduced.
+     */
+    fun exportWithBakedOverlay(file: MediaFile) {
+        // Share the same downloading key as plain download so the UI's
+        // existing per-card progress indicator surfaces the export's
+        // 0..100% bar — and so the user can't kick off a regular download
+        // of the same file while it's running (the two would race on the
+        // temp file). Mutually-exclusive matches the user's mental model
+        // ("I'm processing this clip — wait").
+        if (_downloading.value.contains(file.name)) return
+        val device = loadedDevice
+        if (device == null) {
+            Log.w(TAG, "exportWithBakedOverlay: no cam connected — cannot fetch source")
+            viewModelScope.launch { _userMessages.emit(MediaUserMessage.DownloadFailed) }
+            return
+        }
+        if (device.protocol == ChipsetProtocol.ALLWINNER_V853) {
+            Log.w(TAG, "exportWithBakedOverlay: not supported on Allwinner yet")
+            viewModelScope.launch { _userMessages.emit(MediaUserMessage.DownloadFailed) }
+            return
+        }
+
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val outputName   = file.name.substringBeforeLast('.') + "_overlay.mp4"
+        val outFile      = File(downloadsDir, outputName)
+
+        val tempIn = File(getApplication<Application>().cacheDir, "export_in_${file.name}")
+
+        val gpFileIndex: Int = if (device.protocol == ChipsetProtocol.GENERALPLUS) {
+            GeneralplusMediaRepository.fileIndexOf(file.path)
+                .also { if (it < 0) { Log.w(TAG, "exportWithBakedOverlay: bad GP path ${file.path}"); return } }
+        } else -1
+
+        val job = viewModelScope.launch(Dispatchers.Default) {
+            _downloading.value = _downloading.value + file.name
+            _downloadProgress.value = _downloadProgress.value + (file.name to DownloadState(0, 0f, 0f, 0f))
+            Log.i(TAG, "exportWithBakedOverlay: start ${file.name} → ${outFile.name}")
+            var completed = false
+            try {
+                downloadsDir.mkdirs()
+                if (device.protocol == ChipsetProtocol.GENERALPLUS) {
+                    val ok = gpRepo.downloadFile(
+                        device.protocol.deviceIp, gpFileIndex, tempIn,
+                    ) { received, total ->
+                        val halfPct = ((received * 50L) / total.coerceAtLeast(1L)).toInt().coerceIn(0, 50)
+                        _downloadProgress.value = _downloadProgress.value + (file.name to DownloadState(
+                            pct = halfPct,
+                            receivedMb = received / (1024f * 1024f),
+                            totalMb    = total / (1024f * 1024f),
+                            speedMbPerSec = 0f,
+                        ))
+                    }
+                    if (!ok) throw Exception("GetRawData returned no data")
+                } else {
+                    httpDownloadToFile(file.httpUrl, tempIn) { received, total ->
+                        val halfPct = if (total > 0L)
+                            ((received * 50L) / total).toInt().coerceIn(0, 50)
+                        else 0
+                        _downloadProgress.value = _downloadProgress.value + (file.name to DownloadState(
+                            pct = halfPct,
+                            receivedMb = received / (1024f * 1024f),
+                            totalMb    = (if (total > 0L) total else received) / (1024f * 1024f),
+                            speedMbPerSec = 0f,
+                        ))
+                    }
+                }
+
+                val proc = OfflineVideoProcessor(context = getApplication())
+                val stateJob = launch {
+                    proc.state.collect { s ->
+                        val pct = when (s) {
+                            is OfflineVideoProcessor.State.Processing ->
+                                (50 + (s.fractionDone * 50).toInt()).coerceIn(50, 99)
+                            is OfflineVideoProcessor.State.Done -> 100
+                            is OfflineVideoProcessor.State.Failed -> -1
+                            else -> 50
+                        }
+                        if (pct >= 0) {
+                            _downloadProgress.value = _downloadProgress.value + (file.name to DownloadState(
+                                pct = pct, receivedMb = 0f, totalMb = 0f, speedMbPerSec = 0f,
+                            ))
+                        }
+                    }
+                }
                 val clipStartEpochMs: Long? = (file.mtimeEpoch ?: parseEpochFromFileName(file.name))
                     .takeIf { it > 0 }
                     ?.let { it * 1_000L }
 
                 if (device.protocol == ChipsetProtocol.GENERALPLUS) {
-                    // GP path: AVI/MJPEG, handled by the File overload
-                    // (uses AviMjpegVideoSource internally).
                     proc.process(tempIn, outFile, clipStartEpochMs)
                 } else {
-                    // HiSilicon-family: open the MP4 via MediaCodecVideoSource
-                    // (sequential MediaExtractor + MediaCodec, no MMR seek
-                    // dependence — survives the cam's broken sample tables).
                     val source = com.example.trafykamerasikotlin.data.video.MediaCodecVideoSource
                         .open(tempIn)
                     source.use { proc.process(it, outFile, clipStartEpochMs) }
@@ -464,10 +569,10 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                     throw Exception("offline processor wrote empty file")
                 }
             } catch (e: CancellationException) {
-                Log.i(TAG, "downloadWithOverlay cancelled: ${file.name}")
+                Log.i(TAG, "exportWithBakedOverlay cancelled: ${file.name}")
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "downloadWithOverlay failed: ${e.message}")
+                Log.e(TAG, "exportWithBakedOverlay failed: ${e.message}")
                 _userMessages.emit(MediaUserMessage.DownloadFailed)
             } finally {
                 _downloading.value      = _downloading.value - file.name
@@ -479,6 +584,36 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         }
         downloadJobs[file.name] = job
     }
+
+    // ── Local-file / sidecar lookup helpers ───────────────────────────────────
+
+    /**
+     * Returns the absolute path of the downloaded local copy of [file] when
+     * present in user's Downloads dir, or null when the user hasn't
+     * downloaded this clip yet. Used by the Play action to prefer local
+     * playback over a fresh cam stream (and to drive the sidecar-backed
+     * overlay branch in [com.example.trafykamerasikotlin.ui.screens.MediaScreen]).
+     */
+    fun localDownloadedFile(file: MediaFile): File? {
+        val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val candidate = File(dir, file.name)
+        return candidate.takeIf { it.exists() && it.length() > 0L }
+    }
+
+    /** True when a sidecar exists for [file]'s basename in app-private storage. */
+    fun hasSidecar(file: MediaFile): Boolean =
+        OverlaySidecarStore.exists(getApplication(), file.name.substringBeforeLast('.'))
+
+    /**
+     * Wall-clock epoch (milliseconds) for the start of [file] — used by the
+     * sidecar-backed playback overlay to look up the recorded GPS log entry
+     * matching the current playhead position. Falls back to the filename
+     * timestamp when the cam doesn't expose `mtimeEpoch`.
+     */
+    fun clipStartEpochMs(file: MediaFile): Long? =
+        (file.mtimeEpoch ?: parseEpochFromFileName(file.name))
+            .takeIf { it > 0 }
+            ?.let { it * 1_000L }
 
     /**
      * HTTP streaming download with progress reporting. Uses the same

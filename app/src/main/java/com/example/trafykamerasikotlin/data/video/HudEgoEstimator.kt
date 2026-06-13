@@ -25,7 +25,25 @@ class HudEgoEstimator(
     seed: Long,
 ) {
 
-    data class EgoState(val speedKmh: Int, val altitudeM: Int, val compassDeg: Float)
+    /**
+     * Nullable fields so the encoder can express two distinct states:
+     *
+     * - Synthetic path (`HudEgoEstimator` itself emits this): every field
+     *   non-null — values are decorative but consistent.
+     * - GPS-gap path (constructed externally by the encoder when a
+     *   GpsTrack covers the clip but has no fix at this frame): every
+     *   field null → the widget calls fall through their `?.let { … }`
+     *   gates and that widget simply doesn't render this frame.
+     */
+    data class EgoState(
+        val speedKmh: Int?,
+        val altitudeM: Int?,
+        val compassDeg: Float?,
+        val accelG: Float? = null,
+    )
+
+    /** All-null state — used by the encoder for GPS-coverage gaps. */
+    val blankState: EgoState = EgoState(null, null, null, null)
 
     private val rng = java.util.Random(seed)
     private val baseAltitudeM: Int   = 80 + rng.nextInt(170)            // 80..250
@@ -40,7 +58,7 @@ class HudEgoEstimator(
     private var emaHorizontalBias = 0f
     private var compassDriftDeg   = 0f
 
-    @Volatile private var cached = EgoState(0, baseAltitudeM, baseCompassDeg)
+    @Volatile private var cached = EgoState(0, baseAltitudeM, baseCompassDeg, accelG = 0f)
 
     /**
      * Read the current frame, update internal smoothing, return the latest
@@ -85,7 +103,7 @@ class HudEgoEstimator(
             val compass = wrap360(baseCompassDeg + compassDriftDeg)
             val altitude = (baseAltitudeM + 18f * sin(frameIndex / 90.0)).toInt()
 
-            cached = EgoState(speed, altitude, compass)
+            cached = EgoState(speed, altitude, compass, accelG = 0f)
         } else {
             // First frame — no delta yet. Seed altitude only.
             val altitude = (baseAltitudeM + 18f * sin(frameIndex / 90.0)).toInt()

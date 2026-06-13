@@ -58,6 +58,24 @@ class OverlayVideoEncoder(
      * and more encoder work. 2 s is the default for phone-encoded video.
      */
     keyFrameIntervalSec: Int = 2,
+    /**
+     * Optional GPS / sensor track aligned to this clip's recording window.
+     * When non-null, the HUD widgets consume real values from it instead
+     * of the synthetic `HudEgoEstimator`. When the track has no fix at a
+     * particular frame, that frame's widgets render blank — honest about
+     * coverage gaps rather than silently faking values.
+     *
+     * Composition: typically a [com.example.trafykamerasikotlin.data.sensors.LayeredGpsTrack]
+     * composing cam-side and phone-side sources, built at the call site.
+     */
+    private val gpsTrack: com.example.trafykamerasikotlin.data.sensors.GpsTrack? = null,
+    /**
+     * Wall-clock epoch (milliseconds) corresponding to `presentationTimeUs
+     * == 0`. Required when [gpsTrack] is non-null — the encoder maps each
+     * frame's relative timestamp into an absolute epoch via
+     * `clipStartEpochMs + presentationTimeUs / 1000`.
+     */
+    private val clipStartEpochMs: Long = 0L,
 ) {
 
     private val encoder: MediaCodec
@@ -227,39 +245,82 @@ class OverlayVideoEncoder(
     /**
      * Renders the four corner HUD widgets. Positions/sizes scale gently
      * with the output frame so the overlay degrades on smaller outputs.
+     *
+     * The synthetic [HudEgoEstimator] runs every frame to keep its EMA
+     * warm, but the values we *paint* come from [resolveEgo] — which
+     * consults the real GPS track first and falls back to synthetic only
+     * when no track is supplied. When a track IS supplied and has no fix
+     * at this presentation time, the resolved fields are null and the
+     * widgets simply don't render that frame (honest about gaps).
      */
-    private fun drawHudChrome(presentationTimeUs: Long, ego: HudEgoEstimator.EgoState) {
+    private fun drawHudChrome(presentationTimeUs: Long, synthetic: HudEgoEstimator.EgoState) {
+        val resolved = resolveEgo(presentationTimeUs, synthetic)
+
         val margin = (minOf(width, height) * 0.035f).coerceAtLeast(14f)
-        // Top-right: clip timer pill.
+        // Top-right: clip timer pill (always shown, derived from frame time).
         HudWidgets.drawClipTimerPill(
             canvas      = compositeCanvas,
             rightX      = width - margin,
             topY        = margin,
             timestampUs = presentationTimeUs,
         )
-        // Bottom-left: compass disc.
         val dialR = (minOf(width, height) * 0.045f).coerceIn(40f, 70f)
-        HudWidgets.drawCompassDisc(
-            canvas     = compositeCanvas,
-            cx         = margin + dialR,
-            cy         = height - margin - dialR,
-            radius     = dialR,
-            headingDeg = ego.compassDeg,
-        )
+        // Bottom-left: compass disc.
+        resolved.compassDeg?.let { headingDeg ->
+            HudWidgets.drawCompassDisc(
+                canvas     = compositeCanvas,
+                cx         = margin + dialR,
+                cy         = height - margin - dialR,
+                radius     = dialR,
+                headingDeg = headingDeg,
+            )
+        }
         // Bottom-right: speed dial.
-        HudWidgets.drawSpeedDial(
-            canvas   = compositeCanvas,
-            cx       = width - margin - dialR,
-            cy       = height - margin - dialR,
-            radius   = dialR,
-            speedKmh = ego.speedKmh,
-        )
+        resolved.speedKmh?.let { speedKmh ->
+            HudWidgets.drawSpeedDial(
+                canvas   = compositeCanvas,
+                cx       = width - margin - dialR,
+                cy       = height - margin - dialR,
+                radius   = dialR,
+                speedKmh = speedKmh,
+            )
+        }
         // Bottom-right (left of speed): altitude pill.
-        HudWidgets.drawAltitudePill(
-            canvas    = compositeCanvas,
-            rightX    = width - margin - dialR * 2f - 16f,
-            centerY   = height - margin - dialR,
-            altitudeM = ego.altitudeM,
+        resolved.altitudeM?.let { altitudeM ->
+            HudWidgets.drawAltitudePill(
+                canvas    = compositeCanvas,
+                rightX    = width - margin - dialR * 2f - 16f,
+                centerY   = height - margin - dialR,
+                altitudeM = altitudeM,
+            )
+        }
+    }
+
+    /**
+     * Picks the values to feed the HUD widgets for this frame:
+     *
+     *  - No [gpsTrack] supplied → return [synthetic] verbatim. This is the
+     *    pre-feature path: the user never opted into GPS logging, so we
+     *    keep showing the same fancy-but-fake numbers the encoder has
+     *    drawn since the HUD shipped.
+     *  - [gpsTrack] supplied + fix at this frame → build an [EgoState]
+     *    from the fix; all non-null.
+     *  - [gpsTrack] supplied + no fix (within tolerance) → return an all-
+     *    null EgoState. Widget calls fall through their `?.let { … }`
+     *    gates and skip rendering — honest about the coverage gap.
+     */
+    private fun resolveEgo(
+        presentationTimeUs: Long,
+        synthetic: HudEgoEstimator.EgoState,
+    ): HudEgoEstimator.EgoState {
+        val track = gpsTrack ?: return synthetic
+        val frameEpochMs = clipStartEpochMs + presentationTimeUs / 1_000L
+        val fix = track.fixAt(frameEpochMs) ?: return hudEstimator.blankState
+        return HudEgoEstimator.EgoState(
+            speedKmh   = fix.speedMs?.let { (it * 3.6f).toInt().coerceIn(0, 300) },
+            altitudeM  = fix.altitudeM,
+            compassDeg = fix.headingDeg,
+            accelG     = fix.accelG,
         )
     }
 

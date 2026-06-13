@@ -395,6 +395,26 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         return if (second) ApplyResult.SUCCESS else ApplyResult.NETWORK_UNAVAILABLE
     }
 
+    /**
+     * Best-effort: flips the cam's hardware-GPS setting (where one exists),
+     * called from the unified "GPS kaydı" toggle. Quietly no-ops on chipsets
+     * that don't expose a separate cam-GPS switch — Allwinner / HiDvr have
+     * built-in modules with no user-facing on/off, and GeneralPlus has no
+     * GPS at all.
+     *
+     * Doesn't block, doesn't show an "applying" state — the cam may need to
+     * reboot to power-cycle its GPS module (Easytech does), and we don't
+     * want the Settings UI to lock up for that. Failures are logged.
+     */
+    fun toggleCamGpsIfSupported(enabled: Boolean) {
+        val device = loadedForDevice ?: return
+        if (device.protocol != ChipsetProtocol.EEASYTECH) return
+        viewModelScope.launch {
+            val ok = applySetting(device, "gps", if (enabled) "1" else "0")
+            Log.i(TAG, "toggleCamGpsIfSupported(enabled=$enabled) → $ok")
+        }
+    }
+
     private suspend fun applySetting(device: DeviceInfo, key: String, value: String): Boolean =
         when (device.protocol) {
             ChipsetProtocol.EEASYTECH      -> getEeasyRepo().applySetting(device.protocol.deviceIp, key, value)

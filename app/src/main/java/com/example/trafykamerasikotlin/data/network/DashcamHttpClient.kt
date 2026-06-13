@@ -36,6 +36,31 @@ object DashcamHttpClient {
             .build()
 
     /**
+     * Performs a GET with a tight per-call timeout — for "is this URL even
+     * reachable?" style probes where we don't want to wait the default
+     * 30-second read timeout on each miss.
+     *
+     * Used by the GPS sidecar discovery code which probes a handful of
+     * candidate URLs back-to-back; with the default timeout, 5 candidate
+     * misses become a 2.5-minute UX freeze.
+     */
+    suspend fun getQuick(url: String, timeoutMs: Long = 2_500L): String? =
+        withContext(Dispatchers.IO) {
+            val short = client.newBuilder()
+                .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                .build()
+            try {
+                val request = Request.Builder().url(url).build()
+                short.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) response.body?.string() else null
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+    /**
      * Performs a GET and returns the response body as a String,
      * or null if the request fails or status is not 2xx.
      */

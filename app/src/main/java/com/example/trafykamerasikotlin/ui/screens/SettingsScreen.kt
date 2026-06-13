@@ -32,6 +32,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -143,6 +145,7 @@ fun SettingsScreen(
                 onVideoAiProcessing = onVideoAiProcessing,
                 onCheckUpdates      = onCheckUpdates,
                 appVersionName      = appVersionName,
+                onSetCamGps         = viewModel::toggleCamGpsIfSupported,
             )
 
             is SettingsUiState.Applying -> SettingsList(
@@ -158,6 +161,7 @@ fun SettingsScreen(
                 onVideoAiProcessing = onVideoAiProcessing,
                 onCheckUpdates      = onCheckUpdates,
                 appVersionName      = appVersionName,
+                onSetCamGps         = viewModel::toggleCamGpsIfSupported,
             )
 
             is SettingsUiState.Error -> ErrorContent(
@@ -299,7 +303,142 @@ private fun NotConnectedContent(
                     )
                 }
             }
+            // GPS logging — phone-side, not cam-specific, so it's visible
+            // even when no cam is connected.
+            Spacer(Modifier.height(8.dp))
+            GpsLoggingSection()
         }
+    }
+}
+
+/**
+ * Unified GPS toggle: when enabled, the cam's hardware GPS module is
+ * powered up (via [onSetCamGps] — no-op on chipsets without one) AND the
+ * phone-side logger starts writing NDJSON, so the offline burn-in's HUD
+ * chrome can pick whichever source has a fix per frame.
+ *
+ * Status + "delete all" relate to the phone log only. Tracking the cam's
+ * separate state would require constantly polling getparamvalue; the
+ * shared toggle is the single source of intent in this UI.
+ */
+@Composable
+private fun GpsLoggingSection(
+    onSetCamGps: (Boolean) -> Unit = {},
+) {
+    val (enabled, setEnabledRaw) = com.example.trafykamerasikotlin.data.settings
+        .rememberGpsLoggingPreference()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val setEnabled: (Boolean) -> Unit = { newValue ->
+        setEnabledRaw(newValue)
+        // Cam-side dispatch fires on every toggle so the cam's GPS module
+        // tracks the phone-side preference. Idempotent — no harm if the cam
+        // is already in the requested state.
+        onSetCamGps(newValue)
+    }
+
+    // Live status — refresh whenever the toggle changes or we come back from
+    // backgrounding (cheap: one File.list + size scan, on IO).
+    val statusLine = androidx.compose.runtime.produceState(
+        initialValue = "",
+        key1 = enabled,
+    ) {
+        val dir = java.io.File(context.applicationContext.filesDir, "gps_logs")
+        value = if (!dir.exists()) {
+            ""
+        } else {
+            val files = dir.listFiles().orEmpty()
+            val bytes = files.sumOf { it.length() }
+            val mb = bytes / 1_048_576f
+            val total = files.size
+            "$total dosya · %.1f MB".format(mb)
+        }
+    }
+
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+    ) {
+        Card(
+            shape  = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = ColorSurface),
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(end = 12.dp)) {
+                        Text(
+                            text  = "GPS kaydı",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = ColorTextPrimary,
+                        )
+                        Text(
+                            text  = "Varsa dashcam'in GPS modülünden, yoksa telefonun GPS'inden alınır. Sonradan işlenen videolar gerçek hız/yön verisi gösterir.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ColorTextSecondary,
+                        )
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = enabled,
+                        onCheckedChange = setEnabled,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor   = ColorPrimary,
+                            checkedTrackColor   = ColorPrimary.copy(alpha = 0.4f),
+                            uncheckedThumbColor = ColorTextSecondary,
+                        ),
+                    )
+                }
+                if (statusLine.value.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text  = statusLine.value,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ColorTextSecondary,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                TextButton(
+                    onClick = { showDeleteConfirm = true },
+                    contentPadding = PaddingValues(0.dp),
+                ) {
+                    Text(
+                        text  = "Tüm GPS kayıtlarını sil",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ColorDestructive,
+                    )
+                }
+            }
+        }
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("GPS kayıtlarını sil?") },
+            text  = { Text("Bu cihazdaki tüm GPS günlüğü silinecek. Daha önce işlenmiş videolar etkilenmez.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    com.example.trafykamerasikotlin.data.sensors.GpsLogger
+                        .deleteAllLogs(context)
+                    showDeleteConfirm = false
+                }) {
+                    Text("Sil", color = ColorDestructive)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("İptal", color = ColorTextSecondary)
+                }
+            },
+            containerColor = ColorSurface,
+            titleContentColor = ColorTextPrimary,
+            textContentColor  = ColorTextSecondary,
+        )
     }
 }
 
@@ -372,6 +511,7 @@ private fun SettingsList(
     onVideoAiProcessing: () -> Unit,
     onCheckUpdates: () -> Unit,
     appVersionName: String,
+    onSetCamGps: (Boolean) -> Unit = {},
 ) {
     var pendingItem by remember { mutableStateOf<SettingItem?>(null) }
     var pendingDestructive by remember { mutableStateOf<SettingItem?>(null) }
@@ -457,6 +597,12 @@ private fun SettingsList(
                     }
                 }
             }
+            // Phone-side feature, not cam-specific — visible even when a
+            // cam is connected so the user can flip the toggle without
+            // having to disconnect first.
+            item { Spacer(Modifier.height(8.dp)) }
+            item { GpsLoggingSection(onSetCamGps = onSetCamGps) }
+            item { Spacer(Modifier.height(24.dp)) }
         }
 
         // Applying overlay

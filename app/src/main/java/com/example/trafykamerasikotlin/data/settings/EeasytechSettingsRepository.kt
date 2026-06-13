@@ -29,11 +29,20 @@ class EeasytechSettingsRepository(private val context: Context) {
     companion object {
         private const val TAG = "Trafy.EeasytechRepo"
 
-        /** Keys that are action-type (format, reset, WiFi) — skipped in settings list. */
+        /**
+         * Keys that are action-type (format, reset, WiFi) — skipped in settings list.
+         *
+         * `gps` is also hidden here even though it's a normal picker: the unified
+         * "GPS kaydı" toggle at the bottom of the screen now owns both the
+         * cam-side toggle and the phone-side logger. Surfacing the raw cam
+         * setting in addition would let the user disable cam GPS while leaving
+         * our toggle ON — confusing and easy to miss.
+         */
         private val EXCLUDED_KEYS = setOf(
             "format", "SD0", "reset_to_default",
             "Net.WIFI_AP", "Net.WIFI_AP.SSID", "Net.WIFI_AP.CryptoKey",
             "switchcam", "rec",
+            "gps",
         )
     }
 

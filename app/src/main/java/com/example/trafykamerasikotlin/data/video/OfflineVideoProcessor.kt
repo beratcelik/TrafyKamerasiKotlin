@@ -72,9 +72,14 @@ class OfflineVideoProcessor(
      * and forwards to [process]. Kept so `MediaViewModel.downloadWithOverlay`
      * doesn't need to know about the source abstraction.
      */
-    suspend fun process(inputAvi: File, outputMp4: File) {
+    suspend fun process(
+        inputAvi: File,
+        outputMp4: File,
+        clipStartEpochMs: Long? = null,
+        camTrack: com.example.trafykamerasikotlin.data.sensors.GpsTrack? = null,
+    ) {
         val reader = AviMjpegReader(inputAvi)
-        process(AviMjpegVideoSource(reader), outputMp4)
+        process(AviMjpegVideoSource(reader), outputMp4, clipStartEpochMs, camTrack)
     }
 
     /**
@@ -82,10 +87,21 @@ class OfflineVideoProcessor(
      * we run inference on each frame and re-encode with the overlay burned
      * into every pixel.
      *
+     * When [clipStartEpochMs] is provided and the user has opted into GPS
+     * logging, the processor composes a [camTrack]-on-top, phone-log-as-
+     * fallback layered track and passes it to the encoder so HUD widgets
+     * show real values. Pass null for either to opt out of real values —
+     * the encoder will show `HudEgoEstimator`'s synthetic numbers.
+     *
      * Blocks the calling coroutine — run on Dispatchers.Default or similar.
      * [source] is closed on exit regardless of outcome.
      */
-    suspend fun process(source: VideoFrameSource, outputMp4: File) {
+    suspend fun process(
+        source: VideoFrameSource,
+        outputMp4: File,
+        clipStartEpochMs: Long? = null,
+        camTrack: com.example.trafykamerasikotlin.data.sensors.GpsTrack? = null,
+    ) {
         _state.value = State.WarmingUp
         var encoder: OverlayVideoEncoder? = null
         var vehicle: NcnnVehicleDetector? = null
@@ -135,13 +151,43 @@ class OfflineVideoProcessor(
             )
             Log.i(TAG, "pass 1 done: locked ${bestPlates.size} plates")
 
-            // ── Pass 2: encode, with pass 1's crops handed to the encoder ──
+            // ── Compose the layered GPS track for the encoder ──
+            // Cam-side fix wins when present; phone log fills gaps; if both
+            // miss, the encoder renders those frames' widgets blank.
+            // When GPS-logging pref is off we don't bother loading the
+            // phone log — the encoder gets a null track and falls back to
+            // the synthetic estimator (current behavior, no regression).
+            val resolvedTrack: com.example.trafykamerasikotlin.data.sensors.GpsTrack? =
+                if (clipStartEpochMs == null) null
+                else {
+                    val durMs = if (totalFrames > 0)
+                        totalFrames * source.microsPerFrame.coerceAtLeast(33_333L) / 1_000L
+                    else 0L
+                    val phoneTrack =
+                        if (com.example.trafykamerasikotlin.data.settings.GpsLoggingPreferences.get(context))
+                            com.example.trafykamerasikotlin.data.sensors.GpsLogStore(context)
+                                .load(clipStartEpochMs, clipStartEpochMs + durMs)
+                        else null
+                    when {
+                        camTrack != null && phoneTrack != null ->
+                            com.example.trafykamerasikotlin.data.sensors.LayeredGpsTrack(
+                                primary = camTrack, fallback = phoneTrack,
+                            )
+                        camTrack   != null -> camTrack
+                        phoneTrack != null -> phoneTrack
+                        else               -> null
+                    }
+                }
+
+            // ── Pass 2: encode, with pass 1's crops + GPS track handed in ──
             encoder = OverlayVideoEncoder(
                 outputFile        = outputMp4,
                 width             = outW,
                 height            = outH,
                 frameRate         = fps.coerceAtLeast(15).coerceAtMost(60),
                 initialPlateCrops = bestPlates,
+                gpsTrack          = resolvedTrack,
+                clipStartEpochMs  = clipStartEpochMs ?: 0L,
             )
 
             val tracker  = ByteTracker()
@@ -219,6 +265,18 @@ class OfflineVideoProcessor(
         val bestArea = HashMap<Int, Float>()
         val bestCrop = HashMap<Int, Bitmap>()
 
+        // Early-abort guard. Many clips have no vehicles at all (parked,
+        // empty road, indoor). Burning ~16 minutes of AI inference on a
+        // 60-second clip just to confirm "0 plates" is awful UX. If we
+        // haven't seen a single plate detection after this many
+        // inference-eligible frames, bail and let pass 2 do its work
+        // with the no-prelocked-crops state — pass 2's per-frame lock-
+        // on-confidence logic still produces a billboard if plates show
+        // up later.
+        val abortAfterEmptyInferences = (totalFrames.coerceAtLeast(150L) / inferenceEveryN / 3)
+            .coerceIn(30L, 120L)
+        var inferencesSinceLastPlate = 0L
+
         var scanned = 0L
         for (frame in source.frames()) {
             val argb = frame.bitmap
@@ -234,6 +292,9 @@ class OfflineVideoProcessor(
                     ocr         = ocr,
                     timestampNs = frame.presentationTimeUs * 1000L,
                 )
+                val seenAnyPlate = !scene.plates.isNullOrEmpty()
+                inferencesSinceLastPlate = if (seenAnyPlate) 0L else (inferencesSinceLastPlate + 1L)
+
                 scene.plates?.forEach { p ->
                     val trackId = p.parentTrackId ?: return@forEach
                     val area = p.bbox.width() * p.bbox.height()
@@ -245,6 +306,12 @@ class OfflineVideoProcessor(
                         bestCrop[trackId] = crop
                         bestArea[trackId] = area
                     }
+                }
+
+                if (bestCrop.isEmpty() && inferencesSinceLastPlate >= abortAfterEmptyInferences) {
+                    Log.i(TAG, "pass 1 early-abort: no plates seen in ${inferencesSinceLastPlate} inferences — letting pass 2 handle billboards on-the-fly")
+                    argb.recycle()
+                    break
                 }
             }
             argb.recycle()

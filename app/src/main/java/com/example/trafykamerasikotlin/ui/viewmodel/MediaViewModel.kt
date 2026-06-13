@@ -433,32 +433,26 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                 }
-                // ── Real-GPS HUD: resolve clip start + cam-side track ──
+                // ── Real-GPS HUD: resolve clip start from the cam file ──
                 // mtimeEpoch is the authoritative wall-clock the cam stamped
                 // the file with (when available). Filename-parse fallback
-                // mirrors the rest of the codebase.
+                // mirrors the rest of the codebase. The processor pulls the
+                // phone GPS log for this window itself.
                 val clipStartEpochMs: Long? = (file.mtimeEpoch ?: parseEpochFromFileName(file.name))
                     .takeIf { it > 0 }
                     ?.let { it * 1_000L }
-                val camTrack = try {
-                    com.example.trafykamerasikotlin.data.gps.CamGpsProviderRegistry
-                        .providerFor(device.protocol)
-                        .trackFor(file, device.protocol.deviceIp, getApplication())
-                } catch (t: Throwable) {
-                    Log.w(TAG, "cam GPS provider threw: ${t.message}"); null
-                }
 
                 if (device.protocol == ChipsetProtocol.GENERALPLUS) {
                     // GP path: AVI/MJPEG, handled by the File overload
                     // (uses AviMjpegVideoSource internally).
-                    proc.process(tempIn, outFile, clipStartEpochMs, camTrack)
+                    proc.process(tempIn, outFile, clipStartEpochMs)
                 } else {
                     // HiSilicon-family: open the MP4 via MediaCodecVideoSource
                     // (sequential MediaExtractor + MediaCodec, no MMR seek
                     // dependence — survives the cam's broken sample tables).
                     val source = com.example.trafykamerasikotlin.data.video.MediaCodecVideoSource
                         .open(tempIn)
-                    source.use { proc.process(it, outFile, clipStartEpochMs, camTrack) }
+                    source.use { proc.process(it, outFile, clipStartEpochMs) }
                 }
                 stateJob.cancel()
 

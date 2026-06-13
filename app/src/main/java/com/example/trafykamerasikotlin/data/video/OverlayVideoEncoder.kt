@@ -65,8 +65,8 @@ class OverlayVideoEncoder(
      * particular frame, that frame's widgets render blank — honest about
      * coverage gaps rather than silently faking values.
      *
-     * Composition: typically a [com.example.trafykamerasikotlin.data.sensors.LayeredGpsTrack]
-     * composing cam-side and phone-side sources, built at the call site.
+     * Source: phone GPS log via [com.example.trafykamerasikotlin.data.sensors.GpsLogStore],
+     * built at the call site (see `OfflineVideoProcessor.process`).
      */
     private val gpsTrack: com.example.trafykamerasikotlin.data.sensors.GpsTrack? = null,
     /**

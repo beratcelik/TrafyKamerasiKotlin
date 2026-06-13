@@ -314,17 +314,13 @@ private fun NotConnectedContent(
 
 /**
  * Phone-side GPS-logger toggle. When ON, the phone's GPS / sensor stream
- * is written to NDJSON so the offline burn-in's HUD chrome can fall back
- * to phone data on clips that don't carry cam-side GPS.
+ * is written to NDJSON so the offline burn-in's HUD chrome can show real
+ * speed / altitude / heading / G on processed clips.
  *
- * Does NOT power-cycle the cam's hardware GPS module — that has its own
- * row in the cam settings list (`GPS`) which reboots the firmware on
- * change; we don't want our toggle silently kicking the cam offline.
- *
- * Source priority at burn-in time, independent of this toggle:
- *   1. Cam-side track via [CamGpsProviderRegistry]
- *   2. Phone log (this toggle's output)
- *   3. Blank widgets when neither covers the frame
+ * Phone is the only source: every Trafy chipset we explored either lacks
+ * a per-clip GPS retrieval path or reboots on the wire-level probe needed
+ * to talk to its push channel. The cam-side providers we built and
+ * reverted now live only in git history.
  */
 @Composable
 private fun GpsLoggingSection(
@@ -334,9 +330,7 @@ private fun GpsLoggingSection(
         .rememberGpsLoggingPreference()
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
-    var selfTestResult by remember {
-        mutableStateOf<com.example.trafykamerasikotlin.data.gps.GpsSelfTest.Result?>(null)
-    }
+    var selfTestResult by remember { mutableStateOf<String?>(null) }
     var runningTest by remember { mutableStateOf(false) }
 
     // Live status — refresh whenever the toggle changes or we come back from
@@ -380,7 +374,7 @@ private fun GpsLoggingSection(
                             color = ColorTextPrimary,
                         )
                         Text(
-                            text  = "Sonradan işlenen videolar için telefondan yedek konum/hız verisi kaydet. Dashcam'in kendi GPS modülü (yukarıdaki \"GPS\" satırı) varsa o önce kullanılır.",
+                            text  = "Dashcam Wi-Fi'ye bağlıyken telefonun GPS verisini kaydeder. Sonradan işlenen videoların HUD katmanında hız, rakım, pusula ve G-sensörü değerleri buradan gelir.",
                             style = MaterialTheme.typography.bodySmall,
                             color = ColorTextSecondary,
                         )
@@ -411,12 +405,7 @@ private fun GpsLoggingSection(
                             if (runningTest) return@TextButton
                             runningTest = true
                             coroutineScope.launch {
-                                selfTestResult = com.example.trafykamerasikotlin.data.gps
-                                    .GpsSelfTest.run(
-                                        context           = context,
-                                        protocol          = device?.protocol,
-                                        sampleClipBasename = null,
-                                    )
+                                selfTestResult = probePhoneGps(context)
                                 runningTest = false
                             }
                         },
@@ -444,36 +433,17 @@ private fun GpsLoggingSection(
         }
     }
 
-    selfTestResult?.let { result ->
+    selfTestResult?.let { line ->
+        val ok = line.startsWith("✓")
         AlertDialog(
             onDismissRequest = { selfTestResult = null },
-            title = { Text(if (result.anyHit) "Konum testi — başarılı" else "Konum testi") },
+            title = { Text(if (ok) "Konum testi — başarılı" else "Konum testi") },
             text  = {
-                Column {
-                    Text(
-                        text = "Telefon",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = ColorTextPrimary,
-                    )
-                    Text(
-                        text = result.phoneLine,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ColorTextSecondary,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "Dashcam",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = ColorTextPrimary,
-                    )
-                    result.camLines.forEach { line ->
-                        Text(
-                            text = line,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ColorTextSecondary,
-                        )
-                    }
-                }
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ColorTextSecondary,
+                )
             },
             confirmButton = {
                 TextButton(onClick = { selfTestResult = null }) {
@@ -1252,3 +1222,42 @@ private fun OptionRow(
         }
     }
 }
+
+/**
+ * Single-shot phone-GPS probe behind the "Konum testi" button. Returns
+ * one human-readable line — `getLastKnownLocation` is cheap and non-
+ * blocking, so we never wait on a fresh fix. Indoors with no cached fix
+ * the caller sees an honest "GPS açık ama sabit alınmadı" message.
+ */
+private suspend fun probePhoneGps(context: android.content.Context): String =
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.ACCESS_FINE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!granted) return@withContext "✗ ACCESS_FINE_LOCATION izni yok"
+
+        val lm = context.getSystemService(android.content.Context.LOCATION_SERVICE)
+            as? android.location.LocationManager
+            ?: return@withContext "✗ LocationManager bulunamadı"
+
+        val gpsOn = lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)
+        val netOn = lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+        if (!gpsOn && !netOn) return@withContext "✗ Konum servisi kapalı"
+
+        val last = try {
+            lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
+                ?: if (netOn) lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER) else null
+        } catch (_: SecurityException) { null }
+
+        if (last == null) {
+            return@withContext "△ GPS:$gpsOn NET:$netOn — son fix yok (kapalı mekan?)"
+        }
+        "✓ lat=%.6f lon=%.6f acc=%.1fm spd=%s alt=%s sağlayıcı=%s yaş=%ds".format(
+            last.latitude, last.longitude,
+            if (last.hasAccuracy()) last.accuracy else -1f,
+            if (last.hasSpeed())    "%.2fm/s".format(last.speed)  else "—",
+            if (last.hasAltitude()) "%.0fm".format(last.altitude) else "—",
+            last.provider ?: "?",
+            (System.currentTimeMillis() - last.time) / 1000,
+        )
+    }

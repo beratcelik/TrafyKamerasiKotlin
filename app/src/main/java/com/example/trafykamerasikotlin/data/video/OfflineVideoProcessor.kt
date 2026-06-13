@@ -76,10 +76,9 @@ class OfflineVideoProcessor(
         inputAvi: File,
         outputMp4: File,
         clipStartEpochMs: Long? = null,
-        camTrack: com.example.trafykamerasikotlin.data.sensors.GpsTrack? = null,
     ) {
         val reader = AviMjpegReader(inputAvi)
-        process(AviMjpegVideoSource(reader), outputMp4, clipStartEpochMs, camTrack)
+        process(AviMjpegVideoSource(reader), outputMp4, clipStartEpochMs)
     }
 
     /**
@@ -88,10 +87,10 @@ class OfflineVideoProcessor(
      * into every pixel.
      *
      * When [clipStartEpochMs] is provided and the user has opted into GPS
-     * logging, the processor composes a [camTrack]-on-top, phone-log-as-
-     * fallback layered track and passes it to the encoder so HUD widgets
-     * show real values. Pass null for either to opt out of real values —
-     * the encoder will show `HudEgoEstimator`'s synthetic numbers.
+     * logging, the processor loads the phone GPS log for the clip's window
+     * and hands it to the encoder so HUD widgets show real values. When
+     * the toggle is off or the log has no coverage, the encoder falls back
+     * to `HudEgoEstimator`'s synthetic numbers.
      *
      * Blocks the calling coroutine — run on Dispatchers.Default or similar.
      * [source] is closed on exit regardless of outcome.
@@ -100,7 +99,6 @@ class OfflineVideoProcessor(
         source: VideoFrameSource,
         outputMp4: File,
         clipStartEpochMs: Long? = null,
-        camTrack: com.example.trafykamerasikotlin.data.sensors.GpsTrack? = null,
     ) {
         _state.value = State.WarmingUp
         var encoder: OverlayVideoEncoder? = null
@@ -151,32 +149,22 @@ class OfflineVideoProcessor(
             )
             Log.i(TAG, "pass 1 done: locked ${bestPlates.size} plates")
 
-            // ── Compose the layered GPS track for the encoder ──
-            // Cam-side fix wins when present; phone log fills gaps; if both
-            // miss, the encoder renders those frames' widgets blank.
-            // When GPS-logging pref is off we don't bother loading the
-            // phone log — the encoder gets a null track and falls back to
-            // the synthetic estimator (current behavior, no regression).
+            // ── Load the phone GPS log for the clip window ──
+            // Phone is the single source of truth: every Trafy chipset we
+            // explored either lacks a per-clip GPS retrieval path or reboots
+            // on the wire-level probe. When the pref is off or the log has
+            // no rows for this window, the encoder falls back to the
+            // synthetic estimator (current behavior, no regression).
             val resolvedTrack: com.example.trafykamerasikotlin.data.sensors.GpsTrack? =
-                if (clipStartEpochMs == null) null
+                if (clipStartEpochMs == null ||
+                    !com.example.trafykamerasikotlin.data.settings.GpsLoggingPreferences.get(context)
+                ) null
                 else {
                     val durMs = if (totalFrames > 0)
                         totalFrames * source.microsPerFrame.coerceAtLeast(33_333L) / 1_000L
                     else 0L
-                    val phoneTrack =
-                        if (com.example.trafykamerasikotlin.data.settings.GpsLoggingPreferences.get(context))
-                            com.example.trafykamerasikotlin.data.sensors.GpsLogStore(context)
-                                .load(clipStartEpochMs, clipStartEpochMs + durMs)
-                        else null
-                    when {
-                        camTrack != null && phoneTrack != null ->
-                            com.example.trafykamerasikotlin.data.sensors.LayeredGpsTrack(
-                                primary = camTrack, fallback = phoneTrack,
-                            )
-                        camTrack   != null -> camTrack
-                        phoneTrack != null -> phoneTrack
-                        else               -> null
-                    }
+                    com.example.trafykamerasikotlin.data.sensors.GpsLogStore(context)
+                        .load(clipStartEpochMs, clipStartEpochMs + durMs)
                 }
 
             // ── Pass 2: encode, with pass 1's crops + GPS track handed in ──

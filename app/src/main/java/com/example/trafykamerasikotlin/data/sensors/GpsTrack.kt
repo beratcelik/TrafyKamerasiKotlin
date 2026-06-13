@@ -42,38 +42,6 @@ object EmptyGpsTrack : GpsTrack {
 }
 
 /**
- * Composes two tracks with a strict priority order: [primary] is consulted
- * first for every frame, [fallback] only when primary returns null. Cam-
- * side providers go in [primary], the phone log goes in [fallback]. When
- * both fail the frame's widgets render blank.
- *
- * Coverage % is computed as `primary.coverage + (1 - primary.coverage) ×
- * fallback.coverage`, which is correct under the (true) assumption that
- * the fallback covers a different time region than the primary — they
- * complement rather than overlap, since primary always wins where it has
- * data.
- */
-class LayeredGpsTrack(
-    private val primary: GpsTrack,
-    private val fallback: GpsTrack,
-) : GpsTrack {
-    override fun fixAt(tEpochMs: Long, maxGapMs: Long): GpsFix? =
-        primary.fixAt(tEpochMs, maxGapMs) ?: fallback.fixAt(tEpochMs, maxGapMs)
-
-    override val coveragePercent: Float =
-        (primary.coveragePercent + (1f - primary.coveragePercent) * fallback.coveragePercent)
-            .coerceIn(0f, 1f)
-
-    override val sourceLabel: String = when {
-        primary.coveragePercent > 0f && fallback.coveragePercent > 0f ->
-            "${primary.sourceLabel} + ${fallback.sourceLabel}"
-        primary.coveragePercent > 0f  -> primary.sourceLabel
-        fallback.coveragePercent > 0f -> fallback.sourceLabel
-        else -> "yok"
-    }
-}
-
-/**
  * In-memory track backed by a sorted [LongArray] of timestamps and a
  * parallel [Array] of fixes. The canonical implementation — small enough
  * to fit a full day's GPS log (a few thousand samples) in memory, fast

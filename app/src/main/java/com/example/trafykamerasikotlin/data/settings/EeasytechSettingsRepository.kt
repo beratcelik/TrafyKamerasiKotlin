@@ -32,15 +32,15 @@ class EeasytechSettingsRepository(private val context: Context) {
         /**
          * Keys that are action-type (format, reset, WiFi) — skipped in settings list.
          *
-         * `gps` is intentionally NOT hidden: enabling the cam's GPS module
-         * reboots the firmware (~minutes back online), so it has to stay as
-         * a deliberate, user-driven action with its own row. Our "GPS kaydı"
-         * toggle at the bottom only drives phone-side logging.
+         * `gps` is hidden: toggling the cam's GPS module reboots the
+         * firmware (minutes offline). Phone GPS is now the only HUD
+         * source, so the cam-side row would be a foot-gun with no upside.
          */
         private val EXCLUDED_KEYS = setOf(
             "format", "SD0", "reset_to_default",
             "Net.WIFI_AP", "Net.WIFI_AP.SSID", "Net.WIFI_AP.CryptoKey",
             "switchcam", "rec",
+            "gps",
         )
     }
 
@@ -217,11 +217,10 @@ class EeasytechSettingsRepository(private val context: Context) {
      * (no encoder contention), so no explicit resume is needed here —
      * HomeScreen reaffirms `rec=1` when the user lands on the main page.
      *
-     * Also fires `playback?param=exit` as a belt-and-braces cleanup —
-     * during diagnostic flows (e.g. `GpsSelfTest` probing getfilelist) the
-     * cam may transition into a playback-like state. A redundant exit is
-     * a no-op when not in playback; missing one leaves the cam showing
-     * "continue in app" until power-cycled.
+     * Also fires `playback?param=exit` as a belt-and-braces cleanup — some
+     * diagnostic flows can leave the cam in a playback-like state. A
+     * redundant exit is a no-op when not in playback; missing one leaves
+     * the cam showing "continue in app" until power-cycled.
      */
     suspend fun exitSettings(deviceIp: String) {
         val ok1 = DashcamHttpClient.probe("http://$deviceIp/app/setting?param=exit")

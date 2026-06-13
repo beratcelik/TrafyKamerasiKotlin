@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
-import kotlinx.coroutines.launch
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -67,6 +66,7 @@ import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.SettingItem
 import com.example.trafykamerasikotlin.data.model.SettingOption
+import com.example.trafykamerasikotlin.data.settings.rememberGpsLoggingPreference
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorDestructive
 import com.example.trafykamerasikotlin.ui.theme.ColorDivider
@@ -305,180 +305,91 @@ private fun NotConnectedContent(
                 }
             }
             // GPS logging — phone-side, not cam-specific, so it's visible
-            // even when no cam is connected.
+            // even when no cam is connected. fillMaxWidth ensures the Card
+            // stretches edge-to-edge instead of wrapping to the column's
+            // centered intrinsic width.
             Spacer(Modifier.height(8.dp))
-            GpsLoggingSection()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp),
+            ) {
+                GpsLoggingRow()
+            }
         }
     }
 }
 
 /**
- * Phone-side GPS-logger toggle. When ON, the phone's GPS / sensor stream
- * is written to NDJSON so the offline burn-in's HUD chrome can show real
- * speed / altitude / heading / G on processed clips.
+ * Phone-side GPS-logger toggle, rendered as a single inline row in the
+ * same Card style as [SettingsCard] so it visually belongs to the
+ * regular settings menu.
+ *
+ * Storage: `filesDir/gps_logs/YYYY-MM-DD.ndjson` — app-private, persists
+ * across launches, swept after 30 days on each foreground transition.
+ * No explicit "clear" button exposed; the retention sweep + app
+ * uninstall are the only two ways a row leaves disk.
  *
  * Phone is the only source: every Trafy chipset we explored either lacks
- * a per-clip GPS retrieval path or reboots on the wire-level probe needed
- * to talk to its push channel. The cam-side providers we built and
- * reverted now live only in git history.
+ * a per-clip GPS retrieval path or reboots on the wire-level probe.
  */
 @Composable
-private fun GpsLoggingSection(
-    device: com.example.trafykamerasikotlin.data.model.DeviceInfo? = null,
-) {
-    val (enabled, setEnabled) = com.example.trafykamerasikotlin.data.settings
-        .rememberGpsLoggingPreference()
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
-    var selfTestResult by remember { mutableStateOf<String?>(null) }
-    var runningTest by remember { mutableStateOf(false) }
-
-    // Live status — refresh whenever the toggle changes or we come back from
-    // backgrounding (cheap: one File.list + size scan, on IO).
-    val statusLine = androidx.compose.runtime.produceState(
-        initialValue = "",
-        key1 = enabled,
-    ) {
-        val dir = java.io.File(context.applicationContext.filesDir, "gps_logs")
-        value = if (!dir.exists()) {
-            ""
-        } else {
-            val files = dir.listFiles().orEmpty()
-            val bytes = files.sumOf { it.length() }
-            val mb = bytes / 1_048_576f
-            val total = files.size
-            "$total dosya · %.1f MB".format(mb)
-        }
-    }
-
-    var showDeleteConfirm by remember { mutableStateOf(false) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp),
-    ) {
+private fun GpsLoggingRow() {
+    val (enabled, setEnabled) = rememberGpsLoggingPreference()
+    // Mirrors [AppUpdateCard]'s "labelLarge header + Card with one row" shape
+    // so this section reads as a peer of the App-updates section rather than
+    // a floating card.
+    Column {
+        Text(
+            text     = stringResource(R.string.settings_section_gps),
+            style    = MaterialTheme.typography.labelLarge,
+            color    = ColorTextSecondary,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
+        )
         Card(
-            shape  = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = ColorSurface),
+            shape     = RoundedCornerShape(16.dp),
+            colors    = CardDefaults.cardColors(containerColor = ColorSurface),
+            elevation = CardDefaults.cardElevation(0.dp),
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp),
                 ) {
-                    Column(modifier = Modifier.padding(end = 12.dp)) {
-                        Text(
-                            text  = "Telefon GPS kaydı",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = ColorTextPrimary,
-                        )
-                        Text(
-                            text  = "Dashcam Wi-Fi'ye bağlıyken telefonun GPS verisini kaydeder. Sonradan işlenen videoların HUD katmanında hız, rakım, pusula ve G-sensörü değerleri buradan gelir.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ColorTextSecondary,
-                        )
-                    }
-                    Spacer(modifier = Modifier.weight(1f))
-                    Switch(
-                        checked = enabled,
-                        onCheckedChange = setEnabled,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor   = ColorPrimary,
-                            checkedTrackColor   = ColorPrimary.copy(alpha = 0.4f),
-                            uncheckedThumbColor = ColorTextSecondary,
-                        ),
-                    )
-                }
-                if (statusLine.value.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
                     Text(
-                        text  = statusLine.value,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ColorTextSecondary,
+                        text  = stringResource(R.string.settings_gps_log_title),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = ColorTextPrimary,
+                    )
+                    Text(
+                        text     = stringResource(R.string.settings_gps_log_description),
+                        style    = MaterialTheme.typography.bodySmall,
+                        color    = ColorTextSecondary,
+                        modifier = Modifier.padding(top = 2.dp),
                     )
                 }
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(
-                        onClick = {
-                            if (runningTest) return@TextButton
-                            runningTest = true
-                            coroutineScope.launch {
-                                selfTestResult = probePhoneGps(context)
-                                runningTest = false
-                            }
-                        },
-                        contentPadding = PaddingValues(0.dp),
-                    ) {
-                        Text(
-                            text  = if (runningTest) "Test yapılıyor…" else "Konum testi",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ColorPrimary,
-                        )
-                    }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(
-                        onClick = { showDeleteConfirm = true },
-                        contentPadding = PaddingValues(0.dp),
-                    ) {
-                        Text(
-                            text  = "Tüm GPS kayıtlarını sil",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = ColorDestructive,
-                        )
-                    }
-                }
+                Switch(
+                    checked         = enabled,
+                    onCheckedChange = setEnabled,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor     = ColorPrimary,
+                        checkedTrackColor     = ColorPrimary.copy(alpha = 0.4f),
+                        uncheckedThumbColor   = ColorTextSecondary,
+                        // Tune the off-state so it harmonizes with ColorSurface
+                        // instead of falling back to Material's grey default.
+                        uncheckedTrackColor   = ColorDivider,
+                        uncheckedBorderColor  = androidx.compose.ui.graphics.Color.Transparent,
+                    ),
+                )
             }
         }
-    }
-
-    selfTestResult?.let { line ->
-        val ok = line.startsWith("✓")
-        AlertDialog(
-            onDismissRequest = { selfTestResult = null },
-            title = { Text(if (ok) "Konum testi — başarılı" else "Konum testi") },
-            text  = {
-                Text(
-                    text = line,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ColorTextSecondary,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { selfTestResult = null }) {
-                    Text("Tamam", color = ColorPrimary)
-                }
-            },
-            containerColor    = ColorSurface,
-            titleContentColor = ColorTextPrimary,
-            textContentColor  = ColorTextSecondary,
-        )
-    }
-
-    if (showDeleteConfirm) {
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("GPS kayıtlarını sil?") },
-            text  = { Text("Bu cihazdaki tüm GPS günlüğü silinecek. Daha önce işlenmiş videolar etkilenmez.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    com.example.trafykamerasikotlin.data.sensors.GpsLogger
-                        .deleteAllLogs(context)
-                    showDeleteConfirm = false
-                }) {
-                    Text("Sil", color = ColorDestructive)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) {
-                    Text("İptal", color = ColorTextSecondary)
-                }
-            },
-            containerColor = ColorSurface,
-            titleContentColor = ColorTextPrimary,
-            textContentColor  = ColorTextSecondary,
-        )
     }
 }
 
@@ -580,6 +491,9 @@ private fun SettingsList(
                     }
                 )
             }
+            // Phone-side GPS toggle — same Card styling as [SettingsCard] so
+            // it reads as the trailing row of the main settings grouping.
+            item { GpsLoggingRow() }
             item {
                 AppUpdateCard(
                     versionName    = appVersionName,
@@ -637,11 +551,6 @@ private fun SettingsList(
                     }
                 }
             }
-            // Phone-side feature, not cam-specific — visible even when a
-            // cam is connected so the user can flip the toggle without
-            // having to disconnect first.
-            item { Spacer(Modifier.height(8.dp)) }
-            item { GpsLoggingSection(device = currentDevice) }
             item { Spacer(Modifier.height(24.dp)) }
         }
 
@@ -1223,41 +1132,3 @@ private fun OptionRow(
     }
 }
 
-/**
- * Single-shot phone-GPS probe behind the "Konum testi" button. Returns
- * one human-readable line — `getLastKnownLocation` is cheap and non-
- * blocking, so we never wait on a fresh fix. Indoors with no cached fix
- * the caller sees an honest "GPS açık ama sabit alınmadı" message.
- */
-private suspend fun probePhoneGps(context: android.content.Context): String =
-    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
-            context, android.Manifest.permission.ACCESS_FINE_LOCATION
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (!granted) return@withContext "✗ ACCESS_FINE_LOCATION izni yok"
-
-        val lm = context.getSystemService(android.content.Context.LOCATION_SERVICE)
-            as? android.location.LocationManager
-            ?: return@withContext "✗ LocationManager bulunamadı"
-
-        val gpsOn = lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)
-        val netOn = lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
-        if (!gpsOn && !netOn) return@withContext "✗ Konum servisi kapalı"
-
-        val last = try {
-            lm.getLastKnownLocation(android.location.LocationManager.GPS_PROVIDER)
-                ?: if (netOn) lm.getLastKnownLocation(android.location.LocationManager.NETWORK_PROVIDER) else null
-        } catch (_: SecurityException) { null }
-
-        if (last == null) {
-            return@withContext "△ GPS:$gpsOn NET:$netOn — son fix yok (kapalı mekan?)"
-        }
-        "✓ lat=%.6f lon=%.6f acc=%.1fm spd=%s alt=%s sağlayıcı=%s yaş=%ds".format(
-            last.latitude, last.longitude,
-            if (last.hasAccuracy()) last.accuracy else -1f,
-            if (last.hasSpeed())    "%.2fm/s".format(last.speed)  else "—",
-            if (last.hasAltitude()) "%.0fm".format(last.altitude) else "—",
-            last.provider ?: "?",
-            (System.currentTimeMillis() - last.time) / 1000,
-        )
-    }

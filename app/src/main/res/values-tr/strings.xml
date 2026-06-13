@@ -288,6 +288,11 @@
     <string name="eeasy_opt_front">Ön</string>
     <string name="eeasy_opt_back">Arka</string>
 
+    <!-- Telefon GPS kaydı -->
+    <string name="settings_section_gps">Konum</string>
+    <string name="settings_gps_log_title">Telefon GPS kaydı</string>
+    <string name="settings_gps_log_description">Dashcam\'e bağlıyken konum, hız, yükseklik ve yön kaydeder. İşlenen videolardaki HUD verisi bu kayıttan gelir.</string>
+
     <!-- Uygulama güncellemeleri -->
     <string name="settings_section_app">Uygulama</string>
     <string name="settings_check_updates">Güncellemeleri Kontrol Et</string>

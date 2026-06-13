@@ -66,14 +66,17 @@ object GpsLogger {
      */
     fun startIfEnabled(context: Context) {
         val app = context.applicationContext
+        // Retention sweep runs BEFORE the pref/Wi-Fi gate: a user who
+        // disabled logging months ago shouldn't carry their old logs
+        // forever just because the gate now rejects every startIfEnabled
+        // call. Cheap (one directory listing on IO).
+        sweepOldFiles(app)
         if (!GpsLoggingPreferences.get(app)) return
         if (runJob?.isActive == true) return
         if (DashcamWifiManager(app as Application).getCurrentDashcamSsid() == null) {
             Log.d(TAG, "skip start — not on a dashcam Wi-Fi")
             return
         }
-
-        sweepOldFiles(app)
 
         val provider = LiveSensorProvider(app).also {
             sensorProvider = it
@@ -122,13 +125,6 @@ object GpsLogger {
         currentFileDate = ""
         scope?.cancel()
         scope = null
-    }
-
-    /** Used by the Settings "delete all" button. */
-    fun deleteAllLogs(context: Context) {
-        val dir = File(context.applicationContext.filesDir, LOG_DIR)
-        if (!dir.exists()) return
-        dir.listFiles()?.forEach { runCatching { it.delete() } }
     }
 
     private fun writePhone(context: Context, snapshot: LiveSensorData) {

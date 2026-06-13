@@ -289,6 +289,11 @@
     <string name="eeasy_opt_front">Front</string>
     <string name="eeasy_opt_back">Back</string>
 
+    <!-- Phone GPS log -->
+    <string name="settings_section_gps">Location</string>
+    <string name="settings_gps_log_title">Phone GPS log</string>
+    <string name="settings_gps_log_description">While connected to the dashcam, records location, speed, altitude and heading. Processed videos pull HUD data from this log.</string>
+
     <!-- App updates -->
     <string name="settings_section_app">App</string>
     <string name="settings_check_updates">Check for Updates</string>

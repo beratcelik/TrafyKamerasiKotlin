@@ -4,6 +4,10 @@
 # not suitable for git (large binary artifacts, ~25MB).
 src/main/cpp/ncnn/
 
+# libyuv source vendored by scripts/setup-libyuv.sh — ~3 MB Chromium source,
+# fetched on demand. Same pattern as NCNN above.
+src/main/cpp/libyuv/
+
 # YOLO model artifacts produced by scripts/export-yolo-ncnn.py. The directory
 # shape lives in the repo but the binary weights do not.
 src/main/assets/models/*/*.bin

@@ -48,13 +48,35 @@ foreach (lib ${GLSLANG_LIBS})
 endforeach()
 
 # ---------------------------------------------------------------------------
-# libtrafy_vision.so — the JNI boundary for Kotlin's NcnnBridge.
+# libyuv — vendored from Chromium for hand-tuned NEON YUV→RGB conversion
+# (populated by scripts/setup-libyuv.sh). Built as a static lib here and
+# linked into trafy_vision below. libyuv's own CMakeLists creates a static
+# target called `yuv`.
+# ---------------------------------------------------------------------------
+set(LIBYUV_ROOT "${CMAKE_SOURCE_DIR}/libyuv")
+if (NOT EXISTS "${LIBYUV_ROOT}/include/libyuv.h")
+    message(FATAL_ERROR
+        "libyuv source not found at ${LIBYUV_ROOT}. "
+        "Run scripts/setup-libyuv.sh before building the native layer.")
+endif()
+# Force-static so libyuv doesn't try to emit its own .so alongside ours; we
+# vendor it inside trafy_vision.so to keep Kotlin's loadLibrary surface small.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+add_subdirectory(${LIBYUV_ROOT} ${CMAKE_BINARY_DIR}/libyuv EXCLUDE_FROM_ALL)
+
+# ---------------------------------------------------------------------------
+# libtrafy_vision.so — JNI boundary for both Kotlin's NcnnBridge AND the
+# YuvConverter (yuv_converter.cpp). Sharing one .so keeps Kotlin's
+# System.loadLibrary surface minimal.
 # ---------------------------------------------------------------------------
 add_library(trafy_vision SHARED
     yolo.cpp
-    yolo_jni.cpp)
+    yolo_jni.cpp
+    yuv_converter.cpp)
 
-target_include_directories(trafy_vision PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(trafy_vision PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${LIBYUV_ROOT}/include)
 
 # NCNN is built with OpenMP enabled, and because it's a .a (static), the OpenMP
 # runtime must be provided at the final link. The NDK ships both a dynamic and
@@ -71,6 +93,7 @@ target_link_libraries(trafy_vision
     PRIVATE
         ncnn
         ${NCNN_VULKAN_LIBS}
+        yuv
         vulkan
         android
         jnigraphics

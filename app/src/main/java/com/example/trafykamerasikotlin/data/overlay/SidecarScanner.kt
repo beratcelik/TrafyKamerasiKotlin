@@ -18,10 +18,13 @@ import com.example.trafykamerasikotlin.data.vision.tracker.ByteTracker
 import com.example.trafykamerasikotlin.data.vision.tracker.TrackedDetection
 import com.example.trafykamerasikotlin.data.vision.voting.PlateVoteBook
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -61,6 +64,25 @@ class SidecarScanner(private val context: Context) {
         /** Bail out of the scan if we see no plates after this many inference frames. */
         private const val EMPTY_INFERENCE_FRAMES_BEFORE_ABORT_MIN = 30L
         private const val EMPTY_INFERENCE_FRAMES_BEFORE_ABORT_MAX = 120L
+
+        /**
+         * Process-wide serialisation gate. Two concurrent [scan] calls would
+         * race on NCNN's process-wide detector slots
+         * ([com.example.trafykamerasikotlin.data.vision.ncnn.NcnnDetectorSlot])
+         * — each scanner constructs its own [NcnnVehicleDetector] /
+         * [NcnnPlateDetector] but both load into the SAME native slot
+         * (VEHICLE=0, PLATE=1), and the second `initialize()` overwrites the
+         * first's native handles. When the first scan then calls `detect()`,
+         * it walks a dangling pointer → hard native crash (verified on a
+         * real device: F DEBUG tombstone at 19:50:08 after a sibling scan
+         * completed mid-flight).
+         *
+         * Holding this Mutex across the whole scan keeps NCNN-slot ownership
+         * single-threaded. Subsequent downloads queue here while the active
+         * one finishes; cooperative cancellation still works because
+         * [Mutex.withLock] releases the gate when a cancelled body unwinds.
+         */
+        private val scanLock = Mutex()
     }
 
     sealed class State {
@@ -90,6 +112,23 @@ class SidecarScanner(private val context: Context) {
         videoBasename: String,
         inferenceEveryN: Int = DEFAULT_INFERENCE_EVERY_N,
     ): File? = withContext(Dispatchers.Default) {
+        // Serialise across all concurrent scans in this process so
+        // detector-slot races (see [scanLock] docs) can't crash the
+        // pipeline. The `isLocked` read is racy but harmless — it only
+        // decides whether to log "waiting", not whether to wait.
+        if (scanLock.isLocked) {
+            Log.i(TAG, "another scan is in progress — queueing ${inputVideo.name}")
+        }
+        scanLock.withLock {
+            doScan(inputVideo, videoBasename, inferenceEveryN)
+        }
+    }
+
+    private suspend fun doScan(
+        inputVideo: File,
+        videoBasename: String,
+        inferenceEveryN: Int,
+    ): File? {
         _state.value = State.WarmingUp
         var vehicleDet: NcnnVehicleDetector? = null
         var plateDet:   NcnnPlateDetector?   = null
@@ -136,7 +175,7 @@ class SidecarScanner(private val context: Context) {
             var scanned = 0L
             source.use { src ->
                 for (frame in src.frames()) {
-                    ensureActive()
+                    currentCoroutineContext().ensureActive()
                     val argb = frame.bitmap
                     val runInference = (frame.frameIndex % inferenceEveryN == 0L)
                     if (runInference) {
@@ -204,11 +243,11 @@ class SidecarScanner(private val context: Context) {
             }
             Log.i(TAG, "wrote ${finalised.size} entries → ${outFile.name} (${finalVoted.size} tracks locked)")
             _state.value = State.Done(finalised.size, outFile)
-            outFile
+            return outFile
         } catch (t: Throwable) {
             Log.e(TAG, "scan failed: ${t.message}", t)
             _state.value = State.Failed(t.message ?: t.javaClass.simpleName)
-            null
+            return null
         } finally {
             runCatching { vehicleDet?.release() }
             runCatching { plateDet?.release() }

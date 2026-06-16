@@ -61,6 +61,29 @@ class SidecarScanner(private val context: Context) {
         private const val TAG = "Trafy.SidecarScanner"
         const val DEFAULT_INFERENCE_EVERY_N = 3
 
+        /**
+         * Max width fed to AI inference. The decoded source frame can be
+         * 1440p (3.68 MP), but the live overlay path runs at the
+         * TextureView's screen-render size — typically ~1080×608 on a
+         * landscape phone (verified in logs: `RtspPlayer
+         * surfaceTextureAvailable 1080x608`). Live "feels real-time"
+         * partly because it's inferring on 5.6× fewer pixels than offline
+         * was doing.
+         *
+         * Matching live: downscale each frame to this max width before
+         * inference. Storage (the .ts file) and playback (1440p video on
+         * screen) stay full-quality. Detection bboxes end up in the
+         * downscaled coordinate space and the playback overlay's
+         * contain-fit transform scales them back to display canvas via
+         * `TrackedScene.sourceFrameSize` — same code path live already
+         * uses, no overlay change needed.
+         *
+         * Trade-off: plate OCR sees a slightly smaller crop, which mirrors
+         * what live does (and live recognizes plates fine). Heavy clips
+         * drop from ~21 min scan to an estimated ~5-8 min.
+         */
+        private const val INFERENCE_TARGET_MAX_WIDTH = 1080
+
         /** Bail out of the scan if we see no plates after this many inference frames. */
         private const val EMPTY_INFERENCE_FRAMES_BEFORE_ABORT_MIN = 30L
         private const val EMPTY_INFERENCE_FRAMES_BEFORE_ABORT_MAX = 120L
@@ -179,8 +202,12 @@ class SidecarScanner(private val context: Context) {
                     val argb = frame.bitmap
                     val runInference = (frame.frameIndex % inferenceEveryN == 0L)
                     if (runInference) {
+                        // Downscale to the live-overlay inference size so
+                        // the AI pipeline does the same amount of work
+                        // here that it does on the Live screen.
+                        val argbForInference = downscaleForInference(argb)
                         val (tracks, plates) = runInference(
-                            argb, frame.presentationTimeUs * 1_000L,
+                            argbForInference, frame.presentationTimeUs * 1_000L,
                             tracker, voteBook, vehicleDet, plateDet, ocr,
                             finalVotedOut = finalVoted,
                         )
@@ -191,14 +218,25 @@ class SidecarScanner(private val context: Context) {
                             emptyInferences = 0L
                             entries += buildEntry(
                                 ptsUs        = frame.presentationTimeUs,
-                                sourceWidth  = src.width,
-                                sourceHeight = src.height,
+                                // Bboxes returned by NCNN are in the
+                                // downscaled-bitmap coordinate space; the
+                                // playback overlay reads sourceFrameSize
+                                // from each entry and contain-fits to the
+                                // display canvas, so storing the inference
+                                // size here is what makes the overlay
+                                // align with the full-res video on screen.
+                                sourceWidth  = argbForInference.width,
+                                sourceHeight = argbForInference.height,
                                 tracks       = tracks,
                                 plates       = plates,
                             )
                         } else {
                             emptyInferences++
                         }
+
+                        // Release the downscaled bitmap as soon as inference
+                        // is done. The original `argb` is recycled below.
+                        if (argbForInference !== argb) argbForInference.recycle()
 
                         // Bail out when we've burned the budget on empty
                         // frames AND haven't seen ANY road agents (vehicles
@@ -350,6 +388,20 @@ class SidecarScanner(private val context: Context) {
             tracks             = trackRows,
             plates             = plateRows,
         )
+    }
+
+    /**
+     * Return a bitmap whose max dimension is [INFERENCE_TARGET_MAX_WIDTH].
+     * If [src] is already at or below the target, returns [src] unchanged
+     * (caller mustn't recycle the result without checking identity).
+     * Otherwise creates a new bilinear-filtered scaled copy.
+     */
+    private fun downscaleForInference(src: Bitmap): Bitmap {
+        if (src.width <= INFERENCE_TARGET_MAX_WIDTH) return src
+        val scale = INFERENCE_TARGET_MAX_WIDTH.toFloat() / src.width
+        val targetW = INFERENCE_TARGET_MAX_WIDTH
+        val targetH = (src.height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(src, targetW, targetH, /* filter = */ true)
     }
 
     private fun cropBitmap(src: Bitmap, bbox: android.graphics.RectF): Bitmap? {

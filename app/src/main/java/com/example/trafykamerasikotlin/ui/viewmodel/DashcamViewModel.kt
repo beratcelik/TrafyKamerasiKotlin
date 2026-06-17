@@ -241,6 +241,20 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                 Log.i(TAG, "Handshake SUCCESS: $device")
                 _uiState.update { DashcamUiState.Connected(device) }
                 wifiManager.startWatchingConnection(network) { onConnectionLost() }
+
+                // Push phone-local clock to the cam RTC. Fire-and-forget —
+                // we don't block the UI on the time-sync call. Cams ship
+                // with stale RTCs and lose time when powered off without a
+                // backup battery, which produces wrong SD-card timestamps.
+                // See [CamClockSync] for the per-chipset endpoint table.
+                viewModelScope.launch {
+                    runCatching {
+                        com.example.trafykamerasikotlin.data.time.CamClockSync
+                            .syncFromPhoneClock(device.protocol)
+                    }.onFailure {
+                        Log.w(TAG, "cam clock sync threw: ${it.message}")
+                    }
+                }
             }
             is HandshakeResult.Failure -> {
                 Log.e(TAG, "Handshake FAILURE: ${result.reason}")

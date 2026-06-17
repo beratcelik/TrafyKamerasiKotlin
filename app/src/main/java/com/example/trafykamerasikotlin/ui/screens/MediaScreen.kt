@@ -864,7 +864,6 @@ private fun MediaFileCard(
                         text     = stringResource(
                             R.string.media_download_progress_fmt,
                             downloadState.pct,
-                            downloadState.speedMbPerSec,
                         ),
                         style    = MaterialTheme.typography.labelSmall,
                         color    = Color.White,
@@ -875,8 +874,8 @@ private fun MediaFileCard(
                     Text(
                         text     = stringResource(
                             R.string.media_download_size_fmt,
-                            downloadState.receivedMb,
-                            downloadState.totalMb,
+                            downloadState.receivedMb.toInt(),
+                            downloadState.totalMb.toInt(),
                         ),
                         style    = MaterialTheme.typography.labelSmall,
                         color    = Color.White.copy(alpha = 0.75f),

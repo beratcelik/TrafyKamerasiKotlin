@@ -75,8 +75,8 @@
     <string name="media_action_cancel_download">İndirmeyi İptal Et</string>
     <string name="media_dialog_delete_title">Dosya silinsin mi?</string>
     <string name="media_downloading_indeterminate">İndiriliyor…</string>
-    <string name="media_download_progress_fmt">İndiriliyor %1$d%%  •  %2$.1f MB/s</string>
-    <string name="media_download_size_fmt">%1$.1f / %2$.1f MB</string>
+    <string name="media_download_progress_fmt">İndiriliyor %1$d%%</string>
+    <string name="media_download_size_fmt">%1$d / %2$d MB</string>
     <string name="media_error_playback_failed">Video oynatılamadı</string>
     <string name="media_error_download_failed">Video indirilemedi</string>
     <string name="media_error_busy_playback">Önce oynatmayı kapatın</string>

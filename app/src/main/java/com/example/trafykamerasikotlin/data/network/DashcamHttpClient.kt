@@ -98,6 +98,13 @@ object DashcamHttpClient {
                 if (!success) Log.w(TAG, "  → Non-2xx for PROBE $url: HTTP $code")
                 success
             }
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            // Coroutine cancellation must propagate. Catching it as a
+            // generic Exception (the previous behaviour) let cancelled
+            // cleanup chains keep firing more probes after their parent
+            // coroutine had already been torn down, contributing to the
+            // cam-firmware reboot during rapid app-kill flows.
+            throw ce
         } catch (e: Exception) {
             Log.e(TAG, "  → EXCEPTION for PROBE $url: ${e.javaClass.simpleName}: ${e.message}")
             false

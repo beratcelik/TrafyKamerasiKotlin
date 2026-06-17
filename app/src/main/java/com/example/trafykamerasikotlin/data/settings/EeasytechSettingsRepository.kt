@@ -224,19 +224,22 @@ class EeasytechSettingsRepository(private val context: Context) {
      * the cam showing "continue in app" until power-cycled.
      */
     suspend fun exitSettings(deviceIp: String) {
-        // Process-wide serialisation: prevents this exit chain from
-        // racing against a sibling Live or Media cleanup. See
-        // [com.example.trafykamerasikotlin.data.media.EeasytechCleanupLock]
-        // — concurrent calls cause `rec=1` to return "set fail" and have
-        // crashed cam firmware on real hardware.
+        if (com.example.trafykamerasikotlin.data.media.EeasytechCleanupLock.ranRecently()) {
+            Log.d(TAG, "exitSettings: skipped (sibling cleanup ran recently)")
+            return
+        }
         com.example.trafykamerasikotlin.data.media.EeasytechCleanupLock.mutex.withLock {
+            if (com.example.trafykamerasikotlin.data.media.EeasytechCleanupLock.ranRecently()) {
+                Log.d(TAG, "exitSettings: skipped inside lock")
+                return@withLock
+            }
             val ok1 = DashcamHttpClient.probe("http://$deviceIp/app/setting?param=exit")
             Log.d(TAG, "setting?param=exit → $ok1")
             val ok2 = DashcamHttpClient.probe("http://$deviceIp/app/playback?param=exit")
             Log.d(TAG, "playback?param=exit → $ok2")
-            // And re-arm recording so the cam isn't left paused either.
             val ok3 = DashcamHttpClient.probe("http://$deviceIp/app/setparamvalue?param=rec&value=1")
             Log.d(TAG, "setparamvalue?param=rec&value=1 → $ok3")
+            com.example.trafykamerasikotlin.data.media.EeasytechCleanupLock.markCompletion()
         }
     }
 

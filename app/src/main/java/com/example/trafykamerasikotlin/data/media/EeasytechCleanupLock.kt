@@ -40,4 +40,39 @@ import kotlinx.coroutines.sync.Mutex
  */
 internal object EeasytechCleanupLock {
     val mutex: Mutex = Mutex()
+
+    /**
+     * Wall-clock epoch (ms) of the last successful cleanup chain, or 0 if
+     * none has run in this process yet. Used by [ranRecently] to dedupe
+     * the storm of cleanup calls Compose+Lifecycle fires when the user
+     * navigates quickly or kills the app: LiveVM.onLeave +
+     * SettingsVM.onLeave + MediaVM.onBackground + MediaVM.onLeave can all
+     * queue within 1–2 s, each chain firing 3 cam-side HTTP transitions.
+     * Even when serialised through [mutex], the total ~9-12 requests in
+     * 5 s overwhelmed the Easytech firmware (cam observed to reboot).
+     *
+     * Volatile is sufficient — cross-VM reads are always either "0" or
+     * "a recent timestamp", and a brief race where two VMs both see "0"
+     * and both run their chains is harmless (mutex still serialises
+     * them; we just don't get the dedupe benefit on that one collision).
+     */
+    @Volatile
+    private var lastCompletionEpochMs: Long = 0L
+
+    /**
+     * True iff a cleanup chain completed within the last [windowMs] ms.
+     * Callers should check this both BEFORE acquiring the mutex (cheap
+     * fast-path skip) AND inside the mutex (definitive check against a
+     * sibling chain that finished while we were queued).
+     */
+    fun ranRecently(windowMs: Long = 3_000L): Boolean {
+        val last = lastCompletionEpochMs
+        if (last == 0L) return false
+        return System.currentTimeMillis() - last < windowMs
+    }
+
+    /** Mark a cleanup chain as just-completed. Called from inside the mutex. */
+    fun markCompletion() {
+        lastCompletionEpochMs = System.currentTimeMillis()
+    }
 }

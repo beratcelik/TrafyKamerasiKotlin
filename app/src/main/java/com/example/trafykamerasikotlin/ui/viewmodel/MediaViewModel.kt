@@ -431,7 +431,15 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         pausedForBackground = true
         idleJob?.cancel()
         idleJob = null
-        viewModelScope.launch { leavePlayback(device) }
+        // cleanupScope — NOT viewModelScope — because ON_STOP is often
+        // followed by activity destruction within a second, which cancels
+        // viewModelScope mid-chain. A cancelled `leavePlayback` releases
+        // the cam-cleanup mutex without completing the rec=1 resume,
+        // leaving the cam paused. cleanupScope survives activity death so
+        // the chain runs to completion.
+        cleanupScope.launch {
+            kotlinx.coroutines.withTimeoutOrNull(8_000L) { leavePlayback(device) }
+        }
     }
 
     /**

@@ -62,16 +62,21 @@ class EeasytechLiveRepository {
      * the cam settle first avoids the lockup.
      */
     suspend fun exitLive(deviceIp: String) {
-        // Process-wide serialisation: prevents a Live→Settings→Media→kill
-        // race from bombarding the cam with concurrent exit + rec=1 calls
-        // (cam observed to reboot itself when that happens — see
-        // [EeasytechCleanupLock]).
+        if (EeasytechCleanupLock.ranRecently()) {
+            Log.d(TAG, "exitLive: skipped (sibling cleanup ran recently)")
+            return
+        }
         EeasytechCleanupLock.mutex.withLock {
+            if (EeasytechCleanupLock.ranRecently()) {
+                Log.d(TAG, "exitLive: skipped inside lock")
+                return@withLock
+            }
             val exitOk = DashcamHttpClient.probe("http://$deviceIp/app/exitrecorder")
             Log.d(TAG, "exitrecorder → $exitOk")
             kotlinx.coroutines.delay(500)
             val resumeOk = DashcamHttpClient.probe("http://$deviceIp/app/setparamvalue?param=rec&value=1")
             Log.d(TAG, "resume rec → $resumeOk")
+            EeasytechCleanupLock.markCompletion()
         }
     }
 

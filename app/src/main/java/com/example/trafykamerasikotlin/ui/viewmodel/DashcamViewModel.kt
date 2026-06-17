@@ -8,7 +8,9 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.sync.withLock
 import com.example.trafykamerasikotlin.data.handshake.DashcamHandshakeManager
+import com.example.trafykamerasikotlin.data.media.EeasytechCleanupLock
 import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.FailureReason
@@ -179,9 +181,24 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         val device = (_uiState.value as? DashcamUiState.Connected)?.device ?: return
         if (device.protocol != ChipsetProtocol.EEASYTECH) return
         viewModelScope.launch {
-            DashcamHttpClient.probe(
-                "http://${device.protocol.deviceIp}/app/setparamvalue?param=rec&value=1"
-            )
+            // Belt-and-suspenders rec=1 from HomeScreen used to bypass the
+            // mutex and raced sibling exit chains during app-dismiss
+            // transitions: HomeScreen's `LaunchedEffect(uiState)` would fire
+            // ensureRecording at the same moment LiveVM's `exitLive` was
+            // mid-chain, and the cam's HTTP server received conflicting
+            // requests within ~150 ms. Cam returned "set fail" and got
+            // wedged on the "operate in app" banner, then rebooted. Route
+            // through the same lock the exit chains use so we either skip
+            // (chain just finished — rec=1 already landed) or wait our
+            // turn (chain in flight — rec=1 will land cleanly afterwards).
+            if (EeasytechCleanupLock.ranRecently()) return@launch
+            EeasytechCleanupLock.mutex.withLock {
+                if (EeasytechCleanupLock.ranRecently()) return@withLock
+                DashcamHttpClient.probe(
+                    "http://${device.protocol.deviceIp}/app/setparamvalue?param=rec&value=1"
+                )
+                EeasytechCleanupLock.markCompletion()
+            }
         }
     }
 

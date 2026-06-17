@@ -289,18 +289,33 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
                         }
                         if (!ok) throw Exception("GetRawData returned no data")
                     } else {
-                        val body = DashcamHttpClient.openStream(file.httpUrl)
-                            ?: throw Exception("Failed to open stream")
-                        body.use { responseBody ->
-                            val input  = responseBody.byteStream()
-                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                            outFile.outputStream().use { output ->
-                                var n: Int
-                                while (input.read(buffer).also { n = it } != -1) {
-                                    ensureActive()
-                                    output.write(buffer, 0, n)
-                                }
-                            }
+                        // HiSilicon-family / Easytech: use the streaming
+                        // helper that surfaces per-buffer progress, so the
+                        // MediaFileCard shows size / speed / percent
+                        // instead of the indeterminate "Downloading…"
+                        // spinner. Same Content-Length-based total the GP
+                        // path uses.
+                        _downloadProgress.value = _downloadProgress.value +
+                                (file.name to DownloadState(0, 0f, 0f, 0f))
+                        httpDownloadToFile(file.httpUrl, outFile) { received, total ->
+                            val now  = System.currentTimeMillis()
+                            val prev = speedSamples[file.name]
+                            val speed = if (prev != null && now > prev.second) {
+                                val dtSec = (now - prev.second) / 1000f
+                                ((received - prev.first) / dtSec) / (1024f * 1024f)
+                            } else 0f
+                            speedSamples[file.name] = Pair(received, now)
+                            val pct = if (total > 0L)
+                                ((received * 100L) / total).toInt().coerceIn(0, 100)
+                            else 0
+                            val totalMb = if (total > 0L) total / (1024f * 1024f) else 0f
+                            _downloadProgress.value = _downloadProgress.value + (file.name to
+                                DownloadState(
+                                    pct           = pct,
+                                    receivedMb    = received / (1024f * 1024f),
+                                    totalMb       = totalMb,
+                                    speedMbPerSec = speed,
+                                ))
                         }
                     }
                 }

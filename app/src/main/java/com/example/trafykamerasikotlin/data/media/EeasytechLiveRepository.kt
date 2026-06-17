@@ -2,6 +2,7 @@ package com.example.trafykamerasikotlin.data.media
 
 import android.util.Log
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -61,11 +62,17 @@ class EeasytechLiveRepository {
      * the cam settle first avoids the lockup.
      */
     suspend fun exitLive(deviceIp: String) {
-        val exitOk = DashcamHttpClient.probe("http://$deviceIp/app/exitrecorder")
-        Log.d(TAG, "exitrecorder → $exitOk")
-        kotlinx.coroutines.delay(500)
-        val resumeOk = DashcamHttpClient.probe("http://$deviceIp/app/setparamvalue?param=rec&value=1")
-        Log.d(TAG, "resume rec → $resumeOk")
+        // Process-wide serialisation: prevents a Live→Settings→Media→kill
+        // race from bombarding the cam with concurrent exit + rec=1 calls
+        // (cam observed to reboot itself when that happens — see
+        // [EeasytechCleanupLock]).
+        EeasytechCleanupLock.mutex.withLock {
+            val exitOk = DashcamHttpClient.probe("http://$deviceIp/app/exitrecorder")
+            Log.d(TAG, "exitrecorder → $exitOk")
+            kotlinx.coroutines.delay(500)
+            val resumeOk = DashcamHttpClient.probe("http://$deviceIp/app/setparamvalue?param=rec&value=1")
+            Log.d(TAG, "resume rec → $resumeOk")
+        }
     }
 
     // ── Private helpers ────────────────────────────────────────────────────

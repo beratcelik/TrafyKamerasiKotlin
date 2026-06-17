@@ -272,6 +272,68 @@ object GeneralplusProtocol {
         return buf
     }
 
+    /**
+     * Builds the GPVENDOR set-system-time packet — 31 bytes total.
+     *
+     * Wire format (verified against viidure PCAP frame 821 with Trafy Uno,
+     * captured 2026-06-17 13:48):
+     * ```
+     * [0-7]   "GPSOCKET" magic
+     * [8]     TYPE_CMD (0x01)
+     * [9]     cmdIdx (sequence number — `GeneralplusSession.sendPacket`
+     *         patches this byte before writing)
+     * [10]    MODE_VENDOR (0xFF)
+     * [11]    cmd = 0x00
+     * [12-13] DataSize uint16 LE = 17 — bytes of vendor payload follow
+     * [14-21] "GPVENDOR" sub-signature
+     * [22-23] vendor sub-cmd = 0x0000 (the "set-time" sub-command in
+     *         GPVENDOR's namespace; other values are unknown)
+     * [24-25] year uint16 LE (e.g. 2026 = 0xEA07 LE → bytes 0xEA, 0x07)
+     * [26]    month (1-12)
+     * [27]    day (1-31)
+     * [28]    hour (0-23, 24-h)
+     * [29]    minute (0-59)
+     * [30]    second (0-59)
+     * ```
+     * Cam acks with TYPE_ACK (0x02) and the same 17-byte payload echoed
+     * back — see PCAP frame 827.
+     */
+    fun buildSetSystemTime(
+        cmdIdx: Byte = 0x00,
+        year: Int, month: Int, day: Int,
+        hour: Int, minute: Int, second: Int,
+    ): ByteArray {
+        require(year in 2000..2099) { "year out of range: $year" }
+        require(month in 1..12) { "month out of range: $month" }
+        require(day in 1..31) { "day out of range: $day" }
+        require(hour in 0..23) { "hour out of range: $hour" }
+        require(minute in 0..59) { "minute out of range: $minute" }
+        require(second in 0..59) { "second out of range: $second" }
+
+        val payloadSize = 17
+        val buf = ByteArray(CMD_MIN_SIZE + 2 + payloadSize)   // 12 + 2 + 17 = 31
+        MAGIC.copyInto(buf, 0)
+        buf[8]  = TYPE_CMD
+        buf[9]  = cmdIdx
+        buf[10] = MODE_VENDOR
+        buf[11] = 0x00
+        // DataSize uint16 LE at [12-13]
+        ByteBuffer.wrap(buf, 12, 2).order(ByteOrder.LITTLE_ENDIAN).putShort(payloadSize.toShort())
+        // Vendor sub-signature at [14-21]
+        "GPVENDOR".toByteArray(Charsets.US_ASCII).copyInto(buf, 14)
+        // Vendor sub-cmd at [22-23] = 0x0000
+        buf[22] = 0x00
+        buf[23] = 0x00
+        // Year uint16 LE at [24-25]
+        ByteBuffer.wrap(buf, 24, 2).order(ByteOrder.LITTLE_ENDIAN).putShort(year.toShort())
+        buf[26] = month.toByte()
+        buf[27] = day.toByte()
+        buf[28] = hour.toByte()
+        buf[29] = minute.toByte()
+        buf[30] = second.toByte()
+        return buf
+    }
+
     // ── Response reader ────────────────────────────────────────────────────
 
     /**

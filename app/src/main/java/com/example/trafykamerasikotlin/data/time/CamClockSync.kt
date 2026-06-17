@@ -1,6 +1,8 @@
 package com.example.trafykamerasikotlin.data.time
 
 import android.util.Log
+import com.example.trafykamerasikotlin.data.generalplus.GeneralplusProtocol
+import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
 import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
 import java.util.Calendar
@@ -21,14 +23,17 @@ import java.util.Calendar
  * silently swallow failures (the cam reaching us at all is enough to
  * keep the user productive; the wrong-timestamp problem is a polish item).
  *
- * **Per-chipset endpoint** (Phase 1 covers the two we have user devices
- * for; GeneralPlus and Allwinner come in a follow-up because their time-set
- * RPCs ride over GPSOCKET / RTP2P respectively and need separate plumbing):
+ * **Per-chipset endpoint**:
  *  - Easytech: `GET /app/setsystime?date=YYYYMMDDhhmmss`
  *    (verified against the OEM `EeasytechProtocol` from golook-jadx —
  *    Chinese log line `同步时间` in the decompiled source)
  *  - HiDVR  (HiSilicon): `GET /cgi-bin/hisnet/setsystime.cgi?-time=YYYYMMDDhhmmss`
  *    (verified against `HiDvrProtocol.setSystemTime` in golook-jadx)
+ *  - GeneralPlus (Trafy Uno): GPSOCKET binary over TCP/8081, vendor cmd
+ *    `MODE_VENDOR / cmdId=0x00` + `"GPVENDOR"` sub-signature + 7-byte
+ *    `[year16 LE, month, day, hour, minute, second]` payload. Verified
+ *    against a viidure PCAP captured 2026-06-17 (frames 821 → 827).
+ *  - Allwinner V853: no impl yet (no OEM source for CloudSpirit), skips.
  */
 object CamClockSync {
 
@@ -57,11 +62,49 @@ object CamClockSync {
                     Log.i(TAG, "HiDvr setsystime.cgi ack=$it")
                 }
             }
+            ChipsetProtocol.GENERALPLUS -> {
+                // Trafy Uno — GPSOCKET binary over TCP/8081. Command shape
+                // reverse-engineered from a viidure PCAP (2026-06-17 frame
+                // 821: cam echoes the same 17-byte vendor payload back with
+                // TYPE_ACK at frame 827). See [GeneralplusProtocol.buildSetSystemTime]
+                // for the on-the-wire breakdown.
+                Log.i(TAG, "GeneralPlus setSystemTime → $stamp (GPVENDOR)")
+                syncGeneralplus()
+            }
             else -> {
                 Log.d(TAG, "no clock-sync impl for ${protocol.displayName} yet (Phase 2)")
                 false
             }
         }
+    }
+
+    /**
+     * Sends the GPVENDOR set-system-time packet over a one-shot
+     * GeneralplusSession. The session handles auth handshake; we just hand
+     * the pre-built vendor command to `sendPacket` and wait for the cam's
+     * ACK (TYPE_ACK = 0x02, vendor mode echo).
+     */
+    private suspend fun syncGeneralplus(): Boolean {
+        val now = Calendar.getInstance()
+        val packet = GeneralplusProtocol.buildSetSystemTime(
+            cmdIdx = 0x00,
+            year   = now.get(Calendar.YEAR),
+            month  = now.get(Calendar.MONTH) + 1,
+            day    = now.get(Calendar.DAY_OF_MONTH),
+            hour   = now.get(Calendar.HOUR_OF_DAY),
+            minute = now.get(Calendar.MINUTE),
+            second = now.get(Calendar.SECOND),
+        )
+        val ack = GeneralplusSession.withSession { _, sendPacket, receive ->
+            sendPacket(packet)
+            // Cam ACKs with mode=VENDOR (0xFF), cmdId=0x00, type=ACK.
+            // `receive` matches by cmdId — pass 0x00 to wait for the vendor ack.
+            val resp = receive(0x00)
+            val isAck = resp?.isAck == true && resp.mode == GeneralplusProtocol.MODE_VENDOR
+            Log.i(TAG, "GeneralPlus setSystemTime ack=$isAck (resp=$resp)")
+            isAck
+        }
+        return ack == true
     }
 
     /**

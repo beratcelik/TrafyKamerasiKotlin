@@ -65,6 +65,18 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
     private val _uiState = MutableStateFlow<DashcamUiState>(DashcamUiState.Idle)
     val uiState: StateFlow<DashcamUiState> = _uiState.asStateFlow()
 
+    /**
+     * One-shot guard for [ensureRecording]. HomeScreen's
+     * `LaunchedEffect(uiState)` re-fires every time HomeScreen re-enters
+     * composition — including the brief stack-pop pass that Compose does
+     * when the user dismisses the app from a different tab. Without this
+     * flag, every such re-entry would push another rec=1 at the cam.
+     *
+     * Reset whenever the cam connection drops (Wi-Fi loss → onConnectionLost),
+     * so the next successful handshake gets one fresh rec=1.
+     */
+    @Volatile private var ensuredRecordingForCurrentSession: Boolean = false
+
     /** The Network object obtained after WifiNetworkSpecifier connection (API 29+).
      *  Null on legacy path or when already connected manually. Exposed for LiveViewModel. */
     private val _connectedNetwork = MutableStateFlow<Network?>(null)
@@ -180,17 +192,20 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
     fun ensureRecording() {
         val device = (_uiState.value as? DashcamUiState.Connected)?.device ?: return
         if (device.protocol != ChipsetProtocol.EEASYTECH) return
+        // One-shot per session: HomeScreen's LaunchedEffect re-fires on
+        // every recomposition (including brief stack-pop passes during
+        // app dismiss), so without this we'd push rec=1 at the cam over
+        // and over for the lifetime of one connection. The exit chains
+        // already do their own rec=1 — this is a safety net for the
+        // initial post-handshake state, not a continuous heartbeat.
+        if (ensuredRecordingForCurrentSession) return
+        ensuredRecordingForCurrentSession = true
         viewModelScope.launch {
-            // Belt-and-suspenders rec=1 from HomeScreen used to bypass the
-            // mutex and raced sibling exit chains during app-dismiss
-            // transitions: HomeScreen's `LaunchedEffect(uiState)` would fire
-            // ensureRecording at the same moment LiveVM's `exitLive` was
-            // mid-chain, and the cam's HTTP server received conflicting
-            // requests within ~150 ms. Cam returned "set fail" and got
-            // wedged on the "operate in app" banner, then rebooted. Route
-            // through the same lock the exit chains use so we either skip
-            // (chain just finished — rec=1 already landed) or wait our
-            // turn (chain in flight — rec=1 will land cleanly afterwards).
+            // Route through the cleanup lock so a sibling exit chain
+            // mid-flight (Live→Settings→Media tab-walk while uiState
+            // ticks) doesn't race with us. The dedupe window also covers
+            // the case where exitLive's rec=1 just landed — we'll see
+            // `ranRecently` and skip cheaply.
             if (EeasytechCleanupLock.ranRecently()) return@launch
             EeasytechCleanupLock.mutex.withLock {
                 if (EeasytechCleanupLock.ranRecently()) return@withLock
@@ -204,6 +219,7 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
 
     fun disconnect() {
         Log.i(TAG, "disconnect() called")
+        ensuredRecordingForCurrentSession = false
         wifiManager.release()
         DashcamHttpClient.bindToNetwork(null)
         GeneralplusSession.bindToNetwork(null)
@@ -291,6 +307,9 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         AllwinnerNetwork.bindToNetwork(null)
         AllwinnerSessionHolder.clear()
         _connectedNetwork.update { null }
+        // New connection ahead — let ensureRecording fire one fresh rec=1
+        // when the next handshake succeeds.
+        ensuredRecordingForCurrentSession = false
 
         val now = System.currentTimeMillis()
         autoReconnectTimestamps.removeAll { now - it > AUTO_RECONNECT_WINDOW_MS }

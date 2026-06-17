@@ -71,11 +71,38 @@ object CamClockSync {
                 Log.i(TAG, "GeneralPlus setSystemTime → $stamp (GPVENDOR)")
                 syncGeneralplus()
             }
+            ChipsetProtocol.ALLWINNER_V853 -> {
+                // Trafy Dos Internet — relay envelope over TCP/8000. The
+                // sub-command name is `settime`, reverse-engineered from
+                // CloudSpirit v2.1.14 (com.plink.cloudspiritgo, libapp.so —
+                // Dart fn `syncTimeZone`). Payload: LOCAL epoch seconds + tz
+                // offset in seconds. See AllwinnerSession.setSystemTime for
+                // the local-vs-UTC discovery (cam was double-applying tz).
+                Log.i(TAG, "Allwinner V853 settime → (local epoch)")
+                syncAllwinner()
+            }
             else -> {
                 Log.d(TAG, "no clock-sync impl for ${protocol.displayName} yet (Phase 2)")
                 false
             }
         }
+    }
+
+    /**
+     * Routes the settime relay through the live [com.example.trafykamerasikotlin.data.allwinner.AllwinnerSessionHolder]
+     * so we share the TCP session that already holds login + bondlist state.
+     * Returns false if no session is open (handshake hasn't finished yet) —
+     * caller should retry after the next handshake.
+     */
+    private suspend fun syncAllwinner(): Boolean {
+        val session = com.example.trafykamerasikotlin.data.allwinner.AllwinnerSessionHolder.current
+        if (session == null) {
+            Log.w(TAG, "Allwinner settime: no live session, skipping")
+            return false
+        }
+        return runCatching { session.setSystemTime() }
+            .onFailure { Log.w(TAG, "Allwinner settime threw: ${it.message}") }
+            .getOrDefault(false)
     }
 
     /**

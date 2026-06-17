@@ -154,6 +154,54 @@ internal class AllwinnerSession private constructor(
         return resp
     }
 
+    /**
+     * Pushes the phone's local clock to the cam's RTC.
+     *
+     * Reverse-engineered from CloudSpirit v2.1.14 (`libapp.so`, com.plink.cloudspiritgo) —
+     * Dart strings confirm:
+     *  - relay sub-command name: `settime`
+     *  - Dart fn: `syncTimeZone` (logs: "syncTimeZone: app zone=…", "Device and phone
+     *    timezones differ. Sync phone timezone to device?")
+     *  - tz field is in seconds (`DateTime_timeZoneOffsetInSeconds`)
+     *
+     * Sent inside the standard relay envelope (peer/timeout added by [relay]).
+     * The cam echoes a `relay:settime` push back with `ret=0` on success.
+     */
+    suspend fun setSystemTime(): Boolean {
+        // The cam interprets `time` correctly as Unix UTC epoch, BUT its display
+        // timezone is hardcoded to UTC+8 (CloudSpirit is a Chinese app, factory
+        // default is Asia/Shanghai). Three empirical tests with tz={10800,10800,0}
+        // all produced display strings exactly +28800s (8h) ahead of the sent
+        // value (±observation latency). The `tz` field appears to be ignored
+        // for display purposes; whatever CloudSpirit uses to override the
+        // display zone we couldn't isolate (likely a setsettings field, but
+        // the `setsettings` relay sub-command isn't in our reach yet).
+        //
+        // Workaround: pre-compensate. Subtract (8h − user_tz_offset) from the
+        // UTC epoch we send. Cam then displays the desired wall-clock for the
+        // user's actual zone (e.g., Turkey user sees Turkey time on the cam).
+        //
+        // Trade-off: if the user later moves between timezones without
+        // reconnecting, the cam display will drift. Acceptable for a dashcam
+        // — the app reconnects whenever the phone joins the cam Wi-Fi, and
+        // we'll resync on that next connection.
+        val nowMs           = System.currentTimeMillis()
+        val userTzOffsetSec = java.util.TimeZone.getDefault().getOffset(nowMs) / 1000L
+        val camDisplayOffsetSec = 8 * 3600L  // cam's hardcoded UTC+8 display
+        val preCompensatedEpoch = nowMs / 1000L - (camDisplayOffsetSec - userTzOffsetSec)
+        val extra = JSONObject().apply {
+            put("time", preCompensatedEpoch)
+            put("tz",   userTzOffsetSec)  // sent for completeness; cam ignores
+        }
+        Log.i(TAG, "settime → preCompensatedEpoch=$preCompensatedEpoch " +
+                   "(userTz=${userTzOffsetSec}s, camDisplayTz=${camDisplayOffsetSec}s, " +
+                   "delta=${camDisplayOffsetSec - userTzOffsetSec}s)")
+        val resp = relay("settime", extra)
+        val ret = resp.optInt("ret", -1)
+        Log.i(TAG, "settime ack ret=$ret (resp=$resp)")
+        return ret == 0
+    }
+
     /** Last successful getsettings response. */
     fun lastSettings(): JSONObject = cachedSettings
 

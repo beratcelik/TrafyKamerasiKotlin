@@ -522,6 +522,17 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         idleJob = null
         idleExited = false
         pausedForBackground = false
+        // Drop any playback-overlay state held in this VM. Without this, a
+        // user who hit a bottom-tab (instead of the in-overlay back arrow)
+        // would leave the GP RTSP URL — or Allwinner stream URL, or the
+        // "preparing" spinner — in the StateFlow. On the next Media-tab
+        // visit (possibly after switching to a DIFFERENT cam), the stale
+        // overlay would re-mount, paint its black backdrop + spinner +
+        // BoundingBoxOverlay HUD chrome, and try to stream from the old
+        // cam's IP over the new cam's Wi-Fi — forever buffering.
+        _playbackUri.value          = null
+        _allwinnerPlaybackUri.value = null
+        _isPreparingPlayback.value  = false
         // Launch the cleanup on an application-scoped supervisor so the cam
         // exit-playback / exit-settings call survives the activity dying.
         // viewModelScope would cancel the in-flight HTTP if the user kills

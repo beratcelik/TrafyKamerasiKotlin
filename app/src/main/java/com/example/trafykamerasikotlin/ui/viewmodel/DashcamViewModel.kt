@@ -21,12 +21,14 @@ import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
 import com.example.trafykamerasikotlin.data.network.WifiIpProvider
 import com.example.trafykamerasikotlin.data.wifi.DashcamWifiManager
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 
@@ -54,6 +56,25 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         private const val AUTO_RECONNECT_DELAY_MS = 1_500L
         private const val AUTO_RECONNECT_WINDOW_MS = 90_000L
         private const val MAX_AUTO_RECONNECTS_IN_WINDOW = 4
+
+        // Easytech firmware (HI3516CV610-B-FV-CARRECORDER class, e.g. Trafy
+        // Tres Pro) has TWO timers that drop the Wi-Fi AP:
+        //   - HTTP idle (~50s) — the cam's HTTP server stops responding,
+        //     then the AP disassociates clients.
+        //   - AP watchdog (~5min) — independent of HTTP idle. The cam
+        //     voices "wifi hotspot is off" and disables the AP entirely
+        //     (SSID disappears from the air, doesn't come back).
+        //
+        // The OEM Easytech app (PCAP captured 2026-06-17) defeats both by
+        // pinging two endpoints every ~5s as a pair:
+        //   GET /app/getdeviceattr
+        //   GET /app/getparamvalue?param=rec
+        // Sending only `getparamvalue` at 20s beat the HTTP idle timer but
+        // did NOT prevent the 5-min AP watchdog — observed empirically:
+        // cam dropped at 5min 25s of active 20s pings. `getdeviceattr`
+        // appears to be the endpoint the AP watchdog actually listens for.
+        // We mirror the OEM pattern exactly.
+        private const val EASYTECH_KEEPALIVE_INTERVAL_MS = 5_000L
     }
 
     private val manager = DashcamHandshakeManager(
@@ -220,6 +241,7 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
     fun disconnect() {
         Log.i(TAG, "disconnect() called")
         ensuredRecordingForCurrentSession = false
+        stopEasytechKeepalive()
         wifiManager.release()
         DashcamHttpClient.bindToNetwork(null)
         GeneralplusSession.bindToNetwork(null)
@@ -227,6 +249,53 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         AllwinnerSessionHolder.clear()
         _connectedNetwork.update { null }
         _uiState.update { DashcamUiState.Idle }
+    }
+
+    // ── Easytech keep-alive ───────────────────────────────────────────────
+    // Single in-flight job; replacing it cancels the prior loop.
+    private var easytechKeepaliveJob: Job? = null
+
+    private fun startEasytechKeepalive(deviceIp: String) {
+        easytechKeepaliveJob?.cancel()
+        Log.i(TAG, "Easytech keepalive: starting (${EASYTECH_KEEPALIVE_INTERVAL_MS / 1000}s tick) → $deviceIp")
+        easytechKeepaliveJob = viewModelScope.launch {
+            // First tick after a full interval — handshake/recovery/clock-sync
+            // already touched the cam, no need to ping again immediately.
+            delay(EASYTECH_KEEPALIVE_INTERVAL_MS)
+            var failuresInARow = 0
+            while (isActive) {
+                // OEM pattern: getdeviceattr then getparamvalue?param=rec
+                // back-to-back. `getdeviceattr` is the one that appears to
+                // pet the AP watchdog. We fire both because the OEM does and
+                // diverging on a non-obvious cam-side timer is a footgun.
+                val attrBody = runCatching {
+                    DashcamHttpClient.get("http://$deviceIp/app/getdeviceattr")
+                }.getOrNull()
+                val recBody = runCatching {
+                    DashcamHttpClient.get("http://$deviceIp/app/getparamvalue?param=rec")
+                }.getOrNull()
+                if (attrBody == null && recBody == null) {
+                    failuresInARow += 1
+                    Log.w(TAG, "Easytech keepalive: both pings returned null (failuresInARow=$failuresInARow)")
+                } else {
+                    if (failuresInARow > 0) {
+                        Log.i(TAG, "Easytech keepalive: recovered after $failuresInARow null tick(s)")
+                    }
+                    failuresInARow = 0
+                    // Single quiet line per tick — body shapes are tiny.
+                    Log.v(TAG, "Easytech keepalive: ok (rec=${recBody?.take(40)})")
+                }
+                delay(EASYTECH_KEEPALIVE_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun stopEasytechKeepalive() {
+        if (easytechKeepaliveJob != null) {
+            Log.i(TAG, "Easytech keepalive: stopping")
+            easytechKeepaliveJob?.cancel()
+            easytechKeepaliveJob = null
+        }
     }
 
     override fun onCleared() {
@@ -288,6 +357,27 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                         Log.w(TAG, "cam clock sync threw: ${it.message}")
                     }
                 }
+
+                // Easytech-only: if the previous session was force-stopped
+                // mid-`exitLive()` (during the mandatory 500ms gap between
+                // `exitrecorder` and `rec=1`), the cam is wedged with no
+                // recording. A raw `rec=1` from a cold session returns
+                // `set fail`, so we re-prime the state machine with an
+                // enter/exit/rec=1 sequence. No-op when the cam reports
+                // REC=1 already — common case, no recording interruption.
+                if (device.protocol ==
+                    com.example.trafykamerasikotlin.data.model.ChipsetProtocol.EEASYTECH
+                ) {
+                    viewModelScope.launch {
+                        runCatching {
+                            com.example.trafykamerasikotlin.data.media.EeasytechLiveRepository()
+                                .ensureRecordingAfterRelaunch(device.protocol.deviceIp)
+                        }.onFailure {
+                            Log.w(TAG, "Easytech recovery threw: ${it.message}")
+                        }
+                    }
+                    startEasytechKeepalive(device.protocol.deviceIp)
+                }
             }
             is HandshakeResult.Failure -> {
                 Log.e(TAG, "Handshake FAILURE: ${result.reason}")
@@ -302,6 +392,7 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
     /** Invoked by [DashcamWifiManager] when the dashcam Wi-Fi disappears unexpectedly. */
     private fun onConnectionLost() {
         Log.w(TAG, "onConnectionLost: dashcam Wi-Fi dropped — clearing bindings")
+        stopEasytechKeepalive()
         DashcamHttpClient.bindToNetwork(null)
         GeneralplusSession.bindToNetwork(null)
         AllwinnerNetwork.bindToNetwork(null)

@@ -80,6 +80,82 @@ class EeasytechLiveRepository {
         }
     }
 
+    /**
+     * Idempotent post-handshake recovery for the cam-stuck-not-recording
+     * state. When a user force-stops the app mid-`exitLive()`, the 500ms
+     * delay between `exitrecorder` and `rec=1` is killed by process death —
+     * cam ends up out of recorder mode without recording resumed. A raw
+     * `rec=1` sent on the next launch returns `{"result":1,"info":"set fail"}`
+     * because the cam's HTTP server only accepts `rec=1` shortly after an
+     * `exitrecorder` transition.
+     *
+     * This re-primes that transition: `enterrecorder` puts the cam back into
+     * recorder-mode, then `exitrecorder` triggers the legit exit (cam goes
+     * back to its idle state-machine slot), then `rec=1` is accepted. Both
+     * 500ms delays mirror the [exitLive] sequencing — without them the cam
+     * returns `set fail` and (per the existing firmware-bug note) can wedge
+     * its HTTP server entirely.
+     *
+     * We probe rec state via `/app/getparamvalue?param=rec` first so a
+     * healthy cam (the common case — most relaunches happen with recording
+     * already on) skips the recovery entirely and avoids a ~1s recording
+     * interruption.
+     */
+    suspend fun ensureRecordingAfterRelaunch(deviceIp: String): Boolean {
+        val recBefore = readRecState(deviceIp)
+        if (recBefore == 1) {
+            Log.d(TAG, "ensureRecording: cam already REC=1, no recovery needed")
+            return true
+        }
+        Log.i(TAG, "ensureRecording: cam REC=$recBefore — running recovery sequence")
+        runCatching {
+            EeasytechCleanupLock.mutex.withLock {
+                val enterOk = DashcamHttpClient.probe("http://$deviceIp:80/app/enterrecorder")
+                Log.d(TAG, "recovery: enterrecorder → $enterOk")
+                kotlinx.coroutines.delay(500)
+                val exitOk = DashcamHttpClient.probe("http://$deviceIp/app/exitrecorder")
+                Log.d(TAG, "recovery: exitrecorder → $exitOk")
+                kotlinx.coroutines.delay(500)
+                // `rec=1` body is unreliable here — on this firmware it can
+                // return `{"result":1,"info":"set fail"}` even after the cam
+                // has resumed recording (because rec is already 1). We send
+                // it anyway as a belt-and-suspenders and rely on the
+                // post-recovery `readRecState` for ground truth.
+                val resumeBody = DashcamHttpClient.get("http://$deviceIp/app/setparamvalue?param=rec&value=1")
+                Log.d(TAG, "recovery: rec=1 body=${resumeBody?.take(120)}")
+                EeasytechCleanupLock.markCompletion()
+            }
+        }.onFailure {
+            Log.w(TAG, "ensureRecording: recovery threw: ${it.message}")
+        }
+        val recAfter = readRecState(deviceIp)
+        val ok = recAfter == 1
+        Log.i(TAG, "ensureRecording: post-recovery REC=$recAfter (ok=$ok)")
+        return ok
+    }
+
+    /**
+     * Reads the cam's current `rec` parameter via
+     * `/app/getparamvalue?param=rec`. Body shape on the firmware that ships
+     * on Trafy Tres Pro is:
+     *
+     *     {"result":0,"info":{"value":0}}    // not recording
+     *     {"result":0,"info":{"value":1}}    // recording
+     *
+     * Returns `1` if recording, `0` if not, `-1` on parse/transport failure
+     * (callers should treat `-1` as "unknown" and run recovery defensively).
+     */
+    private suspend fun readRecState(deviceIp: String): Int {
+        val body = DashcamHttpClient.get("http://$deviceIp/app/getparamvalue?param=rec") ?: return -1
+        return try {
+            val info = JSONObject(body).optJSONObject("info") ?: return -1
+            info.optInt("value", -1)
+        } catch (e: Exception) {
+            Log.w(TAG, "readRecState parse error: ${e.message}")
+            -1
+        }
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────
 
     /**

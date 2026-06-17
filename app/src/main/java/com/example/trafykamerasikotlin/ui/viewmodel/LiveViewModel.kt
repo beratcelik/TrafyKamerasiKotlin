@@ -84,6 +84,21 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val allwinnerLiveRepo =
         com.example.trafykamerasikotlin.data.media.AllwinnerLiveRepository(application)
 
+    /**
+     * Application-scoped supervisor for cam-side cleanup calls (exit live,
+     * resume `rec=1`). Survives activity death so the cam doesn't stay
+     * stuck on its on-screen "continue in app" banner when the user kills
+     * the app from the Live tab. Mirrors the same pattern in
+     * [com.example.trafykamerasikotlin.ui.viewmodel.MediaViewModel] and
+     * [com.example.trafykamerasikotlin.ui.viewmodel.SettingsViewModel] —
+     * fix(easytech) commit 8b16875 added it there but missed the Live VM,
+     * so a kill from Live still left Easytech cams paused until the next
+     * launch happened to land on Home (where `ensureRecording` retries).
+     */
+    private val cleanupScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+    )
+
     private var allwinnerLiveJob: kotlinx.coroutines.Job? = null
 
     private val _uiState = MutableStateFlow<LiveUiState>(LiveUiState.NotConnected)
@@ -301,20 +316,26 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         allwinnerLiveJob?.cancel()
         allwinnerLiveJob = null
         allwinnerLiveRepo.stop()
-        viewModelScope.launch {
-            val ip = device.protocol.deviceIp
-            when (device.protocol) {
-                ChipsetProtocol.ALLWINNER_V853 -> { /* live stream already cancelled above; relay session stays alive */ }
-                ChipsetProtocol.GENERALPLUS    -> gpLiveRepo.exitLive()
-                ChipsetProtocol.EEASYTECH      -> eeasyRepo.exitLive(ip)
-                else -> {
-                    hiDvrRepo.unregisterClient(ip, device.clientIp)
-                    hiDvrRepo.startRecording(ip)
+        // Run cleanup on the process-scoped supervisor (NOT viewModelScope)
+        // so the cam's exitrecorder → 500ms → rec=1 call survives an
+        // activity kill from the Live tab. Bounded by a generous timeout
+        // so a wedged cam can't hold the supervisor forever.
+        cleanupScope.launch {
+            kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+                val ip = device.protocol.deviceIp
+                when (device.protocol) {
+                    ChipsetProtocol.ALLWINNER_V853 -> { /* live stream already cancelled above; relay session stays alive */ }
+                    ChipsetProtocol.GENERALPLUS    -> gpLiveRepo.exitLive()
+                    ChipsetProtocol.EEASYTECH      -> eeasyRepo.exitLive(ip)
+                    else -> {
+                        hiDvrRepo.unregisterClient(ip, device.clientIp)
+                        hiDvrRepo.startRecording(ip)
+                    }
                 }
+                // Unbind AFTER exit calls complete so they still route through dashcam WiFi
+                connectivityManager.bindProcessToNetwork(null)
+                Log.i(TAG, "teardownLive: process unbound from dashcam network")
             }
-            // Unbind AFTER exit calls complete so they still route through dashcam WiFi
-            connectivityManager.bindProcessToNetwork(null)
-            Log.i(TAG, "teardownLive: process unbound from dashcam network")
         }
     }
 

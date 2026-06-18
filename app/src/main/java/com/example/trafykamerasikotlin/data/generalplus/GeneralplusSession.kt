@@ -3,6 +3,8 @@ package com.example.trafykamerasikotlin.data.generalplus
 import android.net.Network
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -126,6 +128,19 @@ object GeneralplusSession {
     private fun nextIdx(): Byte = (cmdIndex.getAndIncrement() and 0xFF).toByte()
 
     /**
+     * Serializes all concurrent calls to [withSession]. The GP cam (CarDV
+     * firmware on Trafy Uno) can only service ONE TCP control session at a
+     * time — opening a second socket while the first is mid-auth causes the
+     * second's AuthDevice to wait until the first session completes, and
+     * the first's auth itself can take 6+ seconds when contended. Net
+     * effect without serialization: a Media-tab open that races with the
+     * post-handshake CamClockSync session times out after 8 s and the
+     * Media UI shows "Could not load media files". Holding this mutex
+     * across the full block keeps each operation's session uncontended.
+     */
+    private val sessionMutex = Mutex()
+
+    /**
      * Opens a GeneralPlus TCP session, authenticates, then runs [block].
      *
      * [block] receives:
@@ -144,7 +159,7 @@ object GeneralplusSession {
             sendPacket: (ByteArray) -> Unit,
             receive   : (expectedCmdId: Byte) -> GeneralplusProtocol.Response?,
         ) -> T,
-    ): T? = withContext(Dispatchers.IO) {
+    ): T? = sessionMutex.withLock { withContext(Dispatchers.IO) {
         // Release any previous held session before opening a new one.
         if (holdOpen) releaseHeldSession()
 
@@ -237,5 +252,5 @@ object GeneralplusSession {
                 Log.d(TAG, "TCP socket closed")
             }
         }
-    }
+    } }
 }

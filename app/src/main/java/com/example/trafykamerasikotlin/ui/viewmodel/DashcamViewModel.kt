@@ -19,6 +19,7 @@ import com.example.trafykamerasikotlin.data.allwinner.AllwinnerNetwork
 import com.example.trafykamerasikotlin.data.allwinner.AllwinnerSessionHolder
 import com.example.trafykamerasikotlin.data.generalplus.GeneralplusSession
 import com.example.trafykamerasikotlin.data.network.DashcamHttpClient
+import com.example.trafykamerasikotlin.data.settings.LastConnectedDevicePreferences
 import com.example.trafykamerasikotlin.data.network.WifiIpProvider
 import com.example.trafykamerasikotlin.data.wifi.DashcamWifiManager
 import kotlinx.coroutines.Job
@@ -342,6 +343,9 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                 val device = result.deviceInfo.copy(ssid = ssid)
                 Log.i(TAG, "Handshake SUCCESS: $device")
                 _uiState.update { DashcamUiState.Connected(device) }
+                // Remember this camera so bug/crash reports can name it later,
+                // even after the phone leaves the dashcam hotspot.
+                LastConnectedDevicePreferences.save(getApplication(), device)
                 wifiManager.startWatchingConnection(network) { onConnectionLost() }
 
                 // Push phone-local clock to the cam RTC. Fire-and-forget —

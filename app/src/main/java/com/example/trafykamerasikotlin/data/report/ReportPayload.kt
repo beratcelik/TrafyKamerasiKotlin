@@ -3,6 +3,7 @@ package com.example.trafykamerasikotlin.data.report
 import android.app.Application
 import android.content.Context
 import android.os.Build
+import com.example.trafykamerasikotlin.data.settings.LastConnectedDevicePreferences
 import com.example.trafykamerasikotlin.data.wifi.DashcamWifiManager
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -26,6 +27,7 @@ object ReportPayload {
     const val MAX_DESCRIPTION_CHARS = 4_000
     private const val MAX_TITLE_CHARS = 200
     private const val MAX_EMAIL_CHARS = 200
+    private const val MAX_DASHCAM_CHARS = 64
 
     /** Automatic crash report — built inside the dying process, queued to disk. */
     fun crash(context: Context, throwable: Throwable, fingerprint: String, logs: String?): JSONObject =
@@ -86,12 +88,32 @@ object ReportPayload {
             put("deviceModel", Build.MODEL ?: "")
             put("deviceBrand", Build.BRAND ?: "")
             put("locale", Locale.getDefault().toLanguageTag())
-            if (includeDashcamModel) currentDashcamSsid(app)?.let { put("dashcamModel", it) }
+            if (includeDashcamModel) putDashcam(app)
             put("occurredAt", iso8601Now())
         }
     }
 
-    /** Connected dashcam SSID doubles as the camera model identifier. */
+    /**
+     * Names the connected/last-known camera. Prefers the persisted record
+     * ([LastConnectedDevicePreferences], written on every handshake) — it
+     * carries the resolved marketing model, chipset and firmware and survives
+     * the phone leaving the dashcam hotspot. Falls back to the live SSID when
+     * no camera has been connected on this install yet.
+     */
+    private fun JSONObject.putDashcam(app: Context) {
+        val model = LastConnectedDevicePreferences.modelName(app)
+        if (model != null) {
+            put("dashcamModel", model.take(MAX_DASHCAM_CHARS))
+            LastConnectedDevicePreferences.chipset(app)
+                ?.let { put("dashcamChipset", it.take(MAX_DASHCAM_CHARS)) }
+            LastConnectedDevicePreferences.firmware(app)
+                ?.let { put("dashcamFirmware", it.take(MAX_DASHCAM_CHARS)) }
+        } else {
+            currentDashcamSsid(app)?.let { put("dashcamModel", it.take(MAX_DASHCAM_CHARS)) }
+        }
+    }
+
+    /** Live SSID — only used before any camera has been connected. */
     private fun currentDashcamSsid(app: Context): String? = runCatching {
         (app as? Application)?.let { DashcamWifiManager(it).getCurrentDashcamSsid() }
     }.getOrNull()

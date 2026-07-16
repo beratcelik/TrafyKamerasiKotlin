@@ -33,8 +33,8 @@ android {
         applicationId = "com.example.trafykamerasikotlin"
         minSdk = 24
         targetSdk = 36
-        versionCode = 11
-        versionName = "1.6.0"
+        versionCode = 12
+        versionName = "1.6.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

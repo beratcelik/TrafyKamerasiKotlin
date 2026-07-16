@@ -96,15 +96,70 @@ class GeneralplusMediaRepository {
             Log.i(TAG, "GetFileCount: $fileCount files")
             if (fileCount == 0) return@withSession Pair(emptyList(), emptyList())
 
-            // 3. GetNameList — all files, starting from index 0
-            sendPacket(GeneralplusProtocol.buildGetNameList(0, type = 0x01, startIdx = 0))
-            val listResp = receive(GeneralplusProtocol.CMD_PLAYBACK_GET_LIST)
-            if (listResp == null || listResp.data.isEmpty()) {
-                Log.e(TAG, "GetNameList failed")
+            // 3. GetNameList — paginate until all `fileCount` files are collected.
+            //    Wire format reverse-engineered from libviigoplus.so
+            //    (C_GetPlaybackNameListCmd ctor + HandleAck): the 3-byte request
+            //    param is [flag(1B)][startIdx(2B LE)], and each ACK payload is
+            //    [count(1B)][entries(13B each)] — the cam returns ≤16 files per
+            //    page and does NOT echo the base index (the client tracks it).
+            //
+            //    CRITICAL: flag=0x01 tells the cam "(re)start from index 0" and it
+            //    IGNORES startIdx; flag=0x00 tells it "return the page at startIdx".
+            //    So the first page is fetched with flag=1 (startIdx forced to 0) and
+            //    every later page with flag=0 + startIdx = files-collected-so-far.
+            //    The old code sent flag=1 on every call, so the cam always replied
+            //    with the same first 16 files — hours of driving surfaced as "only
+            //    ~15 minutes recorded" (bug report #2). Confirmed live on a CarDVR
+            //    cam: 165 files reported, only 16 ever listed.
+            val entries      = mutableListOf<GpFileEntry>()
+            val seenIndices  = HashSet<Int>()
+            var pages        = 0
+            while (entries.size < fileCount) {
+                currentCoroutineContext().ensureActive()
+                // flag=1 for the first page (forces startIdx 0); flag=0 to page the
+                // rest, starting at the number of files already collected.
+                val flag: Byte = if (entries.isEmpty()) 0x01 else 0x00
+                sendPacket(GeneralplusProtocol.buildGetNameList(
+                    0, type = flag, startIdx = entries.size))
+                val listResp = receive(GeneralplusProtocol.CMD_PLAYBACK_GET_LIST)
+                if (listResp == null || listResp.data.isEmpty()) {
+                    Log.w(TAG, "GetNameList: empty response at startIdx=${entries.size} (have ${entries.size}/$fileCount)")
+                    break
+                }
+                val batch = parseNameList(listResp.data)
+                if (batch.isEmpty()) {
+                    Log.i(TAG, "GetNameList: no more entries at startIdx=${entries.size}")
+                    break
+                }
+                // Guard against firmware that ignores startIdx and re-serves the
+                // same page: keep only file indices not yet seen this pass.
+                val fresh = batch.filter { seenIndices.add(it.fileIndex) }
+                if (fresh.isEmpty()) {
+                    Log.w(TAG, "GetNameList: page added no new files — stopping pagination")
+                    break
+                }
+                entries += fresh
+                if (++pages > 1024) {    // safety cap ≫ any real SD card; bounds the loop if counts are misreported
+                    Log.w(TAG, "GetNameList: pagination cap hit at ${entries.size} entries")
+                    break
+                }
+            }
+            Log.i(TAG, "GetNameList: ${entries.size} entries (fileCount=$fileCount, pages=$pages)")
+            if (entries.isEmpty()) {
+                Log.e(TAG, "GetNameList failed — no entries")
                 return@withSession null
             }
-            val entries = parseNameList(listResp.data)
-            Log.i(TAG, "GetNameList: ${entries.size} entries")
+
+            // Newest recording first so the most recent footage is at the top of
+            // the Media grid even when the card holds hundreds of clips; ties
+            // (same second) fall back to the higher file index.
+            entries.sortWith(
+                compareByDescending<GpFileEntry> { entry ->
+                    // Pack the recording timestamp into one comparable long (YYYYMMDDhhmmss).
+                    (((((entry.year * 100L + entry.month) * 100 + entry.day) * 100 +
+                        entry.hour) * 100 + entry.min) * 100 + entry.sec)
+                }.thenByDescending { it.fileIndex }
+            )
 
             // 4. Build MediaFile objects, fetching thumbnails
             thumbCacheDir.mkdirs()

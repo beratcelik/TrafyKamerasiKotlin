@@ -237,8 +237,14 @@ object GeneralplusProtocol {
     /**
      * Builds a 15-byte GetNameList command.
      * mode=MODE_PLAYBACK, cmdId=CMD_PLAYBACK_GET_LIST.
-     * Confirmed from PCAP: param=010000 (type=0x01, startIdx=0x0000).
-     * type=0x01 returns all files; startIdx is 0-based first file to return.
+     *
+     * The 3-byte param is [type/flag(1B)][startIdx(2B LE)], reverse-engineered
+     * from `C_GetPlaybackNameListCmd` in libviigoplus.so:
+     *   • type=0x01 → cam (re)starts from index 0 and IGNORES startIdx
+     *                 (first page; matches the PCAP param `01 00 00`).
+     *   • type=0x00 → cam returns the page beginning at startIdx.
+     * Each ACK payload is [count(1B)][entries(13B each)] and holds ≤16 files,
+     * so reading the whole card requires paging with type=0x00 + startIdx.
      */
     fun buildGetNameList(cmdIdx: Byte, type: Byte = 0x01, startIdx: Int = 0): ByteArray {
         val buf = ByteArray(CMD_MIN_SIZE + 3)

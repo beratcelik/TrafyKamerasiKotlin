@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.ShoppingBag
+import androidx.compose.material.icons.filled.SupportAgent
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -38,6 +39,7 @@ import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorDivider
 import com.example.trafykamerasikotlin.ui.theme.ColorIconBgBlue
 import com.example.trafykamerasikotlin.ui.theme.ColorIconBgGreen
+import com.example.trafykamerasikotlin.ui.theme.ColorIconBgOrange
 import com.example.trafykamerasikotlin.ui.theme.ColorPrimary
 import com.example.trafykamerasikotlin.ui.theme.ColorSurface
 import com.example.trafykamerasikotlin.ui.theme.ColorTextPrimary
@@ -47,6 +49,7 @@ import com.example.trafykamerasikotlin.ui.theme.ColorTextSecondary
 fun MoreScreen(
     onShopClick: () -> Unit,
     onCommunityClick: () -> Unit,
+    onFeedbackClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -87,6 +90,18 @@ fun MoreScreen(
                     title       = stringResource(R.string.more_community_title),
                     description = stringResource(R.string.more_community_desc),
                     onClick     = onCommunityClick
+                )
+                HorizontalDivider(
+                    color     = ColorDivider,
+                    thickness = 0.5.dp,
+                    modifier  = Modifier.padding(start = 68.dp)
+                )
+                MoreListItem(
+                    icon        = Icons.Filled.SupportAgent,
+                    iconBgColor = ColorIconBgOrange,
+                    title       = stringResource(R.string.more_feedback_title),
+                    description = stringResource(R.string.more_feedback_desc),
+                    onClick     = onFeedbackClick
                 )
             }
         }

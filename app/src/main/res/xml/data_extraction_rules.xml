@@ -5,15 +5,11 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <!-- Pending crash/feedback reports contain log excerpts — keep them
+             device-local, never in cloud backups or device transfers. -->
+        <exclude domain="file" path="pending_reports" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="file" path="pending_reports" />
     </device-transfer>
-    -->
 </data-extraction-rules>

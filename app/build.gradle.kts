@@ -33,8 +33,8 @@ android {
         applicationId = "com.example.trafykamerasikotlin"
         minSdk = 24
         targetSdk = 36
-        versionCode = 10
-        versionName = "1.5.2"
+        versionCode = 11
+        versionName = "1.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -59,6 +59,9 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
+            // Crash reporting relies on plain-text stack traces (fingerprints
+            // hash class.method names). If minify is ever enabled, either keep
+            // mapping.txt for every release or add -dontobfuscate.
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

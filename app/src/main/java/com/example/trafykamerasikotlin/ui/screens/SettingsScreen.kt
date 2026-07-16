@@ -2,6 +2,8 @@ package com.example.trafykamerasikotlin.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -66,6 +68,7 @@ import com.example.trafykamerasikotlin.R
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
 import com.example.trafykamerasikotlin.data.model.SettingItem
 import com.example.trafykamerasikotlin.data.model.SettingOption
+import com.example.trafykamerasikotlin.data.settings.rememberCrashReportingPreference
 import com.example.trafykamerasikotlin.data.settings.rememberGpsLoggingPreference
 import com.example.trafykamerasikotlin.ui.theme.ColorBackground
 import com.example.trafykamerasikotlin.ui.theme.ColorDestructive
@@ -89,6 +92,7 @@ fun SettingsScreen(
     onVisionDebugLive: () -> Unit = {},
     onVideoAiProcessing: () -> Unit = {},
     onCheckUpdates: () -> Unit = {},
+    onReportProblem: () -> Unit = {},
     appVersionName: String = "",
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = viewModel(),
@@ -125,6 +129,7 @@ fun SettingsScreen(
         when (val state = uiState) {
             is SettingsUiState.NotConnected -> NotConnectedContent(
                 onCheckUpdates      = onCheckUpdates,
+                onReportProblem     = onReportProblem,
                 onVisionDebug       = onVisionDebug,
                 onVisionDebugLive   = onVisionDebugLive,
                 onVideoAiProcessing = onVideoAiProcessing,
@@ -145,6 +150,7 @@ fun SettingsScreen(
                 onVisionDebugLive   = onVisionDebugLive,
                 onVideoAiProcessing = onVideoAiProcessing,
                 onCheckUpdates      = onCheckUpdates,
+                onReportProblem     = onReportProblem,
                 appVersionName      = appVersionName,
                 currentDevice       = device,
             )
@@ -161,6 +167,7 @@ fun SettingsScreen(
                 onVisionDebugLive   = onVisionDebugLive,
                 onVideoAiProcessing = onVideoAiProcessing,
                 onCheckUpdates      = onCheckUpdates,
+                onReportProblem     = onReportProblem,
                 appVersionName      = appVersionName,
                 currentDevice       = device,
             )
@@ -235,6 +242,7 @@ fun SettingsScreen(
 @Composable
 private fun NotConnectedContent(
     onCheckUpdates: () -> Unit,
+    onReportProblem: () -> Unit,
     onVisionDebug: () -> Unit,
     onVisionDebugLive: () -> Unit,
     onVideoAiProcessing: () -> Unit,
@@ -245,6 +253,11 @@ private fun NotConnectedContent(
         contentAlignment = Alignment.Center
     ) {
         Column(
+            // Scrollable: with the update/report links, dev entries and the
+            // GPS + crash toggles this column overflows small screens.
+            modifier            = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -281,6 +294,12 @@ private fun NotConnectedContent(
                     color = ColorTextSecondary,
                 )
             }
+            TextButton(onClick = onReportProblem) {
+                Text(
+                    text  = stringResource(R.string.settings_report_problem),
+                    color = ColorPrimary,
+                )
+            }
             if (BuildConfig.DEBUG) {
                 TextButton(onClick = onVisionDebug) {
                     Text(
@@ -303,6 +322,15 @@ private fun NotConnectedContent(
                         color = ColorTextSecondary,
                     )
                 }
+                // Crash-pipeline test hook: throws on the main thread so the
+                // CrashHandler → pending_reports flow can be exercised end-to-end.
+                TextButton(onClick = { throw RuntimeException("Force crash (debug test)") }) {
+                    Text(
+                        text  = stringResource(R.string.settings_force_crash),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ColorTextSecondary,
+                    )
+                }
             }
             // GPS logging — phone-side, not cam-specific, so it's visible
             // even when no cam is connected. fillMaxWidth ensures the Card
@@ -313,8 +341,10 @@ private fun NotConnectedContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 GpsLoggingRow()
+                CrashReportingRow()
             }
         }
     }
@@ -393,6 +423,69 @@ private fun GpsLoggingRow() {
     }
 }
 
+/**
+ * Crash-report toggle (default ON, opt-out), same inline-Card shape as
+ * [GpsLoggingRow]. Crashes are queued to `filesDir/pending_reports/` by
+ * `CrashHandler` and uploaded on the next launch with internet — the
+ * description makes clear that no location data is ever included.
+ */
+@Composable
+private fun CrashReportingRow() {
+    val (enabled, setEnabled) = rememberCrashReportingPreference()
+    Column {
+        Text(
+            text     = stringResource(R.string.settings_section_diagnostics),
+            style    = MaterialTheme.typography.labelLarge,
+            color    = ColorTextSecondary,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
+        )
+        Card(
+            shape     = RoundedCornerShape(16.dp),
+            colors    = CardDefaults.cardColors(containerColor = ColorSurface),
+            elevation = CardDefaults.cardElevation(0.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp),
+                ) {
+                    Text(
+                        text  = stringResource(R.string.settings_crash_reporting_title),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = ColorTextPrimary,
+                    )
+                    Text(
+                        text     = stringResource(R.string.settings_crash_reporting_description),
+                        style    = MaterialTheme.typography.bodySmall,
+                        color    = ColorTextSecondary,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                Switch(
+                    checked         = enabled,
+                    onCheckedChange = setEnabled,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor     = ColorPrimary,
+                        checkedTrackColor     = ColorPrimary.copy(alpha = 0.4f),
+                        uncheckedThumbColor   = ColorTextSecondary,
+                        // Same off-state tuning as [GpsLoggingRow] so the two
+                        // toggles read as one family.
+                        uncheckedTrackColor   = ColorDivider,
+                        uncheckedBorderColor  = androidx.compose.ui.graphics.Color.Transparent,
+                    ),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun LoadingContent() {
     Box(
@@ -461,6 +554,7 @@ private fun SettingsList(
     onVisionDebugLive: () -> Unit,
     onVideoAiProcessing: () -> Unit,
     onCheckUpdates: () -> Unit,
+    onReportProblem: () -> Unit,
     appVersionName: String,
     currentDevice: com.example.trafykamerasikotlin.data.model.DeviceInfo? = null,
 ) {
@@ -494,12 +588,25 @@ private fun SettingsList(
             // Phone-side GPS toggle — same Card styling as [SettingsCard] so
             // it reads as the trailing row of the main settings grouping.
             item { GpsLoggingRow() }
+            // Crash-report opt-out — phone-side too, same treatment.
+            item { CrashReportingRow() }
             item {
                 AppUpdateCard(
                     versionName    = appVersionName,
                     onCheckUpdates = onCheckUpdates,
                     enabled        = !applying,
                 )
+            }
+            item {
+                TextButton(
+                    onClick  = onReportProblem,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text  = stringResource(R.string.settings_report_problem),
+                        color = ColorPrimary
+                    )
+                }
             }
             item {
                 TextButton(
@@ -545,6 +652,19 @@ private fun SettingsList(
                     ) {
                         Text(
                             text  = stringResource(R.string.video_ai_entry),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ColorTextSecondary
+                        )
+                    }
+                }
+                item {
+                    // Crash-pipeline test hook — see NotConnectedContent's twin.
+                    TextButton(
+                        onClick  = { throw RuntimeException("Force crash (debug test)") },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text  = stringResource(R.string.settings_force_crash),
                             style = MaterialTheme.typography.bodySmall,
                             color = ColorTextSecondary
                         )

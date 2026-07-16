@@ -13,12 +13,16 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -33,6 +37,7 @@ import com.example.trafykamerasikotlin.ui.screens.HomeScreen
 import com.example.trafykamerasikotlin.ui.screens.LiveScreen
 import com.example.trafykamerasikotlin.ui.screens.MediaScreen
 import com.example.trafykamerasikotlin.ui.screens.MoreScreen
+import com.example.trafykamerasikotlin.ui.screens.ReportScreen
 import com.example.trafykamerasikotlin.ui.screens.SettingsScreen
 import com.example.trafykamerasikotlin.ui.screens.ShopScreen
 import com.example.trafykamerasikotlin.ui.screens.VideoAiProcessingScreen
@@ -49,10 +54,12 @@ import com.example.trafykamerasikotlin.ui.viewmodel.DashcamUiState
 import com.example.trafykamerasikotlin.ui.viewmodel.DashcamViewModel
 import com.example.trafykamerasikotlin.ui.viewmodel.LiveViewModel
 import com.example.trafykamerasikotlin.ui.viewmodel.MediaViewModel
+import com.example.trafykamerasikotlin.ui.viewmodel.ReportViewModel
 import com.example.trafykamerasikotlin.ui.viewmodel.UpdateViewModel
 
 private const val ROUTE_SHOP         = "shop"
 private const val ROUTE_COMMUNITY    = "community"
+private const val ROUTE_REPORT       = "report"
 private const val ROUTE_RAW_SETTINGS = "raw_settings"
 private const val ROUTE_VISION_DEBUG      = "vision_debug"
 private const val ROUTE_VISION_DEBUG_LIVE = "vision_debug_live"
@@ -67,6 +74,7 @@ fun AppNavigation() {
     val mediaViewModel: MediaViewModel     = viewModel()
     val liveViewModel: LiveViewModel       = viewModel()
     val updateViewModel: UpdateViewModel   = viewModel()
+    val reportViewModel: ReportViewModel   = viewModel()
     val uiState by dashcamViewModel.uiState.collectAsStateWithLifecycle()
     val connectedDevice = (uiState as? DashcamUiState.Connected)?.device
     val connectedNetwork by dashcamViewModel.connectedNetwork.collectAsStateWithLifecycle()
@@ -76,6 +84,21 @@ fun AppNavigation() {
     // Silent check at app launch; surfaces a dialog only when an update is actually available.
     LaunchedEffect(Unit) {
         updateViewModel.autoCheckOnStartup()
+        // Uploads last session's queued reports (crashes, offline feedback).
+        // No-op when the queue is empty; debounced inside the repository.
+        reportViewModel.flushOnStartup()
+    }
+
+    // Retry queued reports whenever the app returns to the foreground —
+    // covers "internet came back mid-session" without waiting for the next
+    // launch. Cheap: empty-queue short-circuit + 15-min debounce in the repo.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) reportViewModel.flushOnStartup()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val navController = rememberNavController()
@@ -180,6 +203,7 @@ fun AppNavigation() {
                     onVisionDebugLive   = { navController.navigate(ROUTE_VISION_DEBUG_LIVE) },
                     onVideoAiProcessing = { navController.navigate(ROUTE_VIDEO_AI) },
                     onCheckUpdates      = { updateViewModel.manualCheck() },
+                    onReportProblem     = { navController.navigate(ROUTE_REPORT) },
                     appVersionName      = updateViewModel.installedVersionName,
                 )
             }
@@ -198,7 +222,8 @@ fun AppNavigation() {
             composable(BottomNavItem.More.route) {
                 MoreScreen(
                     onShopClick      = { navController.navigate(ROUTE_SHOP) },
-                    onCommunityClick = { navController.navigate(ROUTE_COMMUNITY) }
+                    onCommunityClick = { navController.navigate(ROUTE_COMMUNITY) },
+                    onFeedbackClick  = { navController.navigate(ROUTE_REPORT) }
                 )
             }
             composable(ROUTE_SHOP) {
@@ -206,6 +231,14 @@ fun AppNavigation() {
             }
             composable(ROUTE_COMMUNITY) {
                 CommunityScreen(onBack = { navController.popBackStack() })
+            }
+            composable(ROUTE_REPORT) {
+                // Activity-scoped ViewModel (not the NavBackStackEntry default)
+                // so it's the same instance flushOnStartup() ran on.
+                ReportScreen(
+                    onBack    = { navController.popBackStack() },
+                    viewModel = reportViewModel,
+                )
             }
         }
 

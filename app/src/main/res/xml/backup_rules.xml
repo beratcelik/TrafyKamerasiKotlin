@@ -10,4 +10,7 @@
    <include domain="sharedpref" path="."/>
    <exclude domain="sharedpref" path="device.xml"/>
 -->
+    <!-- Pending crash/feedback reports contain log excerpts — keep them
+         device-local, never in cloud backups. -->
+    <exclude domain="file" path="pending_reports" />
 </full-backup-content>

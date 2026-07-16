@@ -151,6 +151,38 @@
     <string name="more_shop_desc">Araç kameraları, SD kartlar ve aksesuarlar</string>
     <string name="more_community_title">Topluluk</string>
     <string name="more_community_desc">Instagram, Telegram ve WhatsApp</string>
+    <string name="more_feedback_title">Yardım &amp; Geri Bildirim</string>
+    <string name="more_feedback_desc">Sorun bildirin veya öneri gönderin</string>
+
+    <!-- Geri bildirim / hata bildirimi -->
+    <string name="report_title">Yardım &amp; Geri Bildirim</string>
+    <string name="report_type_label">Konu</string>
+    <string name="report_type_bug">Hata</string>
+    <string name="report_type_improvement">İyileştirme</string>
+    <string name="report_type_suggestion">Öneri</string>
+    <string name="report_type_other">Diğer</string>
+    <string name="report_description_label">Açıklama</string>
+    <string name="report_description_placeholder">Sorunu veya fikrinizi anlatın…</string>
+    <string name="report_email_label">E-posta (isteğe bağlı)</string>
+    <string name="report_email_hint">Yalnızca bu bildirimle ilgili size dönüş yapmak için kullanılır.</string>
+    <string name="report_email_invalid">Geçerli bir e-posta adresi girin veya alanı boş bırakın.</string>
+    <string name="report_include_diagnostics">Tanılama bilgilerini ekle</string>
+    <string name="report_diagnostics_caption">Cihaz modeli, Android ve uygulama sürümü ile kısa bir uygulama günlüğü kesiti gönderilir. Konum/GPS verisi asla gönderilmez.</string>
+    <string name="report_submit">Gönder</string>
+    <string name="report_sending">Gönderiliyor…</string>
+    <string name="report_sent_title">Teşekkürler!</string>
+    <string name="report_sent_body">Geri bildiriminiz bize ulaştı.</string>
+    <string name="report_queued_title">Kaydedildi</string>
+    <string name="report_queued_body">Kaydedildi — internet bağlantısı olduğunda otomatik gönderilecek.</string>
+    <string name="report_error_title">Gönderilemedi</string>
+    <string name="report_error_body">Bildirim sunucu tarafından kabul edilmedi. Açıklamayı kontrol edip tekrar deneyin.</string>
+
+    <!-- Tanılama / hata raporları -->
+    <string name="settings_section_diagnostics">Tanılama</string>
+    <string name="settings_crash_reporting_title">Hata raporları</string>
+    <string name="settings_crash_reporting_description">Uygulama çökerse bir sonraki açılışta Trafy\'ye anonim bir hata raporu gönderilir. Konum verisi asla içermez.</string>
+    <string name="settings_report_problem">Sorun Bildir</string>
+    <string name="settings_force_crash">Çökme Testi (dev)</string>
 
     <!-- HiDVR cihaz ayarları — prototip çevirileri. Burada tanımlı anahtarlar
          HiDvrTranslations.kt içindeki sabit İngilizce haritaya üstün gelir. -->

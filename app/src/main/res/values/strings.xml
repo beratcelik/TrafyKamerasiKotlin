@@ -151,6 +151,38 @@
     <string name="more_shop_desc">Dashcams, SD cards &amp; accessories</string>
     <string name="more_community_title">Community</string>
     <string name="more_community_desc">Instagram, Telegram &amp; WhatsApp</string>
+    <string name="more_feedback_title">Help &amp; Feedback</string>
+    <string name="more_feedback_desc">Report a problem or send a suggestion</string>
+
+    <!-- Feedback / bug report -->
+    <string name="report_title">Help &amp; Feedback</string>
+    <string name="report_type_label">Topic</string>
+    <string name="report_type_bug">Bug</string>
+    <string name="report_type_improvement">Improvement</string>
+    <string name="report_type_suggestion">Suggestion</string>
+    <string name="report_type_other">Other</string>
+    <string name="report_description_label">Description</string>
+    <string name="report_description_placeholder">Describe the problem or your idea…</string>
+    <string name="report_email_label">Email (optional)</string>
+    <string name="report_email_hint">Only used to get back to you about this report.</string>
+    <string name="report_email_invalid">Please enter a valid e-mail address, or leave the field empty.</string>
+    <string name="report_include_diagnostics">Include diagnostics</string>
+    <string name="report_diagnostics_caption">Sends your device model, Android and app version, and a short app log excerpt. Location/GPS data is never sent.</string>
+    <string name="report_submit">Send</string>
+    <string name="report_sending">Sending…</string>
+    <string name="report_sent_title">Thank you!</string>
+    <string name="report_sent_body">Your feedback has been received.</string>
+    <string name="report_queued_title">Saved</string>
+    <string name="report_queued_body">Saved — it will be sent automatically when an internet connection is available.</string>
+    <string name="report_error_title">Could not send</string>
+    <string name="report_error_body">The report was rejected by the server. Please check the description and try again.</string>
+
+    <!-- Diagnostics / crash reports -->
+    <string name="settings_section_diagnostics">Diagnostics</string>
+    <string name="settings_crash_reporting_title">Crash reports</string>
+    <string name="settings_crash_reporting_description">If the app crashes, an anonymous error report is sent to Trafy on the next launch. Never includes location data.</string>
+    <string name="settings_report_problem">Report a Problem</string>
+    <string name="settings_force_crash">Force Crash (dev)</string>
 
     <!-- HiDVR device settings — prototype translations. Entries here take precedence
          over the hardcoded English map in HiDvrTranslations.kt. Extend by adding a

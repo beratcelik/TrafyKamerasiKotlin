@@ -321,6 +321,13 @@
     <string name="eeasy_opt_front">Front</string>
     <string name="eeasy_opt_back">Back</string>
 
+    <!-- MStar / Hime3 (Trafy Tres) settings -->
+    <string name="mstar_title_parking_monitor">Parking Monitor Sensitivity</string>
+    <string name="mstar_title_timelapse">Time-lapse Recording</string>
+    <string name="mstar_title_flip_mirror">Mirror &amp; Flip</string>
+    <string name="mstar_title_in_flip">In-Car Image Mirroring</string>
+    <string name="mstar_desc_fuse_box">Only works when the camera is hardwired to the fuse box (parking power).</string>
+
     <!-- Phone GPS log -->
     <string name="settings_section_gps">Location</string>
     <string name="settings_gps_log_title">Phone GPS log</string>

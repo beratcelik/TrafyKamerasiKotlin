@@ -13,6 +13,7 @@ import com.example.trafykamerasikotlin.data.settings.AllwinnerSettingsRepository
 import com.example.trafykamerasikotlin.data.settings.EeasytechSettingsRepository
 import com.example.trafykamerasikotlin.data.settings.GeneralplusSettingsRepository
 import com.example.trafykamerasikotlin.data.settings.HiDvrSettingsRepository
+import com.example.trafykamerasikotlin.data.settings.MstarSettingsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -89,6 +90,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private var loadedForDevice: DeviceInfo? = null
     private var eeasyRepo: EeasytechSettingsRepository? = null
     private var hiDvrRepo: HiDvrSettingsRepository? = null
+    private var mstarRepo: MstarSettingsRepository? = null
     private var generalplusRepo: GeneralplusSettingsRepository? = null
     private var allwinnerRepo: AllwinnerSettingsRepository? = null
 
@@ -199,6 +201,27 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         }
                     }
                 }
+                ChipsetProtocol.MSTAR -> {
+                    _uiState.update { SettingsUiState.Loaded(current) }
+                    if (key == "getdeviceattr.cgi?") {
+                        // "About Camera": MStar exposes model/firmware via the
+                        // Camera.Menu.DevInfo.* fields, not HiDvr's var-pair body.
+                        val info = getMstarRepo().fetchDeviceInfo(device.protocol.deviceIp)
+                        _actionFeedback.update {
+                            SettingsActionFeedback.AboutCamera(formatAboutCameraMstar(info, device))
+                        }
+                    } else {
+                        val result = getMstarRepo().executeAction(device.protocol.deviceIp, key)
+                        _actionFeedback.update {
+                            when {
+                                result == null      -> SettingsActionFeedback.GenericFail
+                                key == "format"     -> SettingsActionFeedback.FormatOk
+                                key == "reset.cgi?" -> SettingsActionFeedback.ResetOk
+                                else                -> SettingsActionFeedback.GenericOk
+                            }
+                        }
+                    }
+                }
                 else -> {
                     val result = getHiDvrRepo().executeAction(device.protocol.deviceIp, key)
                     _uiState.update { SettingsUiState.Loaded(current) }
@@ -251,6 +274,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     val ssid = device.ssid.orEmpty()
                     _wifiDialog.update { WifiDialogState.Loaded(ssid, "") }
                 }
+                ChipsetProtocol.MSTAR -> {
+                    // MStar Config.cgi has no get-wifi endpoint either — SSID and
+                    // password are only written (together). Seed with the current
+                    // SSID and a blank password for the user to fill in.
+                    val ssid = device.ssid.orEmpty()
+                    _wifiDialog.update { WifiDialogState.Loaded(ssid, "") }
+                }
                 else -> {
                     val settings = getHiDvrRepo().getWifiSettings(device.protocol.deviceIp)
                     _wifiDialog.update {
@@ -275,6 +305,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     getAllwinnerRepo().setWifiAp(device.protocol.deviceIp, ssid, newPassword)
                 ChipsetProtocol.EEASYTECH ->
                     getEeasyRepo().setWifiPassword(device.protocol.deviceIp, ssid, newPassword)
+                ChipsetProtocol.MSTAR ->
+                    getMstarRepo().setWifi(device.protocol.deviceIp, ssid, newPassword)
                 else ->
                     getHiDvrRepo().setWifiPassword(device.protocol.deviceIp, ssid, newPassword)
             }
@@ -363,6 +395,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             ChipsetProtocol.EEASYTECH      -> getEeasyRepo().fetchAll(device.protocol.deviceIp)
             ChipsetProtocol.GENERALPLUS    -> getGeneralplusRepo().fetchAll(device.protocol.deviceIp)
             ChipsetProtocol.ALLWINNER_V853 -> getAllwinnerRepo().fetchAll(device.protocol.deviceIp)
+            ChipsetProtocol.MSTAR          -> getMstarRepo().fetchAll(device.protocol.deviceIp)
             else                           -> getHiDvrRepo().fetchAll(device.protocol.deviceIp)
         }
 
@@ -420,6 +453,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             ChipsetProtocol.EEASYTECH      -> getEeasyRepo().applySetting(device.protocol.deviceIp, key, value)
             ChipsetProtocol.GENERALPLUS    -> getGeneralplusRepo().applySetting(device.protocol.deviceIp, key, value)
             ChipsetProtocol.ALLWINNER_V853 -> getAllwinnerRepo().applySetting(device.protocol.deviceIp, key, value)
+            ChipsetProtocol.MSTAR          -> getMstarRepo().applySetting(device.protocol.deviceIp, key, value)
             else                           -> getHiDvrRepo().applySetting(device.protocol.deviceIp, key, value)
         }
 
@@ -444,6 +478,25 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         return listOf(modelLine, softLine, rtcLine).joinToString("\n")
     }
 
+    /**
+     * "About Camera" summary for MStar devices. Model comes from
+     * `Camera.Menu.DevInfo.model` (e.g. HY_3SENSOR_PARK_GPS) mapped to the Trafy
+     * product name; firmware from `Camera.Menu.DevInfo.ver`. MStar DevInfo has
+     * no RTC field, so no clock line (unlike the HiDvr summary).
+     */
+    private fun formatAboutCameraMstar(
+        info: MstarSettingsRepository.DeviceInfoSummary,
+        device: DeviceInfo,
+    ): String {
+        val ctx = getApplication<Application>()
+        val unknown = ctx.getString(R.string.about_cam_unknown)
+        val modelLine = ctx.getString(R.string.about_cam_label_model) + ": " +
+            TrafyModelIdentifier.displayName(device, info.model ?: unknown)
+        val softLine = ctx.getString(R.string.about_cam_label_software) + ": " +
+            (info.softwareVersion ?: unknown)
+        return listOf(modelLine, softLine).joinToString("\n")
+    }
+
     private fun parseVarPairs(body: String): Map<String, String> {
         val regex = Regex("""var\s+(\w+)="([^"]*)";""")
         return regex.findAll(body).associate { it.groupValues[1] to it.groupValues[2] }
@@ -454,6 +507,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private fun getHiDvrRepo(): HiDvrSettingsRepository =
         hiDvrRepo ?: HiDvrSettingsRepository(getApplication()).also { hiDvrRepo = it }
+
+    private fun getMstarRepo(): MstarSettingsRepository =
+        mstarRepo ?: MstarSettingsRepository(getApplication()).also { mstarRepo = it }
 
     private fun getGeneralplusRepo(): GeneralplusSettingsRepository =
         generalplusRepo ?: GeneralplusSettingsRepository(getApplication()).also { generalplusRepo = it }

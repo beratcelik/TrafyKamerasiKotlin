@@ -51,6 +51,11 @@ object TrafyModelIdentifier {
         // The capability bitmask also differs from Dos Pro (30100110020 vs
         // 001001100), but SSID prefix is the simpler primary signal.
         Triple(ChipsetProtocol.EEASYTECH, "DVR-",    "Trafy Tres Pro"),
+        // Trafy Tres — confirmed SSID "Hime3Dvr_FE1A72" on MSTAR chipset
+        // (Hime3 / HUIYING OEM, model HY_3SENSOR_PARK_GPS: a 3-sensor
+        // front+inside+rear cam). The MStar handshake never returns a model
+        // over HTTP, so the SSID prefix is the only product signal we have.
+        Triple(ChipsetProtocol.MSTAR,     "Hime3Dvr_", "Trafy Tres"),
     )
 
     /**

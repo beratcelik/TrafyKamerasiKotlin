@@ -320,6 +320,13 @@
     <string name="eeasy_opt_front">Ön</string>
     <string name="eeasy_opt_back">Arka</string>
 
+    <!-- MStar / Hime3 (Trafy Tres) ayarları -->
+    <string name="mstar_title_parking_monitor">Park İzleme Hassasiyeti</string>
+    <string name="mstar_title_timelapse">Hızlandırılmış Kayıt</string>
+    <string name="mstar_title_flip_mirror">Ayna ve Çevirme</string>
+    <string name="mstar_title_in_flip">Araç İçi Görüntü Yansıtma</string>
+    <string name="mstar_desc_fuse_box">Yalnızca kamera sigorta kutusuna bağlıyken (kesintisiz güç) çalışır.</string>
+
     <!-- Telefon GPS kaydı -->
     <string name="settings_section_gps">Konum</string>
     <string name="settings_gps_log_title">Telefon GPS kaydı</string>

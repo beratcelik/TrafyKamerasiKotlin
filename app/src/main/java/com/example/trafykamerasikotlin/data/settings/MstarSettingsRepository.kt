@@ -187,14 +187,22 @@ class MstarSettingsRepository(private val context: Context) {
 
     /**
      * Sets SSID and password in one request (both are required together; the
-     * firmware has no separate get/set-wifi endpoint). The cam restarts its AP
-     * after this, so the phone briefly drops the dashcam Wi-Fi — expected.
+     * firmware has no separate get/set-wifi endpoint).
+     *
+     * The cam applies the new credentials and IMMEDIATELY restarts its AP,
+     * which aborts this very HTTP connection before any response comes back —
+     * a `SocketException: Software caused connection abort`, not a real failure.
+     * [DashcamHttpClient.probeExpectingReset] treats that mid-response abort as
+     * success (the request reached the cam) while still reporting failure when
+     * the cam was never reachable, so a genuine no-op doesn't masquerade as a
+     * saved password. Without this the write always looked "failed" ("Wi-Fi
+     * ayarları yüklenemedi") even though the change took effect.
      */
     suspend fun setWifi(deviceIp: String, ssid: String, password: String): Boolean {
         val url = "http://$deviceIp$CGI?action=set&property=Net.WIFI_AP.SSID&value=$ssid" +
             "&property=Net.WIFI_AP.CryptoKey&value=$password"
         Log.i(TAG, "setWifi ssid=$ssid")
-        val ok = DashcamHttpClient.probe(url)
+        val ok = DashcamHttpClient.probeExpectingReset(url)
         Log.i(TAG, "setWifi → success=$ok")
         return ok
     }

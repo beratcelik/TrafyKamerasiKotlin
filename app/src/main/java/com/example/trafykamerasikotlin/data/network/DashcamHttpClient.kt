@@ -112,6 +112,44 @@ object DashcamHttpClient {
     }
 
     /**
+     * A probe for a request that intentionally tears down its own connection
+     * on success — e.g. changing the Wi-Fi AP credentials makes the cam restart
+     * the AP before it can answer, so the socket is aborted mid-response.
+     *
+     * Returns true if we either got a real response OR the connection was
+     * established and then aborted/reset mid-flight (the request reached the
+     * cam and it acted on it — the AP restart is the *expected* success signal).
+     * Returns false only when we never reached the cam at all (connect refused,
+     * timeout, or the bound network has already vanished — i.e. EPERM binding),
+     * so a genuinely lost request still surfaces as a failure.
+     */
+    suspend fun probeExpectingReset(url: String): Boolean = withContext(Dispatchers.IO) {
+        Log.d(TAG, "PROBE(reset-expected) $url")
+        try {
+            val request = Request.Builder().url(url).build()
+            client.newCall(request).execute().use { response ->
+                Log.d(TAG, "  → HTTP ${response.code} (answered before reset)")
+                true
+            }
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (e: Exception) {
+            val msg = (e.message ?: "").lowercase()
+            // Connection was up and then torn down while sending/reading the
+            // response → the cam got the request and restarted its AP.
+            val abortedAfterSend = e is java.net.SocketException &&
+                (msg.contains("abort") || msg.contains("reset") ||
+                    msg.contains("broken pipe") || msg.contains("epipe"))
+            Log.i(
+                TAG,
+                "  → ${e.javaClass.simpleName}: ${e.message} → " +
+                    if (abortedAfterSend) "SUCCESS (AP restarted mid-response)" else "FAILURE (never reached cam)"
+            )
+            abortedAfterSend
+        }
+    }
+
+    /**
      * Opens a streaming GET for a file download.
      * Caller is responsible for closing the returned ResponseBody.
      * Returns null on failure.

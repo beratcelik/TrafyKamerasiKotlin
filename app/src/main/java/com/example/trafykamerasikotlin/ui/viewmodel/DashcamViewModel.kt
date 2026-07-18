@@ -76,6 +76,13 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         // appears to be the endpoint the AP watchdog actually listens for.
         // We mirror the OEM pattern exactly.
         private const val EASYTECH_KEEPALIVE_INTERVAL_MS = 5_000L
+
+        // MStar / Hime3 (Trafy Tres) sleeps its Wi-Fi AP shortly after the last
+        // client request — with no app talking to it the hotspot disappears
+        // from scans entirely. The OEM Waycam app keeps it awake by POSTing
+        // `Config.cgi?action=set&property=Heartbeat` on a timer
+        // (WaycamHeartbeatManager). We mirror that; 5s matches the Easytech tick.
+        private const val MSTAR_KEEPALIVE_INTERVAL_MS = 5_000L
     }
 
     private val manager = DashcamHandshakeManager(
@@ -243,6 +250,7 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         Log.i(TAG, "disconnect() called")
         ensuredRecordingForCurrentSession = false
         stopEasytechKeepalive()
+        stopMstarKeepalive()
         wifiManager.release()
         DashcamHttpClient.bindToNetwork(null)
         GeneralplusSession.bindToNetwork(null)
@@ -296,6 +304,45 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
             Log.i(TAG, "Easytech keepalive: stopping")
             easytechKeepaliveJob?.cancel()
             easytechKeepaliveJob = null
+        }
+    }
+
+    // ── MStar keep-alive ──────────────────────────────────────────────────────
+    // Single in-flight job; replacing it cancels the prior loop.
+    private var mstarKeepaliveJob: Job? = null
+
+    private fun startMstarKeepalive(deviceIp: String) {
+        mstarKeepaliveJob?.cancel()
+        Log.i(TAG, "MStar keepalive: starting (${MSTAR_KEEPALIVE_INTERVAL_MS / 1000}s tick) → $deviceIp")
+        mstarKeepaliveJob = viewModelScope.launch {
+            // First tick after a full interval — the handshake just touched the cam.
+            delay(MSTAR_KEEPALIVE_INTERVAL_MS)
+            var failuresInARow = 0
+            while (isActive) {
+                // The OEM's WaycamHeartbeatManager pings this exact endpoint to
+                // stop the cam sleeping its AP. It's a lightweight set with no
+                // value; the cam serves it alongside RTSP/settings traffic.
+                val body = runCatching {
+                    DashcamHttpClient.get("http://$deviceIp/cgi-bin/Config.cgi?action=set&property=Heartbeat")
+                }.getOrNull()
+                if (body == null) {
+                    failuresInARow += 1
+                    Log.w(TAG, "MStar keepalive: heartbeat returned null (failuresInARow=$failuresInARow)")
+                } else {
+                    if (failuresInARow > 0) Log.i(TAG, "MStar keepalive: recovered after $failuresInARow null tick(s)")
+                    failuresInARow = 0
+                    Log.v(TAG, "MStar keepalive: ok")
+                }
+                delay(MSTAR_KEEPALIVE_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun stopMstarKeepalive() {
+        if (mstarKeepaliveJob != null) {
+            Log.i(TAG, "MStar keepalive: stopping")
+            mstarKeepaliveJob?.cancel()
+            mstarKeepaliveJob = null
         }
     }
 
@@ -382,6 +429,12 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                     }
                     startEasytechKeepalive(device.protocol.deviceIp)
                 }
+                // MStar sleeps its AP without a client heartbeat — keep it awake.
+                if (device.protocol ==
+                    com.example.trafykamerasikotlin.data.model.ChipsetProtocol.MSTAR
+                ) {
+                    startMstarKeepalive(device.protocol.deviceIp)
+                }
             }
             is HandshakeResult.Failure -> {
                 Log.e(TAG, "Handshake FAILURE: ${result.reason}")
@@ -397,6 +450,7 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
     private fun onConnectionLost() {
         Log.w(TAG, "onConnectionLost: dashcam Wi-Fi dropped — clearing bindings")
         stopEasytechKeepalive()
+        stopMstarKeepalive()
         DashcamHttpClient.bindToNetwork(null)
         GeneralplusSession.bindToNetwork(null)
         AllwinnerNetwork.bindToNetwork(null)

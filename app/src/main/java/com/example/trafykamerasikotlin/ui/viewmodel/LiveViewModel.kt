@@ -11,6 +11,7 @@ import com.example.trafykamerasikotlin.data.capture.AllwinnerCaptureRepository
 import com.example.trafykamerasikotlin.data.capture.AllwinnerCaptureResult
 import com.example.trafykamerasikotlin.data.media.EeasytechLiveRepository
 import com.example.trafykamerasikotlin.data.media.GeneralplusLiveRepository
+import com.example.trafykamerasikotlin.data.media.MstarLiveRepository
 import com.example.trafykamerasikotlin.data.media.HiDvrMediaRepository
 import com.example.trafykamerasikotlin.data.model.ChipsetProtocol
 import com.example.trafykamerasikotlin.data.model.DeviceInfo
@@ -80,6 +81,7 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
     private val hiDvrRepo    = HiDvrMediaRepository()
     private val eeasyRepo    = EeasytechLiveRepository()
     private val gpLiveRepo   = GeneralplusLiveRepository()
+    private val mstarLiveRepo = MstarLiveRepository()
     private val captureRepo  = AllwinnerCaptureRepository()
     private val allwinnerLiveRepo =
         com.example.trafykamerasikotlin.data.media.AllwinnerLiveRepository(application)
@@ -186,6 +188,22 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                         selectedCamera = 0,
                     )
                 }
+                ChipsetProtocol.MSTAR -> {
+                    // MStar streams each sensor over its own RTSP URL
+                    // (av4/av5/av6) and keeps recording while it previews — no
+                    // stop-recording / register-client handshake (the OEM's are
+                    // all no-ops). Just point the player at av4 (front); extra
+                    // lenses become switchable tabs.
+                    val camNum  = mstarLiveRepo.cameraCount(ip)
+                    val cameras = cameraLabels(camNum)
+                    val rtspUrl = MstarLiveRepository.rtspUrl(ip, 0)
+                    Log.i(TAG, "startStream: MStar ready → $rtspUrl, cameras=$cameras")
+                    _uiState.value = LiveUiState.Playing(
+                        rtspUrl        = rtspUrl,
+                        cameras        = cameras,
+                        selectedCamera = 0,
+                    )
+                }
                 else -> {
                     Log.i(TAG, "startStream: HiDVR stopping recording for $ip")
                     hiDvrRepo.stopRecording(ip)
@@ -219,6 +237,17 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         if (cameraIndex == current.selectedCamera) return
         val ip = device.protocol.deviceIp
         viewModelScope.launch {
+            // MStar has no camera-switch CGI: each lens is a distinct RTSP URL
+            // (av4/av5/av6), so switching is just re-pointing the player. The
+            // IjkPlayer is keyed on rtspUrl, so the new URL restarts it.
+            if (device.protocol == ChipsetProtocol.MSTAR) {
+                Log.i(TAG, "switchCamera: MStar → index $cameraIndex")
+                _uiState.value = current.copy(
+                    selectedCamera = cameraIndex,
+                    rtspUrl        = MstarLiveRepository.rtspUrl(ip, cameraIndex),
+                )
+                return@launch
+            }
             val ok = when (device.protocol) {
                 ChipsetProtocol.EEASYTECH -> eeasyRepo.switchCamera(ip, cameraIndex)
                 ChipsetProtocol.GENERALPLUS, ChipsetProtocol.ALLWINNER_V853 -> false
@@ -327,6 +356,9 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
                     ChipsetProtocol.ALLWINNER_V853 -> { /* live stream already cancelled above; relay session stays alive */ }
                     ChipsetProtocol.GENERALPLUS    -> gpLiveRepo.exitLive()
                     ChipsetProtocol.EEASYTECH      -> eeasyRepo.exitLive(ip)
+                    // MStar kept recording throughout preview and needs no
+                    // client (un)registration — just drop the RTSP stream.
+                    ChipsetProtocol.MSTAR          -> { /* no-op: nothing to resume/unregister */ }
                     else -> {
                         hiDvrRepo.unregisterClient(ip, device.clientIp)
                         hiDvrRepo.startRecording(ip)

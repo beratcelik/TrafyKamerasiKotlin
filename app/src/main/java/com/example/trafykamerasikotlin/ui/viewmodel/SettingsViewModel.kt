@@ -212,6 +212,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                         }
                     } else {
                         val result = getMstarRepo().executeAction(device.protocol.deviceIp, key)
+                        if (result != null && key == "reset.cgi?") {
+                            // Factory reset reverts the hotspot to the default
+                            // password — forget any remembered custom one so the
+                            // app reconnects with the default straight away
+                            // instead of burning a wrong-password retry first.
+                            com.example.trafykamerasikotlin.data.wifi.DashcamWifiCredentials
+                                .forget(getApplication(), device.ssid.orEmpty())
+                        }
                         _actionFeedback.update {
                             when {
                                 result == null      -> SettingsActionFeedback.GenericFail
@@ -318,7 +326,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 if (ok) WifiDialogState.Hidden
                 else WifiDialogState.Error
             }
-            if (ok) _actionFeedback.update { SettingsActionFeedback.WifiSaved }
+            if (ok) {
+                // Remember the new password so the app can auto-reconnect after
+                // the cam restarts its AP — otherwise it only knows the factory
+                // default and the user would be locked out of their own camera.
+                com.example.trafykamerasikotlin.data.wifi.DashcamWifiCredentials
+                    .remember(getApplication(), ssid, newPassword)
+                _actionFeedback.update { SettingsActionFeedback.WifiSaved }
+            }
         }
     }
 

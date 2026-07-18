@@ -113,23 +113,45 @@ class DashcamWifiManager(private val application: Application) {
     }
 
     /**
-     * Connects to [ssid] using the default dashcam password.
+     * Connects to [ssid], preferring a password the user previously set for it
+     * ([DashcamWifiCredentials]) and falling back to the factory default.
      *
-     * On API 29+: uses WifiNetworkSpecifier + requestNetwork. Android shows a one-tap system
-     * confirmation dialog. Returns [ConnectResult.Success] with the bound [Network] object,
-     * which must be used to route dashcam HTTP traffic.
+     * If a remembered (non-default) password fails to associate, we retry once
+     * with the default — the camera may have been factory-reset outside the app,
+     * reverting its hotspot to `12345678`. When that fallback succeeds we forget
+     * the stale password so the slow retry doesn't repeat. A transient failure
+     * (both attempts fail) keeps the remembered password intact.
      *
-     * On API 24-28: uses legacy WifiConfiguration. Returns [ConnectResult.Success] with
-     * network = null (system manages routing automatically).
+     * On API 29+: uses WifiNetworkSpecifier + requestNetwork. Returns
+     * [ConnectResult.Success] with the bound [Network] object, which must be
+     * used to route dashcam HTTP traffic. On API 24-28: legacy
+     * WifiConfiguration, network = null (system manages routing).
      */
     suspend fun connectToDashcam(ssid: String): ConnectResult {
-        Log.i(TAG, "connectToDashcam: ssid=$ssid")
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            connectApi29(ssid)
-        } else {
-            connectLegacy(ssid)
+        val remembered = DashcamWifiCredentials.passwordFor(application, ssid)
+        val password = remembered ?: DEFAULT_PASSWORD
+        Log.i(TAG, "connectToDashcam: ssid=$ssid (password=${if (remembered != null) "remembered" else "default"})")
+
+        val result = connectWithPassword(ssid, password)
+        if (result is ConnectResult.Success || remembered == null || remembered == DEFAULT_PASSWORD) {
+            return result
         }
+
+        Log.w(TAG, "connectToDashcam: remembered password failed — retrying with factory default")
+        val fallback = connectWithPassword(ssid, DEFAULT_PASSWORD)
+        if (fallback is ConnectResult.Success) {
+            Log.i(TAG, "connectToDashcam: default worked — forgetting stale password for $ssid")
+            DashcamWifiCredentials.forget(application, ssid)
+        }
+        return fallback
     }
+
+    private suspend fun connectWithPassword(ssid: String, password: String): ConnectResult =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            connectApi29(ssid, password)
+        } else {
+            connectLegacy(ssid, password)
+        }
 
     /**
      * Releases any active ConnectivityManager.NetworkCallback registered during connection
@@ -236,11 +258,11 @@ class DashcamWifiManager(private val application: Application) {
         }
 
     /** API 29+: WifiNetworkSpecifier + ConnectivityManager.requestNetwork. */
-    private suspend fun connectApi29(ssid: String): ConnectResult =
+    private suspend fun connectApi29(ssid: String, password: String): ConnectResult =
         suspendCancellableCoroutine { cont ->
             val specifier = WifiNetworkSpecifier.Builder()
                 .setSsid(ssid)
-                .setWpa2Passphrase(DEFAULT_PASSWORD)
+                .setWpa2Passphrase(password)
                 .build()
 
             val request = NetworkRequest.Builder()
@@ -273,12 +295,12 @@ class DashcamWifiManager(private val application: Application) {
 
     /** API 24-28: Legacy WifiConfiguration. System manages dual connectivity automatically. */
     @Suppress("DEPRECATION")
-    private fun connectLegacy(ssid: String): ConnectResult {
+    private fun connectLegacy(ssid: String, password: String): ConnectResult {
         val wm = application.getSystemService(Context.WIFI_SERVICE) as WifiManager
 
         val config = android.net.wifi.WifiConfiguration().apply {
             SSID = "\"$ssid\""
-            preSharedKey = "\"$DEFAULT_PASSWORD\""
+            preSharedKey = "\"$password\""
             allowedKeyManagement.set(android.net.wifi.WifiConfiguration.KeyMgmt.WPA_PSK)
         }
 

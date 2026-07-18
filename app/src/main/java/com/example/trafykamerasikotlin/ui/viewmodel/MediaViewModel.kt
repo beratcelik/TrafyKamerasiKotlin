@@ -87,6 +87,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
     private val eeasyRepo     = EeasytechMediaRepository()
     private val gpRepo        = GeneralplusMediaRepository()
     private val allwinnerRepo = AllwinnerMediaRepository()
+    private val mstarRepo     = com.example.trafykamerasikotlin.data.media.MstarMediaRepository()
 
     /**
      * Application-scoped supervisor for cam-side cleanup calls (exit
@@ -568,6 +569,8 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
             }
             ChipsetProtocol.EEASYTECH      -> eeasyRepo.enterPlayback(device.protocol.deviceIp)
             ChipsetProtocol.ALLWINNER_V853 -> { /* session stays live; device records concurrently */ }
+            // MStar lists the album over Config.cgi while recording; no stop needed.
+            ChipsetProtocol.MSTAR          -> { /* no-op; cam records concurrently */ }
             else                           -> hiDvrRepo.stopRecording(device.protocol.deviceIp)
         }
     }
@@ -577,6 +580,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
             ChipsetProtocol.GENERALPLUS    -> gpRepo.exitPlayback(device.protocol.deviceIp)
             ChipsetProtocol.EEASYTECH      -> eeasyRepo.exitPlayback(device.protocol.deviceIp)
             ChipsetProtocol.ALLWINNER_V853 -> { /* no-op; see enterPlayback */ }
+            ChipsetProtocol.MSTAR          -> { /* no-op; see enterPlayback */ }
             else                           -> hiDvrRepo.startRecording(device.protocol.deviceIp)
         }
     }
@@ -585,6 +589,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         when (device.protocol) {
             ChipsetProtocol.EEASYTECH      -> eeasyRepo.fetchVideos(device.protocol.deviceIp)
             ChipsetProtocol.ALLWINNER_V853 -> allwinnerRepo.fetchVideos(device.protocol.deviceIp)
+            ChipsetProtocol.MSTAR          -> mstarRepo.fetchVideos(device.protocol.deviceIp)
             else                           -> hiDvrRepo.fetchVideos(device.protocol.deviceIp, device.clientIp)
         }
 
@@ -592,6 +597,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
         when (device.protocol) {
             ChipsetProtocol.EEASYTECH      -> eeasyRepo.fetchPhotos(device.protocol.deviceIp)
             ChipsetProtocol.ALLWINNER_V853 -> allwinnerRepo.fetchPhotos(device.protocol.deviceIp)
+            ChipsetProtocol.MSTAR          -> mstarRepo.fetchPhotos(device.protocol.deviceIp)
             else                           -> hiDvrRepo.fetchPhotos(device.protocol.deviceIp, device.clientIp)
         }
 
@@ -607,6 +613,7 @@ class MediaViewModel(app: Application) : AndroidViewModel(app) {
             // delete button too. MediaScreen hides the delete option entirely, so
             // this branch is defensive only.
             ChipsetProtocol.ALLWINNER_V853 -> false
+            ChipsetProtocol.MSTAR          -> mstarRepo.deleteFile(device.protocol.deviceIp, file)
             else                           -> hiDvrRepo.deleteFile(device.protocol.deviceIp, file)
         }
 

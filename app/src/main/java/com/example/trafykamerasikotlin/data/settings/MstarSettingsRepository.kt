@@ -142,10 +142,20 @@ class MstarSettingsRepository(private val context: Context) {
         val url = "http://$deviceIp$CGI?action=set&property=$property&value=$value"
         Log.i(TAG, "applySetting $key=$value → $url")
         val body = DashcamHttpClient.get(url)
-        val success = body != null && body.contains("0OK")
+        val success = isOkResponse(body)
         Log.i(TAG, "applySetting $key=$value → success=$success (body=${body?.take(60)})")
         return success
     }
+
+    /**
+     * A successful Config.cgi write frames its body as `0`⏎`OK` … `0`⏎`OK`
+     * (HTTP 200). The `0` and `OK` are on separate lines, so a literal `"0OK"`
+     * substring check misses it — strip whitespace first. (MstartDvrProtocol
+     * trusts HTTP 200 alone for non-JWD models; this is a slightly stricter
+     * equivalent that still tolerates the newline framing.)
+     */
+    private fun isOkResponse(body: String?): Boolean =
+        body != null && body.replace(Regex("\\s+"), "").contains("0OK")
 
     /**
      * Runs an action item. Endpoints mirror MstartDvrProtocol exactly:
@@ -159,7 +169,7 @@ class MstarSettingsRepository(private val context: Context) {
         return when (key) {
             "format" -> {
                 val body = DashcamHttpClient.get("$base?action=set&property=SD0&value=format")
-                val ok = body != null && body.contains("0OK")
+                val ok = isOkResponse(body)
                 Log.i(TAG, "format SD → success=$ok")
                 if (ok) "" else null
             }

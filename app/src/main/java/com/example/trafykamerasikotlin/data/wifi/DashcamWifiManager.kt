@@ -18,6 +18,7 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
 /**
@@ -235,10 +236,18 @@ class DashcamWifiManager(private val application: Application) {
     @Suppress("DEPRECATION")
     private suspend fun awaitScanResults(wm: WifiManager): List<android.net.wifi.ScanResult> =
         suspendCancellableCoroutine { cont ->
+            // SCAN_RESULTS_AVAILABLE_ACTION is sticky, so the receiver can fire on the main
+            // thread right after registration — racing the startScan()==false fallback below
+            // on the IO thread. isActive check-then-resume is not atomic across threads, so
+            // a CAS guard ensures the continuation is resumed exactly once.
+            val resumed = AtomicBoolean(false)
+            fun resumeOnce(results: List<android.net.wifi.ScanResult>) {
+                if (resumed.compareAndSet(false, true) && cont.isActive) cont.resume(results)
+            }
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
                     try { application.unregisterReceiver(this) } catch (_: Exception) {}
-                    if (cont.isActive) cont.resume(wm.scanResults ?: emptyList())
+                    resumeOnce(wm.scanResults ?: emptyList())
                 }
             }
             application.registerReceiver(
@@ -253,7 +262,7 @@ class DashcamWifiManager(private val application: Application) {
                 // startScan() throttled or unavailable — fall back to cached results
                 Log.w(TAG, "awaitScanResults: startScan() returned false, using cached results")
                 try { application.unregisterReceiver(receiver) } catch (_: Exception) {}
-                if (cont.isActive) cont.resume(wm.scanResults ?: emptyList())
+                resumeOnce(wm.scanResults ?: emptyList())
             }
         }
 

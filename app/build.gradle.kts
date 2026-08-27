@@ -20,7 +20,7 @@ val ncnnPrebuiltDir = file("src/main/cpp/ncnn")
 val ncnnPrebuiltAvailable = ncnnPrebuiltDir.resolve("arm64-v8a/lib/libncnn.a").exists()
 
 android {
-    namespace = "com.example.trafykamerasikotlin"
+    namespace = "tr.trafy.kamera"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -30,11 +30,11 @@ android {
     ndkVersion = "28.2.13676358"
 
     defaultConfig {
-        applicationId = "com.example.trafykamerasikotlin"
+        applicationId = "tr.trafy.kamera"
         minSdk = 24
         targetSdk = 36
-        versionCode = 20
-        versionName = "1.6.9"
+        versionCode = 21
+        versionName = "1.6.10"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

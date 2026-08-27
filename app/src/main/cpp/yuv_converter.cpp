@@ -50,7 +50,7 @@ inline bool acquire_buffer_ptr(JNIEnv* env, jobject byteBuffer,
 }  // namespace
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_trafykamerasikotlin_data_video_YuvConverter_nativeAndroid420ToArgb(
+Java_tr_trafy_kamera_data_video_YuvConverter_nativeAndroid420ToArgb(
         JNIEnv* env, jclass /*clazz*/,
         jobject yPlane, jint yStride,
         jobject uPlane, jint uStride,

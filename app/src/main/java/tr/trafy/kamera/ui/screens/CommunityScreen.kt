@@ -1,0 +1,173 @@
+package tr.trafy.kamera.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import tr.trafy.kamera.R
+import tr.trafy.kamera.ui.components.TrafyTopBar
+import tr.trafy.kamera.ui.theme.ColorBackground
+import tr.trafy.kamera.ui.theme.ColorDivider
+import tr.trafy.kamera.ui.theme.ColorIconBgBlue
+import tr.trafy.kamera.ui.theme.ColorIconBgGreen
+import tr.trafy.kamera.ui.theme.ColorIconBgOrange
+import tr.trafy.kamera.ui.theme.ColorPrimary
+import tr.trafy.kamera.ui.theme.ColorSurface
+import tr.trafy.kamera.ui.theme.ColorTextPrimary
+import tr.trafy.kamera.ui.theme.ColorTextSecondary
+
+@Composable
+fun CommunityScreen(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val uriHandler = LocalUriHandler.current
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(ColorBackground)
+    ) {
+        TrafyTopBar(title = stringResource(R.string.community_title), onBack = onBack)
+
+        Column(
+            modifier            = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text(
+                text  = stringResource(R.string.community_body),
+                style = MaterialTheme.typography.bodyMedium,
+                color = ColorTextSecondary
+            )
+            Card(
+                shape     = RoundedCornerShape(16.dp),
+                colors    = CardDefaults.cardColors(containerColor = ColorSurface),
+                elevation = CardDefaults.cardElevation(0.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    SocialLinkRow(
+                        icon        = Icons.Filled.CameraAlt,
+                        iconBgColor = ColorIconBgOrange,
+                        platform    = "Instagram",
+                        handle      = "Trafy Kamerası",
+                        description = "Trafy Kamerası ile çektiğiniz videoları gönderin bu kanalda yayınlansın.",
+                        onClick     = { uriHandler.openUri("https://instagram.com/trafykamerasi") }
+                    )
+                    HorizontalDivider(
+                        color     = ColorDivider,
+                        thickness = 0.5.dp,
+                        modifier  = Modifier.padding(start = 68.dp)
+                    )
+                    SocialLinkRow(
+                        icon        = Icons.AutoMirrored.Filled.Send,
+                        iconBgColor = ColorIconBgBlue,
+                        platform    = "Telegram",
+                        handle      = "Trafy | Araç Kulübü 🚗",
+                        description = "İkinci el araç alım satım platformu. Alıcı ve satıcı direkt buluşturulur, aracı komisyon ücreti çıkmaz.",
+                        onClick     = { uriHandler.openUri("https://t.me/trafy_kulubu") }
+                    )
+                    HorizontalDivider(
+                        color     = ColorDivider,
+                        thickness = 0.5.dp,
+                        modifier  = Modifier.padding(start = 68.dp)
+                    )
+                    SocialLinkRow(
+                        icon        = Icons.AutoMirrored.Filled.Chat,
+                        iconBgColor = ColorIconBgGreen,
+                        platform    = "WhatsApp",
+                        handle      = "Trafy | Araç Kulübü 🚗",
+                        description = "İkinci el ve sıfır taşıt ilanlarının paylaşıldığı platform.",
+                        onClick     = { uriHandler.openUri("https://whatsapp.com/channel/0029VbCDkE3IyPtVNhtYL10Y") }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SocialLinkRow(
+    icon: ImageVector,
+    iconBgColor: Color,
+    platform: String,
+    handle: String,
+    onClick: () -> Unit,
+    description: String? = null,
+) {
+    Row(
+        modifier          = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Box(
+            modifier         = Modifier
+                .size(44.dp)
+                .background(iconBgColor, RoundedCornerShape(10.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector        = icon,
+                contentDescription = platform,
+                tint               = ColorPrimary,
+                modifier           = Modifier.size(22.dp)
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text  = platform,
+                style = MaterialTheme.typography.titleMedium,
+                color = ColorTextPrimary
+            )
+            Text(
+                text  = handle,
+                style = MaterialTheme.typography.bodySmall,
+                color = ColorTextSecondary
+            )
+            if (!description.isNullOrBlank()) {
+                Text(
+                    text     = description,
+                    style    = MaterialTheme.typography.bodySmall,
+                    color    = ColorTextSecondary,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+        }
+        Icon(
+            imageVector        = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint               = ColorTextSecondary,
+            modifier           = Modifier
+                .size(20.dp)
+                .padding(top = 12.dp),
+        )
+    }
+}

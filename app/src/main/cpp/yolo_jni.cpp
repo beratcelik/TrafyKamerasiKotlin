@@ -66,7 +66,7 @@ jstring to_jstring(JNIEnv* env, const std::string& s) {
 extern "C" {
 
 JNIEXPORT jstring JNICALL
-Java_com_example_trafykamerasikotlin_data_vision_ncnn_NcnnBridge_nativeProbe(
+Java_tr_trafy_kamera_data_vision_ncnn_NcnnBridge_nativeProbe(
         JNIEnv* env, jclass, jint id) {
     DetectorSlot& slot = ensure_slot(id, tag_for_id(id).c_str());
     std::lock_guard<std::mutex> lk(slot.mu);
@@ -74,7 +74,7 @@ Java_com_example_trafykamerasikotlin_data_vision_ncnn_NcnnBridge_nativeProbe(
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_example_trafykamerasikotlin_data_vision_ncnn_NcnnBridge_nativeLoadModel(
+Java_tr_trafy_kamera_data_vision_ncnn_NcnnBridge_nativeLoadModel(
         JNIEnv* env, jclass,
         jint id,
         jobject asset_manager_jobj,
@@ -103,7 +103,7 @@ Java_com_example_trafykamerasikotlin_data_vision_ncnn_NcnnBridge_nativeLoadModel
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_example_trafykamerasikotlin_data_vision_ncnn_NcnnBridge_nativeLastError(
+Java_tr_trafy_kamera_data_vision_ncnn_NcnnBridge_nativeLastError(
         JNIEnv* env, jclass, jint id) {
     DetectorSlot& slot = ensure_slot(id, tag_for_id(id).c_str());
     std::lock_guard<std::mutex> lk(slot.mu);
@@ -113,7 +113,7 @@ Java_com_example_trafykamerasikotlin_data_vision_ncnn_NcnnBridge_nativeLastError
 // Returns a flat float array: [cls, conf, x1, y1, x2, y2, cls, conf, ...].
 // Empty on failure — inspect nativeLastError() for the reason.
 JNIEXPORT jfloatArray JNICALL
-Java_com_example_trafykamerasikotlin_data_vision_ncnn_NcnnBridge_nativeDetectBitmap(
+Java_tr_trafy_kamera_data_vision_ncnn_NcnnBridge_nativeDetectBitmap(
         JNIEnv* env, jclass,
         jint id,
         jobject bitmap,
@@ -167,7 +167,7 @@ Java_com_example_trafykamerasikotlin_data_vision_ncnn_NcnnBridge_nativeDetectBit
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_trafykamerasikotlin_data_vision_ncnn_NcnnBridge_nativeRelease(
+Java_tr_trafy_kamera_data_vision_ncnn_NcnnBridge_nativeRelease(
         JNIEnv*, jclass, jint id) {
     std::lock_guard<std::mutex> lk(g_slots_mu);
     g_slots.erase(id);

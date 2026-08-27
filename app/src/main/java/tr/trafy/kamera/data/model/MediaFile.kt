@@ -1,0 +1,33 @@
+package tr.trafy.kamera.data.model
+
+/**
+ * Represents a single file (video or photo) on the dashcam's SD card.
+ *
+ * @param path        SD-card path as returned by getfilelist.cgi, e.g. "/sd/Video/normal/2024_01_15_120000.mp4"
+ * @param httpUrl     Full HTTP URL for streaming/download, e.g. "http://192.168.0.1/sd/Video/normal/..."
+ * @param thumbnailUrl HTTP URL of the .thm thumbnail for videos, or same as httpUrl for photos
+ * @param name        Bare filename, e.g. "2024_01_15_120000.mp4"
+ * @param isPhoto     True if this is a still image rather than a video
+ */
+data class MediaFile(
+    val path: String,
+    val httpUrl: String,
+    val thumbnailUrl: String,
+    val name: String,
+    val isPhoto: Boolean,
+    // Known file size in bytes when the protocol reports it (Allwinner getvideos).
+    // Null for chipsets that don't expose size in their listing; UI falls back to
+    // indeterminate progress.
+    val sizeBytes: Long? = null,
+    // Camera channel derived from the source SD-card directory: "Front", "Back",
+    // "Inside", or null when unknown. Populated for chipsets whose dir-capability
+    // response unambiguously identifies the channel (dual-cam HiDVR); filename
+    // suffix rules (_f/_b/_i) are the fallback when this is null.
+    val cameraHint: String? = null,
+    // File mtime as a UNIX epoch (seconds), when reported by the protocol.
+    // Allwinner V853 returns this in `getvideos`; the cam's rtp2p file-open
+    // handshake takes the same value back as `time` to authenticate the file
+    // identity — sending 0 puts the cam into a degraded mode that drops most
+    // audio frames. Null for chipsets that don't expose mtime.
+    val mtimeEpoch: Long? = null,
+)

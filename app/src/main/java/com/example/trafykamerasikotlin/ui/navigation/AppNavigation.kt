@@ -16,6 +16,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
@@ -36,6 +39,7 @@ import com.example.trafykamerasikotlin.ui.screens.RawSettingsScreen
 import com.example.trafykamerasikotlin.ui.screens.HomeScreen
 import com.example.trafykamerasikotlin.ui.screens.LiveScreen
 import com.example.trafykamerasikotlin.ui.screens.MediaScreen
+import com.example.trafykamerasikotlin.ui.screens.MigrationScreen
 import com.example.trafykamerasikotlin.ui.screens.MoreScreen
 import com.example.trafykamerasikotlin.ui.screens.ReportScreen
 import com.example.trafykamerasikotlin.ui.screens.SettingsScreen
@@ -69,6 +73,16 @@ private val bottomNavRoutes = BottomNavItem.all.map { it.route }.toSet()
 
 @Composable
 fun AppNavigation() {
+    // This sideloaded build is end-of-life — the app now ships on Google Play under a
+    // different applicationId, which Play cannot install as an in-place update. Show the
+    // migration screen on every cold start until the user opts to continue for this
+    // session (soft block: never lock a driver out of a working dashcam app).
+    var migrationDismissed by remember { mutableStateOf(false) }
+    if (!migrationDismissed) {
+        MigrationScreen(onContinue = { migrationDismissed = true })
+        return
+    }
+
     // Activity-scoped: shared across screens so they see the same connection state
     val dashcamViewModel: DashcamViewModel = viewModel()
     val mediaViewModel: MediaViewModel     = viewModel()

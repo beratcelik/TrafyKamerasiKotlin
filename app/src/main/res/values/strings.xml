@@ -474,4 +474,12 @@
     <string name="gp_setting_value_515_0">English</string>
     <string name="gp_setting_value_515_1">Traditional Chinese</string>
     <string name="gp_setting_value_515_2">Simplified Chinese</string>
+
+    <!-- Google Play migration (final sideloaded release) -->
+    <string name="migration_title">Trafy is now on Google Play</string>
+    <string name="migration_body">This is the last update delivered this way. Future updates come only from Google Play.\n\nThe Play version installs as a separate app, so you will need to reconnect your camera and re-enter its Wi-Fi password once. After installing it, you can remove this old version.</string>
+    <string name="migration_body_installed">The new Trafy app is installed. You can safely remove this old version now.\n\nUse the new app from now on — this one no longer receives updates.</string>
+    <string name="migration_install_button">Install from Google Play</string>
+    <string name="migration_uninstall_button">Remove this old version</string>
+    <string name="migration_continue">Continue with the old version for now</string>
 </resources>

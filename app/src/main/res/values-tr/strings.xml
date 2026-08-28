@@ -473,4 +473,12 @@
     <string name="gp_setting_value_515_0">İngilizce</string>
     <string name="gp_setting_value_515_1">Geleneksel Çince</string>
     <string name="gp_setting_value_515_2">Basit Çince</string>
+
+    <!-- Google Play gecisi (son sideload surumu) -->
+    <string name="migration_title">Trafy artık Google Play\'de</string>
+    <string name="migration_body">Bu, bu yolla gelen son güncellemedir. Yeni güncellemeler yalnızca Google Play üzerinden gelecek.\n\nPlay sürümü ayrı bir uygulama olarak kurulur; kameranızı yeniden bağlamanız ve Wi-Fi şifresini bir kez daha girmeniz gerekir. Kurduktan sonra bu eski sürümü kaldırabilirsiniz.</string>
+    <string name="migration_body_installed">Yeni Trafy uygulaması kurulu. Bu eski sürümü artık güvenle kaldırabilirsiniz.\n\nBundan sonra yeni uygulamayı kullanın — bu sürüm güncelleme almayacak.</string>
+    <string name="migration_install_button">Google Play\'den Yükle</string>
+    <string name="migration_uninstall_button">Bu eski sürümü kaldır</string>
+    <string name="migration_continue">Şimdilik eski sürümle devam et</string>
 </resources>

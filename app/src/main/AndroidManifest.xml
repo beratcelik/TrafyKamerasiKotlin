@@ -10,6 +10,15 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Required (API 26+) for the migration screen's ACTION_DELETE self-uninstall
+         prompt; without it the system dismisses the dialog silently. -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
+    <!-- Package visibility (API 30+): the migration screen checks whether the
+         Google Play build of Trafy is installed yet. -->
+    <queries>
+        <package android:name="tr.trafy.kamera" />
+    </queries>
 
     <application
         android:name=".TrafyApplication"

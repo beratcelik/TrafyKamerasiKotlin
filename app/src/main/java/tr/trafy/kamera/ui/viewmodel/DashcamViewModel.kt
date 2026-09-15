@@ -1,14 +1,12 @@
 package tr.trafy.kamera.ui.viewmodel
 
-import android.Manifest
 import android.app.Application
-import android.content.pm.PackageManager
 import android.net.Network
 import android.util.Log
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONObject
 import tr.trafy.kamera.data.handshake.DashcamHandshakeManager
 import tr.trafy.kamera.data.media.EeasytechCleanupLock
 import tr.trafy.kamera.data.model.ChipsetProtocol
@@ -37,7 +35,12 @@ sealed class DashcamUiState {
     data object Idle : DashcamUiState()
     data object ScanningWifi : DashcamUiState()
     data class WifiFound(val networks: List<String>) : DashcamUiState()
-    data object WifiPermissionRequired : DashcamUiState()
+    /**
+     * [attempt] makes every request a distinct value. StateFlow drops equal
+     * re-emissions, so with a singleton a second Connect tap after a denial
+     * never re-launched HomeScreen's permission prompt — the button did nothing.
+     */
+    data class WifiPermissionRequired(val attempt: Int) : DashcamUiState()
     data object Connecting : DashcamUiState()
     data class Connected(val device: DeviceInfo) : DashcamUiState()
     data class Error(val reason: FailureReason) : DashcamUiState()
@@ -94,6 +97,9 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
     private val _uiState = MutableStateFlow<DashcamUiState>(DashcamUiState.Idle)
     val uiState: StateFlow<DashcamUiState> = _uiState.asStateFlow()
 
+    /** Counter behind [DashcamUiState.WifiPermissionRequired.attempt]. */
+    private var permissionRequestCount = 0
+
     /**
      * One-shot guard for [ensureRecording]. HomeScreen's
      * `LaunchedEffect(uiState)` re-fires every time HomeScreen re-enters
@@ -124,8 +130,10 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
 
     /**
      * Main entry point. Runs the full flow:
-     *   already-on-dashcam → skip scan
+     *   already-on-dashcam (by SSID, else by subnet) → skip scan
+     *   Wi-Fi off → explain
      *   no permission → request permission
+     *   Location toggle off → explain
      *   scan → auto-connect (1 result) or show picker (multiple results)
      */
     fun connect() {
@@ -154,18 +162,58 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                     Log.w(TAG, "getCurrentWifiNetwork() returned null — proceeding unbound")
                 }
                 _uiState.update { DashcamUiState.Connecting }
-                proceedWithHandshake(network = wifiNetwork)
+                proceedWithHandshake(network = wifiNetwork, knownSsid = currentSsid)
                 return@launch
             }
 
-            // ── Location permission check ───────────────────────────────────────
-            val permGranted = ContextCompat.checkSelfPermission(
-                getApplication(), Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
+            // ── Fast path: on a dashcam subnet but the SSID is unreadable ──────
+            // Without location permission, or with the Location toggle off, Android
+            // reports the SSID as <unknown ssid>, so the check above misses a user who
+            // joined the cam hotspot in system Wi-Fi settings (report #7: Redmi,
+            // Android 13). Link addresses aren't redacted — probe by subnet instead,
+            // and fall back to the normal flow quietly if it isn't really a cam.
+            val subnetWifi = wifiManager.findUnvalidatedDashcamSubnetWifi()
+            if (subnetWifi != null) {
+                Log.i(TAG, "SSID not identifiable, but Wi-Fi ${subnetWifi.network} has dashcam-subnet IP " +
+                    "${subnetWifi.clientIp} (${subnetWifi.protocol}) — probing handshake")
+                bindNetworkClients(subnetWifi.network)
+                _uiState.update { DashcamUiState.Connecting }
+                // When the gateway is the cam's own IP the phone really is on the cam
+                // hotspot, so report the handshake failure itself — a permission or
+                // Location message would send the user the wrong way.
+                val connected = proceedWithHandshake(
+                    network       = subnetWifi.network,
+                    clientIp      = subnetWifi.clientIp,
+                    waitForDhcp   = false,
+                    reportFailure = subnetWifi.gatewayMatches,
+                )
+                if (connected) return@launch
+                bindNetworkClients(null)
+                if (subnetWifi.gatewayMatches) return@launch
+                Log.w(TAG, "Subnet probe handshake failed — continuing with the scan flow")
+            }
 
-            if (!permGranted) {
-                Log.i(TAG, "Location permission not granted — requesting")
-                _uiState.update { DashcamUiState.WifiPermissionRequired }
+            // ── Wi-Fi radio check ───────────────────────────────────────────────
+            if (!wifiManager.isWifiEnabled()) {
+                Log.w(TAG, "Wi-Fi is off")
+                _uiState.update { DashcamUiState.Error(FailureReason.WIFI_DISABLED) }
+                return@launch
+            }
+
+            // ── Scan permission check ───────────────────────────────────────────
+            if (!wifiManager.hasScanPermission()) {
+                Log.i(TAG, "Scan permission not granted — requesting")
+                permissionRequestCount += 1
+                _uiState.update { DashcamUiState.WifiPermissionRequired(permissionRequestCount) }
+                return@launch
+            }
+
+            // ── Location toggle check ───────────────────────────────────────────
+            // A scan sees nothing while Location is off (startScan() → false, empty
+            // cached results) — say so instead of reporting "no dashcam found".
+            if (!wifiManager.isLocationEnabled()) {
+                Log.w(TAG, "Location services are off — a scan can't see the cam hotspot")
+                _uiState.update { DashcamUiState.Error(FailureReason.LOCATION_SERVICES_OFF) }
                 return@launch
             }
 
@@ -195,6 +243,53 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                     _uiState.update { DashcamUiState.WifiFound(found) }
                 }
             }
+        }
+    }
+
+    /** Permissions HomeScreen requests when the state is [DashcamUiState.WifiPermissionRequired]. */
+    fun scanPermissions(): Array<String> = wifiManager.scanPermissions()
+
+    /**
+     * Called by HomeScreen when the permission prompt closes. Re-checks what was actually
+     * granted — "Approximate" location alone can't scan — and either resumes connecting
+     * or explains the denial.
+     */
+    fun onScanPermissionResult() {
+        if (_uiState.value !is DashcamUiState.WifiPermissionRequired) return
+        if (wifiManager.hasScanPermission()) {
+            Log.i(TAG, "Scan permission granted — resuming connect()")
+            connect()
+        } else {
+            Log.w(TAG, "Scan permission denied")
+            _uiState.update { DashcamUiState.Error(FailureReason.WIFI_PERMISSION_DENIED) }
+        }
+    }
+
+    /**
+     * Called on every ON_RESUME. Retries a failed connect only when what blocked it has
+     * changed while the user was away (Location turned on, permission granted in app
+     * settings, cam Wi-Fi joined in system settings). Never retries blindly, so coming back
+     * from a permission prompt or the Wi-Fi picker can't loop the prompt.
+     */
+    fun onAppResumed() {
+        val reason = (_uiState.value as? DashcamUiState.Error)?.reason ?: return
+        // Only signals connect() resolves without a permission prompt: a readable cam SSID
+        // implies the permission is held, and a gateway-matched subnet probe reports its own
+        // failure instead of falling through to the prompt.
+        val onCamWifi = wifiManager.getCurrentDashcamSsid() != null ||
+            wifiManager.findUnvalidatedDashcamSubnetWifi()?.gatewayMatches == true
+        val unblocked = when (reason) {
+            FailureReason.WIFI_DISABLED          -> wifiManager.isWifiEnabled()
+            FailureReason.LOCATION_SERVICES_OFF  -> wifiManager.isLocationEnabled() || onCamWifi
+            FailureReason.WIFI_PERMISSION_DENIED -> wifiManager.hasScanPermission() || onCamWifi
+            FailureReason.NO_DASHCAM_FOUND,
+            FailureReason.WIFI_NOT_CONNECTED,
+            FailureReason.IP_NOT_OBTAINED        -> onCamWifi
+            else                                 -> false
+        }
+        if (unblocked) {
+            Log.i(TAG, "onAppResumed: $reason no longer blocking — retrying connect()")
+            connect()
         }
     }
 
@@ -353,6 +448,14 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
 
     // ── Private helpers ─────────────────────────────────────────────────────────
 
+    /** Routes (or, with null, un-routes) every dashcam client over [network]. */
+    private fun bindNetworkClients(network: Network?) {
+        DashcamHttpClient.bindToNetwork(network)
+        GeneralplusSession.bindToNetwork(network)
+        AllwinnerNetwork.bindToNetwork(network)
+        _connectedNetwork.update { network }
+    }
+
     private suspend fun connectToSsid(ssid: String) {
         Log.i(TAG, "connectToSsid: $ssid")
         when (val result = wifiManager.connectToDashcam(ssid)) {
@@ -363,7 +466,7 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                     GeneralplusSession.bindToNetwork(it)
                     AllwinnerNetwork.bindToNetwork(it)
                 }
-                proceedWithHandshake(result.network)
+                proceedWithHandshake(result.network, knownSsid = ssid)
             }
             is DashcamWifiManager.ConnectResult.Failure -> {
                 Log.e(TAG, "connectToSsid: WiFi connect failed for $ssid")
@@ -372,14 +475,31 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private suspend fun proceedWithHandshake(network: Network?) {
+    /**
+     * @param knownSsid the SSID the caller already knows (matched fast path, or picked from a
+     *   scan) — kept when the OS redacts it, so product naming and credential lookups work.
+     * @param clientIp the phone's IPv4 on [network] if already read from its LinkProperties.
+     * @param reportFailure false for a speculative probe whose caller falls back to scanning,
+     *   so a miss doesn't flash an error.
+     * @return true when the handshake succeeded.
+     */
+    private suspend fun proceedWithHandshake(
+        network: Network?,
+        knownSsid: String? = null,
+        clientIp: String? = null,
+        waitForDhcp: Boolean = network != null,
+        reportFailure: Boolean = true,
+    ): Boolean {
         // Give the dashcam's DHCP server a moment to assign an IP to the phone
-        if (network != null) {
+        if (waitForDhcp) {
             Log.i(TAG, "proceedWithHandshake: waiting ${DHCP_SETTLE_DELAY_MS}ms for DHCP")
             delay(DHCP_SETTLE_DELAY_MS)
         }
-        Log.i(TAG, "proceedWithHandshake: calling manager.connect()")
-        when (val result = manager.connect()) {
+        // Prefer the address on the cam network itself over "first wlan* interface",
+        // which can be the phone's own hotspot or Wi-Fi Direct interface.
+        val ip = clientIp ?: network?.let { wifiManager.ipv4Of(it) }
+        Log.i(TAG, "proceedWithHandshake: calling manager.connect() (clientIp=${ip ?: "from wlan interface"})")
+        return when (val result = manager.connect(clientIpOverride = ip)) {
             is HandshakeResult.Success -> {
                 // Stamp the connected SSID onto the DeviceInfo so the rest of
                 // the app (TrafyModelIdentifier in particular) can identify
@@ -387,6 +507,8 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                 // Easytech-based cams only advertise a feature bitmask over
                 // HTTP, so the SSID prefix is our only distinguishing signal.
                 val ssid = wifiManager.getCurrentDashcamSsid()
+                    ?: knownSsid
+                    ?: advertisedSsid(result.deviceInfo)
                 val device = result.deviceInfo.copy(ssid = ssid)
                 Log.i(TAG, "Handshake SUCCESS: $device")
                 _uiState.update { DashcamUiState.Connected(device) }
@@ -435,12 +557,28 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                 ) {
                     startMstarKeepalive(device.protocol.deviceIp)
                 }
+                true
             }
             is HandshakeResult.Failure -> {
                 Log.e(TAG, "Handshake FAILURE: ${result.reason}")
-                _uiState.update { DashcamUiState.Error(result.reason) }
+                if (reportFailure) _uiState.update { DashcamUiState.Error(result.reason) }
+                false
             }
         }
+    }
+
+    /**
+     * Easytech cams report their own hotspot name in `/app/getdeviceattr` (the call the
+     * keepalive already makes every 5 s). Used when the OS hides the SSID — Location off
+     * or denied — so TrafyModelIdentifier can still tell Trafy Dos Pro from Tres Pro.
+     */
+    private suspend fun advertisedSsid(device: DeviceInfo): String? {
+        if (device.protocol != ChipsetProtocol.EEASYTECH) return null
+        val body = DashcamHttpClient.get("http://${device.protocol.deviceIp}/app/getdeviceattr")
+            ?: return null
+        return runCatching { JSONObject(body).optJSONObject("info")?.optString("ssid") }
+            .getOrNull()
+            ?.takeIf { it.isNotBlank() }
     }
 
     /** Sliding window of recent auto-reconnect timestamps (epoch ms). */

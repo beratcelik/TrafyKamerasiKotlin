@@ -1,5 +1,6 @@
 package tr.trafy.kamera.ui.components
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -11,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -24,8 +26,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import tr.trafy.kamera.R
+import tr.trafy.kamera.data.model.FailureReason
 import tr.trafy.kamera.ui.theme.ColorDestructive
 import tr.trafy.kamera.ui.theme.ColorPrimary
 import tr.trafy.kamera.ui.theme.ColorSuccess
@@ -41,9 +45,14 @@ fun DashcamConnectionCard(
     availableNetworks: List<String> = emptyList(),
     onNetworkSelected: (String) -> Unit = {},
     deviceName: String = "Trafy Dos",
+    errorReason: FailureReason? = null,
     onConnectClick: () -> Unit,
     onLiveViewClick: () -> Unit,
     onDisconnect: () -> Unit,
+    onOpenLocationSettings: () -> Unit = {},
+    onOpenAppSettings: () -> Unit = {},
+    onOpenWifiSettings: () -> Unit = {},
+    onOpenWifiPanel: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -71,8 +80,13 @@ fun DashcamConnectionCard(
                 )
                 isScanning -> ScanningState()
                 else -> DisconnectedState(
-                    isConnecting   = isConnecting,
-                    onConnectClick = onConnectClick,
+                    isConnecting           = isConnecting,
+                    errorReason            = errorReason,
+                    onConnectClick         = onConnectClick,
+                    onOpenLocationSettings = onOpenLocationSettings,
+                    onOpenAppSettings      = onOpenAppSettings,
+                    onOpenWifiSettings     = onOpenWifiSettings,
+                    onOpenWifiPanel        = onOpenWifiPanel,
                 )
             }
         }
@@ -92,7 +106,7 @@ private fun ScanningState() {
         text      = stringResource(R.string.connection_scanning_title),
         style     = MaterialTheme.typography.titleLarge,
         color     = ColorTextPrimary,
-        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        textAlign = TextAlign.Center
     )
     CircularProgressIndicator(
         modifier    = Modifier
@@ -151,20 +165,40 @@ private fun NetworkSelectionState(
 @Composable
 private fun DisconnectedState(
     isConnecting: Boolean,
+    errorReason: FailureReason?,
     onConnectClick: () -> Unit,
+    onOpenLocationSettings: () -> Unit,
+    onOpenAppSettings: () -> Unit,
+    onOpenWifiSettings: () -> Unit,
+    onOpenWifiPanel: () -> Unit,
 ) {
+    // A failed attempt used to fall back to the plain "Connect" card, so users
+    // saw the spinner end with no hint why. Say what went wrong and link the
+    // settings screen that fixes it; hidden while a new attempt is running.
+    val error = errorReason?.takeUnless { isConnecting }
     Icon(
-        imageVector        = Icons.Filled.Wifi,
+        imageVector        = if (error != null) Icons.Filled.WifiOff else Icons.Filled.Wifi,
         contentDescription = stringResource(R.string.connection_wifi_cd),
         tint               = ColorTextSecondary,
         modifier           = Modifier.size(52.dp)
     )
     Spacer(modifier = Modifier.height(4.dp))
     Text(
-        text  = stringResource(R.string.connection_disconnected_title),
+        text  = stringResource(
+            if (error != null) R.string.connection_error_title
+            else R.string.connection_disconnected_title
+        ),
         style = MaterialTheme.typography.titleLarge,
         color = ColorTextPrimary
     )
+    if (error != null) {
+        Text(
+            text      = stringResource(error.messageRes()),
+            style     = MaterialTheme.typography.bodyMedium,
+            color     = ColorTextSecondary,
+            textAlign = TextAlign.Center
+        )
+    }
     Button(
         onClick  = onConnectClick,
         enabled  = !isConnecting,
@@ -180,21 +214,69 @@ private fun DisconnectedState(
             )
         } else {
             Text(
-                text     = stringResource(R.string.connection_button_connect),
+                text     = stringResource(
+                    if (error != null) R.string.connection_button_retry
+                    else R.string.connection_button_connect
+                ),
                 style    = MaterialTheme.typography.titleMedium,
                 color    = ColorTextPrimary,
                 modifier = Modifier.padding(vertical = 4.dp)
             )
         }
     }
-    Text(
-        text  = stringResource(
-            if (isConnecting) R.string.connection_connecting_hint
-            else R.string.connection_tap_hint
-        ),
-        style = MaterialTheme.typography.bodySmall,
-        color = ColorTextSecondary
-    )
+    if (error == null) {
+        Text(
+            text  = stringResource(
+                if (isConnecting) R.string.connection_connecting_hint
+                else R.string.connection_tap_hint
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = ColorTextSecondary
+        )
+        return
+    }
+    when (error) {
+        FailureReason.WIFI_DISABLED ->
+            SettingsLink(R.string.connection_button_wifi_on, onOpenWifiPanel)
+        // Scanning is blocked in both cases; joining the cam Wi-Fi manually still
+        // works — the subnet fast path picks it up on return.
+        FailureReason.LOCATION_SERVICES_OFF -> {
+            SettingsLink(R.string.connection_button_location_settings, onOpenLocationSettings)
+            SettingsLink(R.string.connection_button_wifi_settings, onOpenWifiSettings)
+        }
+        FailureReason.WIFI_PERMISSION_DENIED -> {
+            SettingsLink(R.string.connection_button_app_settings, onOpenAppSettings)
+            SettingsLink(R.string.connection_button_wifi_settings, onOpenWifiSettings)
+        }
+        FailureReason.NO_DASHCAM_FOUND,
+        FailureReason.WIFI_CONNECT_FAILED ->
+            SettingsLink(R.string.connection_button_wifi_settings, onOpenWifiSettings)
+        else -> Unit
+    }
+}
+
+@Composable
+private fun SettingsLink(@StringRes label: Int, onClick: () -> Unit) {
+    TextButton(onClick = onClick) {
+        Text(
+            text  = stringResource(label),
+            style = MaterialTheme.typography.bodyMedium,
+            color = ColorPrimary
+        )
+    }
+}
+
+@StringRes
+private fun FailureReason.messageRes(): Int = when (this) {
+    FailureReason.WIFI_DISABLED          -> R.string.connection_error_wifi_off
+    FailureReason.LOCATION_SERVICES_OFF  -> R.string.connection_error_location_off
+    FailureReason.WIFI_PERMISSION_DENIED -> R.string.connection_error_permission
+    FailureReason.NO_DASHCAM_FOUND       -> R.string.connection_error_no_dashcam
+    FailureReason.WIFI_CONNECT_FAILED    -> R.string.connection_error_wifi_connect
+    FailureReason.WIFI_NOT_CONNECTED,
+    FailureReason.IP_NOT_OBTAINED        -> R.string.connection_error_no_ip
+    FailureReason.ALL_PROTOCOLS_FAILED   -> R.string.connection_error_no_response
+    FailureReason.CONNECTION_LOST        -> R.string.connection_error_lost
 }
 
 @Composable

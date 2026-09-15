@@ -1,8 +1,9 @@
 package tr.trafy.kamera.ui.screens
 
-import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -58,20 +59,22 @@ fun HomeScreen(
     viewModel: DashcamViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
-    // Permission launcher — triggered when ViewModel reaches WifiPermissionRequired state
+    // Permission launcher — triggered when ViewModel reaches WifiPermissionRequired state.
+    // The ViewModel re-checks what was actually granted and either resumes connecting or
+    // shows the denial with a link to the app's permission settings.
     val permLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) viewModel.connect()
-        // If denied, uiState stays at WifiPermissionRequired; Connect button re-enables
-        // so the user can tap again and trigger the launcher again.
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        viewModel.onScanPermissionResult()
     }
 
-    // Auto-trigger permission request when the ViewModel signals it's needed
+    // Auto-trigger permission request when the ViewModel signals it's needed. Each request
+    // is a distinct state value, so tapping Connect again re-launches the prompt.
     LaunchedEffect(uiState) {
         if (uiState is DashcamUiState.WifiPermissionRequired) {
-            permLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+            permLauncher.launch(viewModel.scanPermissions())
         }
     }
 
@@ -88,6 +91,7 @@ fun HomeScreen(
     val isConnecting    = uiState is DashcamUiState.Connecting
     val isScanning      = uiState is DashcamUiState.ScanningWifi
     val availableNets   = (uiState as? DashcamUiState.WifiFound)?.networks ?: emptyList()
+    val errorReason     = (uiState as? DashcamUiState.Error)?.reason
     val defaultDeviceName = stringResource(R.string.home_default_device_name)
     // Resolve the friendly Trafy product name from the device's `model`
     // string (returned by getdeviceattr.cgi). Falls back to the chipset's
@@ -100,6 +104,16 @@ fun HomeScreen(
             fallback = it.protocol.displayName,
         )
     } ?: defaultDeviceName
+
+    // Opens a system settings screen from the connection error card. Launched in our
+    // task so Back returns here, where DashcamViewModel.onAppResumed retries.
+    val openSettings: (Intent) -> Unit = { intent ->
+        try {
+            context.startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            runCatching { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
+        }
+    }
 
     Column(
         modifier = modifier
@@ -136,14 +150,39 @@ fun HomeScreen(
             availableNetworks = availableNets,
             onNetworkSelected = viewModel::selectWifi,
             deviceName        = deviceName,
+            errorReason       = errorReason,
             onConnectClick    = viewModel::connect,
             onLiveViewClick   = onNavigateToLive,
             onDisconnect      = viewModel::disconnect,
+            onOpenWifiPanel   = {
+                openSettings(
+                    Intent(
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                            Settings.Panel.ACTION_WIFI
+                        } else {
+                            Settings.ACTION_WIFI_SETTINGS
+                        }
+                    )
+                )
+            },
+            onOpenLocationSettings = {
+                openSettings(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            },
+            onOpenAppSettings = {
+                openSettings(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", context.packageName, null),
+                    )
+                )
+            },
+            onOpenWifiSettings = {
+                openSettings(Intent(Settings.ACTION_WIFI_SETTINGS))
+            },
             modifier          = Modifier.padding(vertical = 8.dp)
         )
 
         // Shortcut row
-        val context = LocalContext.current
         HomeShortcutRow(
             onShopClick      = onNavigateToShop,
             onCommunityClick = onNavigateToCommunity,

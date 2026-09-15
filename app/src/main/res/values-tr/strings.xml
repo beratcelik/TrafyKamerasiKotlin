@@ -46,6 +46,20 @@
     <string name="connection_scanning_cd">Aranıyor</string>
     <string name="connection_wifi_cd">Wi-Fi</string>
     <string name="connection_connected_cd">Bağlandı</string>
+    <string name="connection_error_title">Bağlanılamadı</string>
+    <string name="connection_error_location_off">Telefonunuzun Konum özelliği kapalı. Konum kapalıyken Android, yakındaki kamera Wi-Fi ağlarını uygulamalara göstermez. Konumu açın ya da Wi-Fi ayarlarından kameranın ağına kendiniz bağlanıp (varsayılan şifre 12345678) tekrar deneyin.</string>
+    <string name="connection_error_permission">Android, kameranın Wi-Fi ağını aramak için uygulamaya Konum izninin (Tam konum) verilmesini şart koşuyor. İzni verin ya da Wi-Fi ayarlarından kameranın ağına kendiniz bağlanıp (varsayılan şifre 12345678) tekrar deneyin.</string>
+    <string name="connection_error_wifi_off">Telefonunuzun Wi-Fi\'ı kapalı. Kameraya bağlanabilmek için Wi-Fi\'ı açın.</string>
+    <string name="connection_button_wifi_on">Wi-Fi\'ı Aç</string>
+    <string name="connection_error_no_dashcam">Yakında Trafy kamera Wi-Fi ağı bulunamadı. Kameranın açık olduğundan emin olun ya da Wi-Fi ayarlarından kameranın ağına kendiniz bağlanıp (varsayılan şifre 12345678) tekrar deneyin.</string>
+    <string name="connection_error_wifi_connect">Kameranın Wi-Fi ağına bağlanılamadı. Bağlantı penceresinde kamerayı seçip onaylayın ya da Wi-Fi ayarlarından ağa kendiniz bağlanıp tekrar deneyin.</string>
+    <string name="connection_error_no_ip">Kameranın Wi-Fi ağına bağlanıldı ancak IP adresi alınamadı. Lütfen tekrar deneyin.</string>
+    <string name="connection_error_no_response">Kameranın Wi-Fi ağına bağlanıldı ancak kamera yanıt vermedi. Kamerayı yeniden başlatıp tekrar deneyin.</string>
+    <string name="connection_error_lost">Kamera bağlantısı koptu. Kameranın açık ve yakında olduğundan emin olun.</string>
+    <string name="connection_button_retry">Tekrar Dene</string>
+    <string name="connection_button_location_settings">Konumu Aç</string>
+    <string name="connection_button_app_settings">Uygulama İzinlerini Aç</string>
+    <string name="connection_button_wifi_settings">Wi-Fi Ayarları</string>
 
     <!-- Canlı -->
     <string name="live_view_cd">Canlı görüntü</string>

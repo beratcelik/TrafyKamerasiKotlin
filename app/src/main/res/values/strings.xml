@@ -46,6 +46,20 @@
     <string name="connection_scanning_cd">Scanning</string>
     <string name="connection_wifi_cd">Wi-Fi</string>
     <string name="connection_connected_cd">Connected</string>
+    <string name="connection_error_title">Couldn\'t connect</string>
+    <string name="connection_error_location_off">Your phone\'s Location is turned off. While it\'s off, Android hides nearby camera Wi-Fi networks from apps. Turn Location on, or join the camera\'s Wi-Fi yourself in Wi-Fi settings (default password 12345678) and try again.</string>
+    <string name="connection_error_permission">Android only lets the app look for the camera\'s Wi-Fi with the Location permission set to Precise. Allow it, or join the camera\'s Wi-Fi yourself in Wi-Fi settings (default password 12345678) and try again.</string>
+    <string name="connection_error_wifi_off">Your phone\'s Wi-Fi is turned off. Turn Wi-Fi on so the app can reach the camera.</string>
+    <string name="connection_button_wifi_on">Turn On Wi-Fi</string>
+    <string name="connection_error_no_dashcam">No Trafy camera Wi-Fi found nearby. Make sure the camera is powered on, or join its Wi-Fi yourself in Wi-Fi settings (default password 12345678) and try again.</string>
+    <string name="connection_error_wifi_connect">Couldn\'t join the camera\'s Wi-Fi. Select the camera in the connection prompt, or join its Wi-Fi yourself in Wi-Fi settings and try again.</string>
+    <string name="connection_error_no_ip">Joined the camera\'s Wi-Fi but didn\'t get an IP address. Please try again.</string>
+    <string name="connection_error_no_response">Connected to the camera\'s Wi-Fi but the camera didn\'t respond. Restart the camera and try again.</string>
+    <string name="connection_error_lost">The camera connection was lost. Make sure the camera is on and nearby.</string>
+    <string name="connection_button_retry">Try Again</string>
+    <string name="connection_button_location_settings">Turn On Location</string>
+    <string name="connection_button_app_settings">Open App Permissions</string>
+    <string name="connection_button_wifi_settings">Wi-Fi Settings</string>
 
     <!-- Live -->
     <string name="live_view_cd">Live view</string>

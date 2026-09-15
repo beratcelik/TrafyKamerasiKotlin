@@ -92,10 +92,15 @@ fun AppNavigation() {
     // Retry queued reports whenever the app returns to the foreground —
     // covers "internet came back mid-session" without waiting for the next
     // launch. Cheap: empty-queue short-circuit + 15-min debounce in the repo.
+    // Also lets a blocked cam connection retry once the user is back from
+    // Settings (Location turned on, permission granted, cam Wi-Fi joined).
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) reportViewModel.flushOnStartup()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                reportViewModel.flushOnStartup()
+                dashcamViewModel.onAppResumed()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }

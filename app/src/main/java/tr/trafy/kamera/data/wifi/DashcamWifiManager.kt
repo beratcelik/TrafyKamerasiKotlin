@@ -1,10 +1,13 @@
 package tr.trafy.kamera.data.wifi
 
+import android.Manifest
 import android.app.Application
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -15,9 +18,13 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import androidx.core.content.ContextCompat
+import androidx.core.location.LocationManagerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import tr.trafy.kamera.data.model.ChipsetProtocol
+import java.net.Inet4Address
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
@@ -30,6 +37,8 @@ import kotlin.coroutines.resume
  *   mobile data active for internet traffic).
  *   On API 24-28: Legacy WifiConfiguration API (system-level connection).
  * - [getCurrentDashcamSsid]: Checks if the phone is already connected to a dashcam WiFi (no scan).
+ * - [findUnvalidatedDashcamSubnetWifi]: Same question answered by IP subnet — works when the
+ *   SSID is location-redacted.
  * - [release]: Unregisters any active NetworkCallback (call on disconnect).
  */
 class DashcamWifiManager(private val application: Application) {
@@ -52,6 +61,15 @@ class DashcamWifiManager(private val application: Application) {
         data class Success(val network: Network?) : ConnectResult()
         data object Failure : ConnectResult()
     }
+
+    /** A Wi-Fi network the phone has already joined whose address looks like a dashcam hotspot. */
+    data class DashcamSubnetWifi(
+        val network: Network,
+        val clientIp: String,
+        val protocol: ChipsetProtocol,
+        /** The network's gateway is [protocol]'s cam IP — strong sign this is the cam itself. */
+        val gatewayMatches: Boolean,
+    )
 
     @Volatile private var activeCallback: ConnectivityManager.NetworkCallback? = null
 
@@ -80,7 +98,10 @@ class DashcamWifiManager(private val application: Application) {
 
     /**
      * Returns the SSID of the currently-connected WiFi if it matches a dashcam keyword,
-     * or null otherwise. Does NOT trigger a scan and does NOT require location permission.
+     * or null otherwise. Does NOT trigger a scan. On API 29+ Android reports the SSID as
+     * `<unknown ssid>` unless the app holds FINE location AND the Location toggle is on,
+     * so null here doesn't prove the phone is off the cam hotspot — see
+     * [findUnvalidatedDashcamSubnetWifi].
      */
     @Suppress("DEPRECATION")
     fun getCurrentDashcamSsid(): String? {
@@ -93,10 +114,80 @@ class DashcamWifiManager(private val application: Application) {
     }
 
     /**
+     * Finds a joined Wi-Fi network whose IPv4 address is in a known dashcam subnet
+     * ([ChipsetProtocol.forClientIp]) and that Android has NOT validated for internet.
+     *
+     * Needs no location permission and works with the Location toggle off — LinkProperties
+     * aren't location-redacted — so it recognises a user who joined the cam hotspot from
+     * system Wi-Fi settings while [getCurrentDashcamSsid] can't read the SSID. The VALIDATED
+     * guard keeps ordinary home routers on 192.168.0.x / 192.168.1.x out (cam hotspots have
+     * no internet); the handshake remains the final check.
+     */
+    @Suppress("DEPRECATION")
+    fun findUnvalidatedDashcamSubnetWifi(): DashcamSubnetWifi? {
+        val cm = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        for (net in cm.allNetworks) {
+            val caps = cm.getNetworkCapabilities(net) ?: continue
+            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) continue
+            if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) continue
+            val ip = ipv4Of(net) ?: continue
+            val protocol = ChipsetProtocol.forClientIp(ip) ?: continue
+            val gatewayMatches = cm.getLinkProperties(net)?.routes
+                ?.any { it.gateway?.hostAddress == protocol.deviceIp } == true
+            return DashcamSubnetWifi(net, ip, protocol, gatewayMatches)
+        }
+        return null
+    }
+
+    /** The phone's IPv4 address on [network], or null if none is assigned. */
+    fun ipv4Of(network: Network): String? {
+        val cm = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        return cm.getLinkProperties(network)
+            ?.linkAddresses
+            ?.map { it.address }
+            ?.firstOrNull { it is Inet4Address && !it.isLoopbackAddress }
+            ?.hostAddress
+    }
+
+    /**
+     * Runtime permissions to request before [scanForDashcams]. Android 12+ silently drops a
+     * FINE request (no dialog, result = denied) unless COARSE is requested with it.
+     */
+    fun scanPermissions(): Array<String> = arrayOf(
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+    )
+
+    /**
+     * True when [scanForDashcams] may see nearby networks. API 29+ needs FINE —
+     * "Approximate" alone yields nothing — and NEARBY_WIFI_DEVICES doesn't substitute on 33+.
+     */
+    fun hasScanPermission(): Boolean =
+        isGranted(Manifest.permission.ACCESS_FINE_LOCATION) ||
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+                isGranted(Manifest.permission.ACCESS_COARSE_LOCATION))
+
+    /**
+     * Scans only work with the Location toggle on: WifiPermissionsUtil.enforceCanAccessScanResults
+     * rejects startScan()/getScanResults() with "Location mode is disabled" before looking at any
+     * permission (verified on a Redmi Note 10 Pro, Android 13). With Location off only
+     * [findUnvalidatedDashcamSubnetWifi] can find the cam.
+     */
+    fun isLocationEnabled(): Boolean {
+        val lm = application.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        return LocationManagerCompat.isLocationEnabled(lm)
+    }
+
+    fun isWifiEnabled(): Boolean {
+        val wm = application.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        return wm.isWifiEnabled
+    }
+
+    /**
      * Scans for available WiFi networks and returns only those whose SSID contains
      * a known dashcam keyword (case-insensitive).
      *
-     * Requires ACCESS_FINE_LOCATION on API 26+ — caller must verify permission first.
+     * Requires [hasScanPermission] and [isLocationEnabled] — caller must verify first.
      * Returns an empty list on scan failure or no matching networks.
      */
     suspend fun scanForDashcams(): List<String> = withContext(Dispatchers.IO) {
@@ -231,6 +322,12 @@ class DashcamWifiManager(private val application: Application) {
 
     private fun isDashcamSsid(ssid: String): Boolean =
         DASHCAM_KEYWORDS.any { keyword -> ssid.contains(keyword, ignoreCase = true) }
+
+    // Deliberately not PermissionChecker: its app-op check reported FINE as denied on a
+    // Redmi (Android 13) while the permission and app-op were both granted, so the
+    // prompt returned instantly and the app showed "permission denied".
+    private fun isGranted(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(application, permission) == PackageManager.PERMISSION_GRANTED
 
     /** Bridges the WiFi scan broadcast into a coroutine. */
     @Suppress("DEPRECATION")

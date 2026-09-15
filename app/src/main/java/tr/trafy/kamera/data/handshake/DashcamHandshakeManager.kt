@@ -36,10 +36,16 @@ class DashcamHandshakeManager(
         AllwinnerV853HandshakeHandler(),
     )
 
-    suspend fun connect(): HandshakeResult {
+    /**
+     * @param clientIpOverride the phone's IPv4 on the dashcam Wi-Fi network when the caller
+     *   already read it from that network's LinkProperties. Null falls back to the first
+     *   wlan* interface address, which can be the wrong interface when the phone also runs
+     *   a hotspot or Wi-Fi Direct.
+     */
+    suspend fun connect(clientIpOverride: String? = null): HandshakeResult {
         Log.i(TAG, "=== connect() started ===")
 
-        val clientIp = wifiIpProvider.getClientIp()
+        val clientIp = clientIpOverride ?: wifiIpProvider.getClientIp()
         if (clientIp == null) {
             Log.e(TAG, "No WiFi IP detected — returning WIFI_NOT_CONNECTED")
             return HandshakeResult.Failure(FailureReason.WIFI_NOT_CONNECTED)
@@ -51,7 +57,7 @@ class DashcamHandshakeManager(
         }
 
         Log.i(TAG, "Client IP: $clientIp")
-        val primaryProtocol = detectPrimaryProtocol(clientIp)
+        val primaryProtocol = ChipsetProtocol.forClientIp(clientIp)
         Log.i(TAG, "Primary protocol detected: $primaryProtocol")
 
         val primary = allHandlers.firstOrNull { it.protocol == primaryProtocol }
@@ -89,24 +95,5 @@ class DashcamHandshakeManager(
 
         Log.e(TAG, "ALL protocols failed — returning ALL_PROTOCOLS_FAILED")
         return HandshakeResult.Failure(FailureReason.ALL_PROTOCOLS_FAILED)
-    }
-
-    /**
-     * Maps client IP prefix → primary ChipsetProtocol.
-     * Novatek check (ends with .254) must come before the plain MSTAR check
-     * because both share the "192.168.1." prefix.
-     *
-     * Source: HandShakeManager.java lines 77–105.
-     */
-    private fun detectPrimaryProtocol(clientIp: String): ChipsetProtocol? = when {
-        clientIp.startsWith("192.168.25.")                                 -> ChipsetProtocol.GENERALPLUS
-        clientIp.startsWith("192.168.0.")                                  -> ChipsetProtocol.HI_DVR
-        clientIp.startsWith("192.168.1.") && clientIp.endsWith(".254")     -> ChipsetProtocol.NOVATEK
-        clientIp.startsWith("192.168.1.")                                  -> ChipsetProtocol.MSTAR
-        clientIp.startsWith("192.72.1.")                                   -> ChipsetProtocol.MSTAR_HZ
-        clientIp.startsWith("192.168.201.")                                -> ChipsetProtocol.SIGMA_STAR
-        clientIp.startsWith("192.168.169.")                                -> ChipsetProtocol.EEASYTECH
-        clientIp.startsWith("192.168.35.")                                 -> ChipsetProtocol.ALLWINNER_V853
-        else                                                               -> null
     }
 }

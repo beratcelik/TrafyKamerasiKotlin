@@ -1,12 +1,11 @@
 *.iml
 .gradle
 /local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
+# Local IDE / editor state and Kotlin tooling scratch — machine-specific,
+# nothing under these is tracked.
+/.idea/
+/.vscode/
+/.kotlin/
 .DS_Store
 /build
 /captures

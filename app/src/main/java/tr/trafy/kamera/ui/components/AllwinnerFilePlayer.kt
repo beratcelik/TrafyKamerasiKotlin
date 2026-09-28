@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,53 +53,46 @@ fun AllwinnerFilePlayer(
     onFrame: ((Bitmap) -> Unit)? = null,
 ) {
 
-    val player = remember(fileUri) {
-        IjkMediaPlayer.loadLibrariesOnce(null)
-        IjkMediaPlayer().apply {
-            // The Allwinner cam streams MPEG-TS now (wrapped by MpegTsMuxer
-            // around its raw H.264 elementary stream), so we let FFmpeg
-            // autoprobe — no `f=h264` override — and use live-friendly
-            // probe + buffer settings.
-            //
-            // Small analyzeduration / probesize so playback starts within
-            // ~100 ms instead of waiting on a 5 s probe. PAT/PMT are
-            // re-emitted every ~30 frames by our muxer, well within these
-            // windows.
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "analyzeduration", "100000")
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize",       "102400")
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "fflags",          "discardcorrupt")
-            // Live-stream pacing: keep buffering, skip ahead if we get
-            // behind real-time, no seeking. `framedrop` lets the decoder
-            // drop late frames instead of hanging on them.
-            // Live preview: bound the buffer (infbuf=0 + small max-buffer-size)
-            // so accumulated lag drains by frame-dropping instead of growing.
-            // infbuf=1 (which IjkPlayer docs call "live mode") actually means
-            // unbounded buffering — wrong for our use case.
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "infbuf",           0L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "max-buffer-size",  1_000_000L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "framedrop",        10L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "packet-buffering", 1L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "min-frames",       2L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC,  "skip_loop_filter", 48L)
-            // Software decoding for the same reason as the HiSilicon-family
-            // playback overlay — see IjkVideoPlayerOverlay in MediaScreen.kt.
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec",            0L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 0L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared",      1L)
-        }
+    // Teardown routed through IjkPlayerHandle so the SurfaceTextureListener
+    // below can never call into a freed native player (crash report #8 —
+    // "mpjni: stop: null mp"). See IjkPlayerLifecycle.kt.
+    val ijk = rememberIjkPlayer(key = fileUri, tag = TAG) {
+        // The Allwinner cam streams MPEG-TS now (wrapped by MpegTsMuxer
+        // around its raw H.264 elementary stream), so we let FFmpeg
+        // autoprobe — no `f=h264` override — and use live-friendly
+        // probe + buffer settings.
+        //
+        // Small analyzeduration / probesize so playback starts within
+        // ~100 ms instead of waiting on a 5 s probe. PAT/PMT are
+        // re-emitted every ~30 frames by our muxer, well within these
+        // windows.
+        setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "analyzeduration", "100000")
+        setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize",       "102400")
+        setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "fflags",          "discardcorrupt")
+        // Live-stream pacing: keep buffering, skip ahead if we get
+        // behind real-time, no seeking. `framedrop` lets the decoder
+        // drop late frames instead of hanging on them.
+        // Live preview: bound the buffer (infbuf=0 + small max-buffer-size)
+        // so accumulated lag drains by frame-dropping instead of growing.
+        // infbuf=1 (which IjkPlayer docs call "live mode") actually means
+        // unbounded buffering — wrong for our use case.
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "infbuf",           0L)
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "max-buffer-size",  1_000_000L)
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "framedrop",        10L)
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "packet-buffering", 1L)
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "min-frames",       2L)
+        setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC,  "skip_loop_filter", 48L)
+        // Software decoding for the same reason as the HiSilicon-family
+        // playback overlay — see IjkVideoPlayerOverlay in MediaScreen.kt.
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec",            0L)
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 0L)
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared",      1L)
     }
+    val player = ijk.player
 
     val currentOnFrame by rememberUpdatedState(onFrame)
     val textureViewRef = remember { mutableStateOf<TextureView?>(null) }
     val playbackStarted = remember { mutableStateOf(false) }
-
-    DisposableEffect(fileUri) {
-        onDispose {
-            Log.d(TAG, "dispose — releasing IjkPlayer")
-            try { player.stop() } catch (_: Exception) {}
-            player.release()
-        }
-    }
 
     androidx.compose.foundation.layout.Box(
         modifier = modifier.fillMaxWidth().aspectRatio(16f / 9f),
@@ -114,6 +106,10 @@ fun AllwinnerFilePlayer(
                             surface: SurfaceTexture, w: Int, h: Int,
                         ) {
                             Log.d(TAG, "surfaceTextureAvailable ${w}x$h — preparing $fileUri")
+                            if (!ijk.isAlive) {
+                                Log.w(TAG, "surface arrived after release — ignoring")
+                                return
+                            }
                             try {
                                 player.setSurface(Surface(surface))
                                 player.dataSource = fileUri
@@ -144,8 +140,7 @@ fun AllwinnerFilePlayer(
                             surface: SurfaceTexture,
                         ): Boolean {
                             Log.d(TAG, "surfaceTextureDestroyed — stopping IjkPlayer")
-                            try { player.stop() } catch (_: Exception) {}
-                            player.setSurface(null)
+                            ijk.stopAndDetachSurface()
                             textureViewRef.value = null
                             return true
                         }

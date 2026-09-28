@@ -111,6 +111,7 @@ import tr.trafy.kamera.data.media.MjpegRtspPlayer
 import tr.trafy.kamera.ui.components.AllwinnerFilePlayer
 import tr.trafy.kamera.ui.components.BoundingBoxOverlay
 import tr.trafy.kamera.ui.viewmodel.LiveVisionOverlayViewModel
+import tr.trafy.kamera.ui.components.rememberIjkPlayer
 import tv.danmaku.ijk.media.player.IjkMediaPlayer
 
 @Composable
@@ -1179,27 +1180,28 @@ private fun IjkVideoPlayerOverlay(
         }
     }
 
-    val ijkPlayer = remember(url) {
-        IjkMediaPlayer.loadLibrariesOnce(null)
-        IjkMediaPlayer().apply {
-            // HTTP file playback — keep analyzeduration small so playback starts quickly.
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "analyzeduration", "100000")
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize",       "1048576")
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "fflags",          "nobuffer")
-            setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC,  "skip_loop_filter", 48L)
-            // Software decoding for the playback overlay. The hardware
-            // OMX.qcom.video.decoder.avc on Adreno-class chipsets rejects
-            // SurfaceTexture-backed Surfaces (the kind a TextureView gives
-            // us), causing `feed_input_buffer: SDL_AMediaCodec_getInputBuffer
-            // failed` immediately after start — audio plays, video stays
-            // black. FFmpeg's software H.264 decoder works with any Surface,
-            // and the AI-overlay tap polls TextureView.bitmap so we need a
-            // TextureView regardless. Costs CPU but works.
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec",             0L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 0L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared",      1L)
-        }
+    // Player + TextureView teardown is routed through IjkPlayerHandle so the
+    // SurfaceTextureListener below can never call into a freed native player
+    // (crash report #8 — "mpjni: stop: null mp"). See IjkPlayerLifecycle.kt.
+    val ijk = rememberIjkPlayer(key = url, tag = "MediaScreen") {
+        // HTTP file playback — keep analyzeduration small so playback starts quickly.
+        setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "analyzeduration", "100000")
+        setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize",       "1048576")
+        setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "fflags",          "nobuffer")
+        setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC,  "skip_loop_filter", 48L)
+        // Software decoding for the playback overlay. The hardware
+        // OMX.qcom.video.decoder.avc on Adreno-class chipsets rejects
+        // SurfaceTexture-backed Surfaces (the kind a TextureView gives
+        // us), causing `feed_input_buffer: SDL_AMediaCodec_getInputBuffer
+        // failed` immediately after start — audio plays, video stays
+        // black. FFmpeg's software H.264 decoder works with any Surface,
+        // and the AI-overlay tap polls TextureView.bitmap so we need a
+        // TextureView regardless. Costs CPU but works.
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec",             0L)
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 0L)
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared",      1L)
     }
+    val ijkPlayer = ijk.player
 
     // ── AI overlay state ───────────────────────────────────────────────────
     // Single shared, persistent preference (default ON). Lives in
@@ -1230,6 +1232,10 @@ private fun IjkVideoPlayerOverlay(
                             surface: android.graphics.SurfaceTexture, w: Int, h: Int,
                         ) {
                             Log.d("MediaScreen", "IjkVideoPlayerOverlay surfaceTextureAvailable ${w}x$h — $url")
+                            if (!ijk.isAlive) {
+                                Log.w("MediaScreen", "IjkVideoPlayerOverlay: surface arrived after release — ignoring")
+                                return
+                            }
                             try {
                                 ijkPlayer.setSurface(android.view.Surface(surface))
                                 ijkPlayer.dataSource = url
@@ -1256,8 +1262,7 @@ private fun IjkVideoPlayerOverlay(
                             surface: android.graphics.SurfaceTexture,
                         ): Boolean {
                             Log.d("MediaScreen", "IjkVideoPlayerOverlay surfaceTextureDestroyed")
-                            ijkPlayer.stop()
-                            ijkPlayer.setSurface(null)
+                            ijk.stopAndDetachSurface()
                             textureViewRef.value = null
                             return true   // releases the SurfaceTexture
                         }
@@ -1352,13 +1357,9 @@ private fun IjkVideoPlayerOverlay(
         )
     }
 
-    DisposableEffect(url) {
-        onDispose {
-            Log.d("MediaScreen", "IjkVideoPlayerOverlay dispose — releasing IjkPlayer")
-            ijkPlayer.stop()
-            ijkPlayer.release()
-        }
-    }
+    // No DisposableEffect here: rememberIjkPlayer owns the release, so the
+    // player is freed exactly once whether the overlay is dismissed or `url`
+    // changes underneath it.
 }
 
 // ── In-app photo viewer ─────────────────────────────────────────────────────

@@ -80,6 +80,7 @@ import tr.trafy.kamera.ui.viewmodel.CaptureState
 import tr.trafy.kamera.ui.viewmodel.LiveUiState
 import tr.trafy.kamera.ui.viewmodel.LiveViewModel
 import tr.trafy.kamera.ui.viewmodel.LiveVisionOverlayViewModel
+import tr.trafy.kamera.ui.components.rememberIjkPlayer
 import tv.danmaku.ijk.media.player.IjkMediaPlayer
 
 private const val TAG = "Trafy.LiveScreen"
@@ -537,41 +538,34 @@ private fun RtspPlayer(
     overlayScene: tr.trafy.kamera.data.vision.TrackedScene? = null,
 ) {
 
-    val ijkPlayer = remember(rtspUrl) {
-        IjkMediaPlayer.loadLibrariesOnce(null)
-        IjkMediaPlayer().apply {
-            // FFmpeg format options
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "rtsp_transport", "tcp")
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "stimeout",       "5000000")
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "analyzeduration","100000")
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize",      "1048576")
-            // Disable FFmpeg input buffering — live RTSP streams should start immediately
-            setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "fflags",         "nobuffer")
-            // Codec options
-            setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "skip_loop_filter", 48L)
-            // Player options
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec",            1L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 1L)
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared",      1L)
-            // Disable packet buffering: IjkPlayer normally waits until the packet
-            // buffer reaches its watermark before emitting BUFFERING_END and starting
-            // rendering.  Easytech's AAC audio stream has an invalid sampling-rate
-            // index (13) which breaks audio-codec initialisation; the player then
-            // tries to sync audio/video and the buffer watermark is never reached,
-            // leaving the stream frozen in BUFFERING_START state indefinitely.
-            // Setting packet-buffering=0 bypasses that watermark and renders video
-            // frames as soon as they arrive from the decoder.
-            setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "packet-buffering", 0L)
-        }
+    // Teardown routed through IjkPlayerHandle so the SurfaceTextureListener
+    // below can never call into a freed native player (crash report #8 —
+    // "mpjni: stop: null mp"). See IjkPlayerLifecycle.kt.
+    val ijk = rememberIjkPlayer(key = rtspUrl, tag = TAG) {
+        // FFmpeg format options
+        setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "rtsp_transport", "tcp")
+        setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "stimeout",       "5000000")
+        setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "analyzeduration","100000")
+        setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "probesize",      "1048576")
+        // Disable FFmpeg input buffering — live RTSP streams should start immediately
+        setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "fflags",         "nobuffer")
+        // Codec options
+        setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "skip_loop_filter", 48L)
+        // Player options
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec",            1L)
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 1L)
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared",      1L)
+        // Disable packet buffering: IjkPlayer normally waits until the packet
+        // buffer reaches its watermark before emitting BUFFERING_END and starting
+        // rendering.  Easytech's AAC audio stream has an invalid sampling-rate
+        // index (13) which breaks audio-codec initialisation; the player then
+        // tries to sync audio/video and the buffer watermark is never reached,
+        // leaving the stream frozen in BUFFERING_START state indefinitely.
+        // Setting packet-buffering=0 bypasses that watermark and renders video
+        // frames as soon as they arrive from the decoder.
+        setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "packet-buffering", 0L)
     }
-
-    DisposableEffect(rtspUrl) {
-        onDispose {
-            Log.d(TAG, "RtspPlayer dispose — releasing IjkPlayer")
-            ijkPlayer.stop()
-            ijkPlayer.release()
-        }
-    }
+    val ijkPlayer = ijk.player
 
     // Use rememberUpdatedState so the captured `onFrame` reference inside the
     // polling loop and the SurfaceTextureListener always sees the latest
@@ -595,6 +589,10 @@ private fun RtspPlayer(
                             surface: android.graphics.SurfaceTexture, w: Int, h: Int,
                         ) {
                             Log.d(TAG, "RtspPlayer surfaceTextureAvailable ${w}x$h — $rtspUrl")
+                            if (!ijk.isAlive) {
+                                Log.w(TAG, "RtspPlayer: surface arrived after release — ignoring")
+                                return
+                            }
                             try {
                                 ijkPlayer.setSurface(android.view.Surface(surface))
                                 ijkPlayer.dataSource = rtspUrl
@@ -626,8 +624,7 @@ private fun RtspPlayer(
                             surface: android.graphics.SurfaceTexture,
                         ): Boolean {
                             Log.d(TAG, "RtspPlayer surfaceTextureDestroyed")
-                            ijkPlayer.stop()
-                            ijkPlayer.setSurface(null)
+                            ijk.stopAndDetachSurface()
                             textureViewRef.value = null
                             return true
                         }

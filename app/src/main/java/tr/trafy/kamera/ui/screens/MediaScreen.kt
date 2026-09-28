@@ -111,6 +111,7 @@ import tr.trafy.kamera.data.media.MjpegRtspPlayer
 import tr.trafy.kamera.ui.components.AllwinnerFilePlayer
 import tr.trafy.kamera.ui.components.BoundingBoxOverlay
 import tr.trafy.kamera.ui.viewmodel.LiveVisionOverlayViewModel
+import tr.trafy.kamera.data.network.DashcamProcessNetwork
 import tr.trafy.kamera.ui.components.rememberIjkPlayer
 import tv.danmaku.ijk.media.player.IjkMediaPlayer
 
@@ -1171,11 +1172,11 @@ private fun IjkVideoPlayerOverlay(
     // HTTP socket can reach 192.168.0.1. Without this, the phone's default network
     // (cellular) is used and the connection times out. Mirrors LiveViewModel.
     DisposableEffect(network) {
-        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        cm.bindProcessToNetwork(network)
+        val cm = DashcamProcessNetwork.connectivityManager(ctx)
+        DashcamProcessNetwork.bind(cm, network)
         Log.i("MediaScreen", "IjkVideoPlayerOverlay: bound process to $network")
         onDispose {
-            cm.bindProcessToNetwork(null)
+            DashcamProcessNetwork.release(cm, network)
             Log.i("MediaScreen", "IjkVideoPlayerOverlay: unbound process")
         }
     }
@@ -1388,8 +1389,8 @@ private fun PhotoViewerOverlay(url: String, network: Network?, onDismiss: () -> 
 
     DisposableEffect(network) {
         val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        cm.bindProcessToNetwork(network)
-        onDispose { cm.bindProcessToNetwork(null) }
+        DashcamProcessNetwork.bind(cm, network)
+        onDispose { DashcamProcessNetwork.release(cm, network) }
     }
 
     Box(

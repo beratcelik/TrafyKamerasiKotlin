@@ -15,6 +15,7 @@ import tr.trafy.kamera.data.media.MstarLiveRepository
 import tr.trafy.kamera.data.media.HiDvrMediaRepository
 import tr.trafy.kamera.data.model.ChipsetProtocol
 import tr.trafy.kamera.data.model.DeviceInfo
+import tr.trafy.kamera.data.network.DashcamProcessNetwork
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -143,8 +144,10 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiState.value = LiveUiState.Preparing
 
-            // Bind the process so IjkPlayer's native RTSP sockets route through dashcam WiFi
-            connectivityManager.bindProcessToNetwork(network)
+            // Bind the process so IjkPlayer's native RTSP sockets route through dashcam WiFi.
+            // Released in teardownLive's finally, and dropped by
+            // DashcamProcessNetwork if the cam's network dies under us.
+            DashcamProcessNetwork.bind(connectivityManager, network)
             Log.i(TAG, "startStream: process bound to network=$network")
 
             val ip = device.protocol.deviceIp
@@ -349,23 +352,33 @@ class LiveViewModel(application: Application) : AndroidViewModel(application) {
         // so the cam's exitrecorder → 500ms → rec=1 call survives an
         // activity kill from the Live tab. Bounded by a generous timeout
         // so a wedged cam can't hold the supervisor forever.
+        val boundNetwork = loadedNetwork
         cleanupScope.launch {
-            kotlinx.coroutines.withTimeoutOrNull(8_000L) {
-                val ip = device.protocol.deviceIp
-                when (device.protocol) {
-                    ChipsetProtocol.ALLWINNER_V853 -> { /* live stream already cancelled above; relay session stays alive */ }
-                    ChipsetProtocol.GENERALPLUS    -> gpLiveRepo.exitLive()
-                    ChipsetProtocol.EEASYTECH      -> eeasyRepo.exitLive(ip)
-                    // MStar kept recording throughout preview and needs no
-                    // client (un)registration — just drop the RTSP stream.
-                    ChipsetProtocol.MSTAR          -> { /* no-op: nothing to resume/unregister */ }
-                    else -> {
-                        hiDvrRepo.unregisterClient(ip, device.clientIp)
-                        hiDvrRepo.startRecording(ip)
+            // The unbind lives in `finally`, not inside the timeout block: a cam
+            // that stops answering used to make withTimeoutOrNull expire before
+            // the unbind ran, leaving the process pinned to a network that was
+            // about to be destroyed. Every later socket in the app then failed
+            // with ENONET and no reconnect could succeed until the app was
+            // force-stopped.
+            try {
+                kotlinx.coroutines.withTimeoutOrNull(8_000L) {
+                    val ip = device.protocol.deviceIp
+                    when (device.protocol) {
+                        ChipsetProtocol.ALLWINNER_V853 -> { /* live stream already cancelled above; relay session stays alive */ }
+                        ChipsetProtocol.GENERALPLUS    -> gpLiveRepo.exitLive()
+                        ChipsetProtocol.EEASYTECH      -> eeasyRepo.exitLive(ip)
+                        // MStar kept recording throughout preview and needs no
+                        // client (un)registration — just drop the RTSP stream.
+                        ChipsetProtocol.MSTAR          -> { /* no-op: nothing to resume/unregister */ }
+                        else -> {
+                            hiDvrRepo.unregisterClient(ip, device.clientIp)
+                            hiDvrRepo.startRecording(ip)
+                        }
                     }
                 }
-                // Unbind AFTER exit calls complete so they still route through dashcam WiFi
-                connectivityManager.bindProcessToNetwork(null)
+            } finally {
+                // Unbind AFTER the exit calls so they still route through dashcam WiFi.
+                DashcamProcessNetwork.release(connectivityManager, boundNetwork)
                 Log.i(TAG, "teardownLive: process unbound from dashcam network")
             }
         }

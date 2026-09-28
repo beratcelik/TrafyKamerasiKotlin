@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.ConnectivityManager
+import tr.trafy.kamera.data.network.DashcamProcessNetwork
 import android.net.Network
 import android.net.Uri
 import android.util.Log
@@ -92,9 +93,9 @@ class HiDvrThumbnailFetcher(
         // so MMR's native HTTP stack reaches `192.168.0.1`. Wrap in a
         // timeout — without one, MMR can hang for ~30s on a single bad file
         // and starve other extractions in the semaphore queue.
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val cm = DashcamProcessNetwork.connectivityManager(context)
         val previous = cm.boundNetworkForProcess
-        if (network != null) cm.bindProcessToNetwork(network)
+        if (network != null) DashcamProcessNetwork.bind(cm, network)
         try {
             withTimeout(MMR_TIMEOUT_MS) {
                 withContext(Dispatchers.IO) {
@@ -120,7 +121,7 @@ class HiDvrThumbnailFetcher(
         } catch (e: Exception) {
             Log.w(TAG, "extract failed: $httpUrl — ${e.message}")
         } finally {
-            cm.bindProcessToNetwork(previous)
+            DashcamProcessNetwork.restore(cm, previous)
         }
         // Single source of truth: either the JPG made it to disk before any
         // exception, in which case we keep it, or it didn't and we clean up.

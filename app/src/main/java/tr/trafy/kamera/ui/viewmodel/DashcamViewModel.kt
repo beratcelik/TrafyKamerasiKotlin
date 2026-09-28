@@ -17,6 +17,7 @@ import tr.trafy.kamera.data.allwinner.AllwinnerNetwork
 import tr.trafy.kamera.data.allwinner.AllwinnerSessionHolder
 import tr.trafy.kamera.data.generalplus.GeneralplusSession
 import tr.trafy.kamera.data.network.DashcamHttpClient
+import tr.trafy.kamera.data.network.DashcamProcessNetwork
 import tr.trafy.kamera.data.settings.LastConnectedDevicePreferences
 import tr.trafy.kamera.data.network.WifiIpProvider
 import tr.trafy.kamera.data.wifi.DashcamWifiManager
@@ -117,6 +118,9 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
     private val _connectedNetwork = MutableStateFlow<Network?>(null)
     val connectedNetwork: StateFlow<Network?> = _connectedNetwork.asStateFlow()
 
+    private val connectivityManager =
+        DashcamProcessNetwork.connectivityManager(application)
+
     init {
         // The app's primary job is to be paired with a dashcam, so kick off the
         // scan/connect flow as soon as the ViewModel is created — no manual
@@ -144,6 +148,16 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         }
 
         viewModelScope.launch {
+            // Backstop before anything opens a socket. Live preview and in-app
+            // playback pin the whole process to the cam's network; if that
+            // network died while they held it (cam power-cycled, AP dropped),
+            // every socket here fails instantly with ENONET and no amount of
+            // rebinding the per-client socket factories below can help. Drop a
+            // dead pin first so the handshake gets a usable route.
+            if (DashcamProcessNetwork.clearIfStale(connectivityManager)) {
+                Log.w(TAG, "connect: cleared a stale process network binding before handshake")
+            }
+
             // ── Fast path: already on dashcam WiFi ─────────────────────────────
             val currentSsid = wifiManager.getCurrentDashcamSsid()
             if (currentSsid != null) {
@@ -589,6 +603,10 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         Log.w(TAG, "onConnectionLost: dashcam Wi-Fi dropped — clearing bindings")
         stopEasytechKeepalive()
         stopMstarKeepalive()
+        // The process-wide pin goes too. Nothing should stay routed at a cam
+        // network that just went away, and leaving it set is what used to make
+        // the app unrecoverable without a force-stop.
+        DashcamProcessNetwork.clear(connectivityManager)
         DashcamHttpClient.bindToNetwork(null)
         GeneralplusSession.bindToNetwork(null)
         AllwinnerNetwork.bindToNetwork(null)

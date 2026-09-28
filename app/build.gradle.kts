@@ -33,8 +33,8 @@ android {
         applicationId = "tr.trafy.kamera"
         minSdk = 24
         targetSdk = 36
-        versionCode = 24
-        versionName = "1.6.13"
+        versionCode = 25
+        versionName = "1.6.14"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -59,10 +59,12 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
-            // Crash reporting relies on plain-text stack traces (fingerprints
-            // hash class.method names). If minify is ever enabled, either keep
-            // mapping.txt for every release or add -dontobfuscate.
-            isMinifyEnabled = false
+            // R8 on, obfuscation included: Play penalises apps under 25%
+            // obfuscation. Crash reporting still works because
+            // proguard-rules.pro pins the names of tr.trafy.kamera.** — see the
+            // rationale there. Everything else (Compose, OkHttp, Coil, androidx)
+            // is renamed, which is what Play measures.
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -110,7 +112,12 @@ val verify16KbAlignment = tasks.register<Exec>("verify16KbAlignment") {
     val script = rootProject.file("scripts/verify-16kb-alignment.sh")
     val mergedLibs = layout.buildDirectory.dir("intermediates/merged_native_libs")
     onlyIf { script.exists() && mergedLibs.get().asFile.exists() }
-    commandLine("bash", script.absolutePath, mergedLibs.get().asFile.absolutePath)
+    // Pass the build's own abiFilters so the script only inspects ABIs we
+    // actually package. merged_native_libs still contains every ABI our
+    // dependencies ship.
+    val abis = android.defaultConfig.ndk.abiFilters.takeIf { it.isNotEmpty() }
+        ?.joinToString(",") ?: "arm64-v8a,x86_64"
+    commandLine("bash", script.absolutePath, mergedLibs.get().asFile.absolutePath, abis)
 }
 
 // Wire the check into debug and release assembly so it runs whenever native libs
@@ -135,7 +142,15 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.coil.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.ijkplayer)
+    // ijkplayer's POM drags in com.google.android.material:material:1.5.0, whose
+    // BottomSheetDialog calls Window.setStatusBarColor — deprecated in API 35 and
+    // flagged by Play Console. Nothing in the AAR references Material: 0 of its 81
+    // classes, and none of its resources or manifest entries. We render with
+    // Compose Material3, so the dependency is dead weight that only costs us a
+    // deprecation warning.
+    implementation(libs.ijkplayer) {
+        exclude(group = "com.google.android.material")
+    }
     implementation(libs.tink.android)
     // KCP (reliable UDP) — used by Allwinner V853 cams for live preview and
     // recorded-file playback. Pure-Java, no Netty dependency.

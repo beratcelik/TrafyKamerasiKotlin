@@ -24,6 +24,14 @@ if [[ ! -d "$TARGET_DIR" ]]; then
   exit 2
 fi
 
+# Which ABI directories to inspect, comma-separated. The gradle task passes the
+# build's own abiFilters. Google's 16 KB requirement covers 64-bit ABIs only, and
+# the merged_native_libs tree we are pointed at still holds every ABI the
+# dependencies ship — including ones abiFilters drops before packaging. Checking
+# those produced pure noise: the ijkplayer armeabi-v7a/x86 prebuilts are 0x1000
+# aligned but never reach the APK.
+ABI_ALLOWLIST="${2:-arm64-v8a,x86_64}"
+
 # Prefer llvm-readelf (bundled with the NDK); fall back to readelf. If the NDK
 # ships the tool, try there before falling back to PATH. This keeps the check
 # useful on macOS dev machines where neither binary is on PATH by default.
@@ -32,17 +40,34 @@ if command -v llvm-readelf >/dev/null 2>&1; then
   READELF="llvm-readelf"
 elif command -v readelf >/dev/null 2>&1; then
   READELF="readelf"
-elif [[ -n "${ANDROID_NDK:-}${ANDROID_NDK_HOME:-}${ANDROID_NDK_ROOT:-}" ]]; then
-  # NDK llvm-readelf location: <ndk>/toolchains/llvm/prebuilt/<host>/bin/llvm-readelf
-  NDK_ROOT="${ANDROID_NDK:-${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}}"
-  for host in darwin-x86_64 linux-x86_64 windows-x86_64; do
-    candidate="$NDK_ROOT/toolchains/llvm/prebuilt/$host/bin/llvm-readelf"
-    if [[ -x "$candidate" ]]; then READELF="$candidate"; break; fi
+else
+  # Look inside any NDK we can locate. The explicit NDK env vars come first,
+  # then every NDK installed under the SDK (newest wins) — that last part is
+  # what makes the check actually run on a stock dev machine, where none of
+  # ANDROID_NDK*/llvm-readelf are on PATH and the check silently skipped.
+  ndk_roots=()
+  for v in "${ANDROID_NDK:-}" "${ANDROID_NDK_HOME:-}" "${ANDROID_NDK_ROOT:-}"; do
+    [[ -n "$v" ]] && ndk_roots+=("$v")
+  done
+  SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+  if [[ -z "$SDK_ROOT" && -f "$(dirname "$0")/../local.properties" ]]; then
+    SDK_ROOT=$(sed -n 's/^sdk\.dir=//p' "$(dirname "$0")/../local.properties" | tail -1)
+  fi
+  [[ -z "$SDK_ROOT" && -d "$HOME/Library/Android/sdk" ]] && SDK_ROOT="$HOME/Library/Android/sdk"
+  [[ -z "$SDK_ROOT" && -d "$HOME/Android/Sdk" ]] && SDK_ROOT="$HOME/Android/Sdk"
+  if [[ -n "$SDK_ROOT" && -d "$SDK_ROOT/ndk" ]]; then
+    while IFS= read -r d; do ndk_roots+=("$d"); done < <(ls -d "$SDK_ROOT"/ndk/*/ 2>/dev/null | sort -V -r)
+  fi
+  for NDK_ROOT in "${ndk_roots[@]}"; do
+    for host in darwin-x86_64 darwin-arm64 linux-x86_64 windows-x86_64; do
+      candidate="$NDK_ROOT/toolchains/llvm/prebuilt/$host/bin/llvm-readelf"
+      if [[ -x "$candidate" ]]; then READELF="$candidate"; break 2; fi
+    done
   done
 fi
 
 if [[ -z "$READELF" ]]; then
-  msg="verify-16kb-alignment: llvm-readelf / readelf not found — skipping (set ANDROID_NDK or add to PATH to enforce)"
+  msg="verify-16kb-alignment: llvm-readelf / readelf not found in PATH, ANDROID_NDK* or the SDK's ndk/ dir — skipping (set ANDROID_NDK or STRICT_VERIFY=1 to enforce)"
   if [[ "${STRICT_VERIFY:-0}" == "1" ]]; then
     echo "$msg" >&2
     exit 3
@@ -59,9 +84,14 @@ FAILED_FILES=()
 
 while IFS= read -r -d '' so; do
   rel="${so#$TARGET_DIR/}"
+  abi="$(basename "$(dirname "$so")")"
+  case ",$ABI_ALLOWLIST," in
+    *",$abi,"*) ;;
+    *) continue ;;
+  esac
   # Pull "Align" column from LOAD program headers. Output lines look like:
   #   LOAD 0x000000 0x... 0x... 0x... 0x... R E 0x10000
-  aligns="$("$READELF" -l "$so" 2>/dev/null | awk '/^  LOAD/ { print $NF }' | tr -d ',')"
+  aligns="$("$READELF" -l "$so" 2>/dev/null | awk '/^  LOAD/ { print $NF }' | tr -d ',' | sort -u)"
   if [[ -z "$aligns" ]]; then
     echo "WARN: no LOAD segments found in $rel (skipping)" >&2
     continue

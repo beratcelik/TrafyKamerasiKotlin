@@ -332,6 +332,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 // default and the user would be locked out of their own camera.
                 tr.trafy.kamera.data.wifi.DashcamWifiCredentials
                     .remember(getApplication(), ssid, newPassword)
+                // A renamed hotspot no longer matches the factory SSID keywords;
+                // without this the next scan reports "no dashcam found".
+                tr.trafy.kamera.data.wifi.KnownDashcamSsids
+                    .remember(getApplication(), ssid)
                 _actionFeedback.update { SettingsActionFeedback.WifiSaved }
             }
         }

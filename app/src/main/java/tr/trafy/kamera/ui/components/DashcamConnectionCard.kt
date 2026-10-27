@@ -3,6 +3,7 @@ package tr.trafy.kamera.ui.components
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -46,6 +47,7 @@ fun DashcamConnectionCard(
     onNetworkSelected: (String) -> Unit = {},
     deviceName: String = "Trafy Dos",
     errorReason: FailureReason? = null,
+    searchingInBackground: Boolean = false,
     onConnectClick: () -> Unit,
     onLiveViewClick: () -> Unit,
     onDisconnect: () -> Unit,
@@ -82,6 +84,7 @@ fun DashcamConnectionCard(
                 else -> DisconnectedState(
                     isConnecting           = isConnecting,
                     errorReason            = errorReason,
+                    searchingInBackground  = searchingInBackground,
                     onConnectClick         = onConnectClick,
                     onOpenLocationSettings = onOpenLocationSettings,
                     onOpenAppSettings      = onOpenAppSettings,
@@ -166,6 +169,7 @@ private fun NetworkSelectionState(
 private fun DisconnectedState(
     isConnecting: Boolean,
     errorReason: FailureReason?,
+    searchingInBackground: Boolean,
     onConnectClick: () -> Unit,
     onOpenLocationSettings: () -> Unit,
     onOpenAppSettings: () -> Unit,
@@ -198,6 +202,23 @@ private fun DisconnectedState(
             color     = ColorTextSecondary,
             textAlign = TextAlign.Center
         )
+        if (error == FailureReason.NO_DASHCAM_FOUND && searchingInBackground) {
+            Row(
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CircularProgressIndicator(
+                    modifier    = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color       = ColorPrimary,
+                )
+                Text(
+                    text  = stringResource(R.string.connection_still_searching),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ColorTextSecondary
+                )
+            }
+        }
     }
     Button(
         onClick  = onConnectClick,

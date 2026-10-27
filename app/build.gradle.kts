@@ -33,8 +33,8 @@ android {
         applicationId = "tr.trafy.kamera"
         minSdk = 24
         targetSdk = 36
-        versionCode = 25
-        versionName = "1.6.14"
+        versionCode = 26
+        versionName = "1.6.15"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

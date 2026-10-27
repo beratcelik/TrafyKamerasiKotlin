@@ -51,7 +51,8 @@
     <string name="connection_error_permission">Android only lets the app look for the camera\'s Wi-Fi with the Location permission set to Precise. Allow it, or join the camera\'s Wi-Fi yourself in Wi-Fi settings (default password 12345678) and try again.</string>
     <string name="connection_error_wifi_off">Your phone\'s Wi-Fi is turned off. Turn Wi-Fi on so the app can reach the camera.</string>
     <string name="connection_button_wifi_on">Turn On Wi-Fi</string>
-    <string name="connection_error_no_dashcam">No Trafy camera Wi-Fi found nearby. Make sure the camera is powered on, or join its Wi-Fi yourself in Wi-Fi settings (default password 12345678) and try again.</string>
+    <string name="connection_error_no_dashcam">No Trafy camera Wi-Fi found nearby. If the camera is on, its Wi-Fi may have switched itself off: turn the camera off and on again. Or join its Wi-Fi yourself in Wi-Fi settings (default password 12345678) and try again.</string>
+    <string name="connection_still_searching">Still searching, will connect automatically when the camera appears</string>
     <string name="connection_error_wifi_connect">Couldn\'t join the camera\'s Wi-Fi. Select the camera in the connection prompt, or join its Wi-Fi yourself in Wi-Fi settings and try again.</string>
     <string name="connection_error_no_ip">Joined the camera\'s Wi-Fi but didn\'t get an IP address. Please try again.</string>
     <string name="connection_error_no_response">Connected to the camera\'s Wi-Fi but the camera didn\'t respond. Restart the camera and try again.</string>

@@ -59,6 +59,7 @@ fun HomeScreen(
     viewModel: DashcamViewModel,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val searchingInBackground by viewModel.searchingInBackground.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // Permission launcher — triggered when ViewModel reaches WifiPermissionRequired state.
@@ -151,6 +152,7 @@ fun HomeScreen(
             onNetworkSelected = viewModel::selectWifi,
             deviceName        = deviceName,
             errorReason       = errorReason,
+            searchingInBackground = searchingInBackground,
             onConnectClick    = viewModel::connect,
             onLiveViewClick   = onNavigateToLive,
             onDisconnect      = viewModel::disconnect,

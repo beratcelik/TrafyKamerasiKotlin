@@ -97,8 +97,8 @@ class DashcamWifiManager(private val application: Application) {
     }
 
     /**
-     * Returns the SSID of the currently-connected WiFi if it matches a dashcam keyword,
-     * or null otherwise. Does NOT trigger a scan. On API 29+ Android reports the SSID as
+     * Returns the SSID of the currently-connected WiFi if it matches a dashcam keyword
+     * or is a known cam SSID, or null otherwise. Does NOT trigger a scan. On API 29+ Android reports the SSID as
      * `<unknown ssid>` unless the app holds FINE location AND the Location toggle is on,
      * so null here doesn't prove the phone is off the cam hotspot — see
      * [findUnvalidatedDashcamSubnetWifi].
@@ -185,7 +185,7 @@ class DashcamWifiManager(private val application: Application) {
 
     /**
      * Scans for available WiFi networks and returns only those whose SSID contains
-     * a known dashcam keyword (case-insensitive).
+     * a known dashcam keyword (case-insensitive) or is in [KnownDashcamSsids].
      *
      * Requires [hasScanPermission] and [isLocationEnabled] — caller must verify first.
      * Returns an empty list on scan failure or no matching networks.
@@ -194,13 +194,17 @@ class DashcamWifiManager(private val application: Application) {
         val wm = application.getSystemService(Context.WIFI_SERVICE) as WifiManager
         Log.i(TAG, "scanForDashcams: starting scan")
 
-        val results = awaitScanResults(wm)
-        val dashcamSsids = results
+        val scan = awaitScanResults(wm)
+        val ssids = scan.results
             .mapNotNull { it.SSID?.takeIf { s -> s.isNotEmpty() } }
-            .filter { isDashcamSsid(it) }
             .distinct()
+        val dashcamSsids = ssids.filter { isDashcamSsid(it) }
 
-        Log.i(TAG, "scanForDashcams: found ${dashcamSsids.size} dashcam SSID(s): $dashcamSsids")
+        // The total and freshness separate "the cam's hotspot isn't on the air"
+        // (fresh scan, other networks visible) from a scan that failed or was
+        // throttled (stale cache, often empty). Report #9 couldn't tell them apart.
+        Log.i(TAG, "scanForDashcams: found ${dashcamSsids.size} dashcam SSID(s) among " +
+            "${ssids.size} network(s) (fresh=${scan.fresh}): $dashcamSsids")
         dashcamSsids
     }
 
@@ -320,8 +324,10 @@ class DashcamWifiManager(private val application: Application) {
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
+    /** Factory cam name, or a hotspot already proven to be a cam (e.g. renamed in the app). */
     private fun isDashcamSsid(ssid: String): Boolean =
-        DASHCAM_KEYWORDS.any { keyword -> ssid.contains(keyword, ignoreCase = true) }
+        DASHCAM_KEYWORDS.any { keyword -> ssid.contains(keyword, ignoreCase = true) } ||
+            KnownDashcamSsids.contains(application, ssid)
 
     // Deliberately not PermissionChecker: its app-op check reported FINE as denied on a
     // Redmi (Android 13) while the permission and app-op were both granted, so the
@@ -329,22 +335,26 @@ class DashcamWifiManager(private val application: Application) {
     private fun isGranted(permission: String): Boolean =
         ContextCompat.checkSelfPermission(application, permission) == PackageManager.PERMISSION_GRANTED
 
+    /** [fresh] is false when the scan failed or was throttled and [results] is the old cache. */
+    private class ScanBatch(val results: List<android.net.wifi.ScanResult>, val fresh: Boolean)
+
     /** Bridges the WiFi scan broadcast into a coroutine. */
     @Suppress("DEPRECATION")
-    private suspend fun awaitScanResults(wm: WifiManager): List<android.net.wifi.ScanResult> =
+    private suspend fun awaitScanResults(wm: WifiManager): ScanBatch =
         suspendCancellableCoroutine { cont ->
             // SCAN_RESULTS_AVAILABLE_ACTION is sticky, so the receiver can fire on the main
             // thread right after registration — racing the startScan()==false fallback below
             // on the IO thread. isActive check-then-resume is not atomic across threads, so
             // a CAS guard ensures the continuation is resumed exactly once.
             val resumed = AtomicBoolean(false)
-            fun resumeOnce(results: List<android.net.wifi.ScanResult>) {
-                if (resumed.compareAndSet(false, true) && cont.isActive) cont.resume(results)
+            fun resumeOnce(batch: ScanBatch) {
+                if (resumed.compareAndSet(false, true) && cont.isActive) cont.resume(batch)
             }
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
                     try { application.unregisterReceiver(this) } catch (_: Exception) {}
-                    resumeOnce(wm.scanResults ?: emptyList())
+                    val fresh = intent?.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false) == true
+                    resumeOnce(ScanBatch(wm.scanResults ?: emptyList(), fresh))
                 }
             }
             application.registerReceiver(
@@ -359,7 +369,7 @@ class DashcamWifiManager(private val application: Application) {
                 // startScan() throttled or unavailable — fall back to cached results
                 Log.w(TAG, "awaitScanResults: startScan() returned false, using cached results")
                 try { application.unregisterReceiver(receiver) } catch (_: Exception) {}
-                resumeOnce(wm.scanResults ?: emptyList())
+                resumeOnce(ScanBatch(wm.scanResults ?: emptyList(), fresh = false))
             }
         }
 

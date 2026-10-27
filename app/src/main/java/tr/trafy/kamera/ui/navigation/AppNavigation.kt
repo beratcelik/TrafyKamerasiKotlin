@@ -97,9 +97,13 @@ fun AppNavigation() {
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                reportViewModel.flushOnStartup()
-                dashcamViewModel.onAppResumed()
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    reportViewModel.flushOnStartup()
+                    dashcamViewModel.onAppResumed()
+                }
+                Lifecycle.Event.ON_STOP -> dashcamViewModel.onAppStopped()
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

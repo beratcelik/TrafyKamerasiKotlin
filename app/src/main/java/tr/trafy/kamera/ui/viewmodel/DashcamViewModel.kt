@@ -21,6 +21,7 @@ import tr.trafy.kamera.data.network.DashcamProcessNetwork
 import tr.trafy.kamera.data.settings.LastConnectedDevicePreferences
 import tr.trafy.kamera.data.network.WifiIpProvider
 import tr.trafy.kamera.data.wifi.DashcamWifiManager
+import tr.trafy.kamera.data.wifi.KnownDashcamSsids
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
@@ -53,6 +54,14 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         private const val TAG = "Trafy.ViewModel"
         private const val SCAN_TIMEOUT_MS = 12_000L
         private const val DHCP_SETTLE_DELAY_MS = 1_500L
+
+        // After a scan finds no cam, keep rescanning for ~3 min (see
+        // startDashcamWatch). 30 s apart stays inside Android's foreground
+        // budget of 4 scans per 2 min; a throttled scan still returns the
+        // system's own periodically refreshed results.
+        private const val DASHCAM_WATCH_INTERVAL_MS = 30_000L
+        private const val DASHCAM_WATCH_ATTEMPTS = 6
+
         // Dashcam APs (notably Trafy Uno's CarDV firmware) periodically drop
         // Wi-Fi clients during streaming/downloads. The OS reports this as
         // NetworkCallback.onLost and revokes the bound network. We auto-fire
@@ -101,6 +110,15 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
     /** Counter behind [DashcamUiState.WifiPermissionRequired.attempt]. */
     private var permissionRequestCount = 0
 
+    /** True while [startDashcamWatch] keeps rescanning behind a "no dashcam found" error. */
+    private val _searchingInBackground = MutableStateFlow(false)
+    val searchingInBackground: StateFlow<Boolean> = _searchingInBackground.asStateFlow()
+
+    private var dashcamWatchJob: Job? = null
+
+    /** Between ON_STOP and the next ON_RESUME; the watch doesn't run in the background. */
+    private var appStopped = false
+
     /**
      * One-shot guard for [ensureRecording]. HomeScreen's
      * `LaunchedEffect(uiState)` re-fires every time HomeScreen re-enters
@@ -138,7 +156,8 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
      *   Wi-Fi off → explain
      *   no permission → request permission
      *   Location toggle off → explain
-     *   scan → auto-connect (1 result) or show picker (multiple results)
+     *   scan → auto-connect (1 result), show picker (multiple results), or keep
+     *   rescanning behind the error card (none)
      */
     fun connect() {
         val current = _uiState.value
@@ -146,6 +165,7 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
             Log.w(TAG, "connect() ignored — already in $current")
             return
         }
+        stopDashcamWatch()
 
         viewModelScope.launch {
             // Backstop before anything opens a socket. Live preview and in-app
@@ -234,29 +254,7 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
             // ── Scan ────────────────────────────────────────────────────────────
             _uiState.update { DashcamUiState.ScanningWifi }
             Log.i(TAG, "State → ScanningWifi")
-
-            val found = try {
-                withTimeout(SCAN_TIMEOUT_MS) { wifiManager.scanForDashcams() }
-            } catch (e: TimeoutCancellationException) {
-                Log.w(TAG, "Scan timed out")
-                emptyList()
-            }
-
-            when {
-                found.isEmpty() -> {
-                    Log.w(TAG, "No dashcam SSIDs found")
-                    _uiState.update { DashcamUiState.Error(FailureReason.NO_DASHCAM_FOUND) }
-                }
-                found.size == 1 -> {
-                    Log.i(TAG, "Single dashcam found: ${found.first()} — auto-connecting")
-                    _uiState.update { DashcamUiState.Connecting }
-                    connectToSsid(found.first())
-                }
-                else -> {
-                    Log.i(TAG, "Multiple dashcams found: $found — showing picker")
-                    _uiState.update { DashcamUiState.WifiFound(found) }
-                }
-            }
+            onScanResults(scanWithTimeout())
         }
     }
 
@@ -286,6 +284,7 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
      * from a permission prompt or the Wi-Fi picker can't loop the prompt.
      */
     fun onAppResumed() {
+        appStopped = false
         val reason = (_uiState.value as? DashcamUiState.Error)?.reason ?: return
         // Only signals connect() resolves without a permission prompt: a readable cam SSID
         // implies the permission is held, and a gateway-matched subnet probe reports its own
@@ -304,7 +303,16 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         if (unblocked) {
             Log.i(TAG, "onAppResumed: $reason no longer blocking — retrying connect()")
             connect()
+        } else if (reason == FailureReason.NO_DASHCAM_FOUND && dashcamWatchJob?.isActive != true) {
+            // Back from Wi-Fi settings, or from restarting the cam: look again.
+            startDashcamWatch()
         }
+    }
+
+    /** Called on every ON_STOP: no background rescans or connect prompts. */
+    fun onAppStopped() {
+        appStopped = true
+        stopDashcamWatch()
     }
 
     /** Called when the user picks a network from the WifiFound list. */
@@ -358,6 +366,7 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
     fun disconnect() {
         Log.i(TAG, "disconnect() called")
         ensuredRecordingForCurrentSession = false
+        stopDashcamWatch()
         stopEasytechKeepalive()
         stopMstarKeepalive()
         wifiManager.release()
@@ -368,6 +377,45 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
         _connectedNetwork.update { null }
         _uiState.update { DashcamUiState.Idle }
     }
+
+    // ── Dashcam watch ─────────────────────────────────────────────────────
+    // Report #9 (Trafy Tres Pro): the scan saw no cam and the app gave up after
+    // one try. A cam still raising its hotspot after power-on, or one the user
+    // restarts because its hotspot switched itself off, was never picked up
+    // without another tap. Keep rescanning behind the error card and connect
+    // as soon as a cam shows up.
+
+    private fun startDashcamWatch() {
+        stopDashcamWatch()
+        if (appStopped) return  // onAppResumed starts it on return
+        _searchingInBackground.update { true }
+        dashcamWatchJob = viewModelScope.launch {
+            for (attempt in 1..DASHCAM_WATCH_ATTEMPTS) {
+                delay(DASHCAM_WATCH_INTERVAL_MS)
+                if (!isNoDashcamError()) break
+                val found = scanWithTimeout()
+                if (found.isNotEmpty() && isNoDashcamError()) {
+                    Log.i(TAG, "Dashcam watch: $found appeared on rescan $attempt — connecting")
+                    stopDashcamWatch()
+                    // Own coroutine: stopDashcamWatch() must not cancel the connect.
+                    viewModelScope.launch { onScanResults(found) }
+                    return@launch
+                }
+            }
+            Log.i(TAG, "Dashcam watch: stopped after $DASHCAM_WATCH_ATTEMPTS rescans or a state change")
+            _searchingInBackground.update { false }
+            dashcamWatchJob = null
+        }
+    }
+
+    private fun stopDashcamWatch() {
+        dashcamWatchJob?.cancel()
+        dashcamWatchJob = null
+        _searchingInBackground.update { false }
+    }
+
+    private fun isNoDashcamError(): Boolean =
+        (_uiState.value as? DashcamUiState.Error)?.reason == FailureReason.NO_DASHCAM_FOUND
 
     // ── Easytech keep-alive ───────────────────────────────────────────────
     // Single in-flight job; replacing it cancels the prior loop.
@@ -462,6 +510,33 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
 
     // ── Private helpers ─────────────────────────────────────────────────────────
 
+    private suspend fun scanWithTimeout(): List<String> = try {
+        withTimeout(SCAN_TIMEOUT_MS) { wifiManager.scanForDashcams() }
+    } catch (e: TimeoutCancellationException) {
+        Log.w(TAG, "Scan timed out")
+        emptyList()
+    }
+
+    /** Auto-connects to a single cam, offers a picker for several, keeps watching for none. */
+    private suspend fun onScanResults(found: List<String>) {
+        when {
+            found.isEmpty() -> {
+                Log.w(TAG, "No dashcam SSIDs found")
+                _uiState.update { DashcamUiState.Error(FailureReason.NO_DASHCAM_FOUND) }
+                startDashcamWatch()
+            }
+            found.size == 1 -> {
+                Log.i(TAG, "Single dashcam found: ${found.first()} — auto-connecting")
+                _uiState.update { DashcamUiState.Connecting }
+                connectToSsid(found.first())
+            }
+            else -> {
+                Log.i(TAG, "Multiple dashcams found: $found — showing picker")
+                _uiState.update { DashcamUiState.WifiFound(found) }
+            }
+        }
+    }
+
     /** Routes (or, with null, un-routes) every dashcam client over [network]. */
     private fun bindNetworkClients(network: Network?) {
         DashcamHttpClient.bindToNetwork(network)
@@ -529,6 +604,8 @@ class DashcamViewModel(application: Application) : AndroidViewModel(application)
                 // Remember this camera so bug/crash reports can name it later,
                 // even after the phone leaves the dashcam hotspot.
                 LastConnectedDevicePreferences.save(getApplication(), device)
+                // And its hotspot name, so scans still find it after a rename.
+                ssid?.let { KnownDashcamSsids.remember(getApplication(), it) }
                 wifiManager.startWatchingConnection(network) { onConnectionLost() }
 
                 // Push phone-local clock to the cam RTC. Fire-and-forget —

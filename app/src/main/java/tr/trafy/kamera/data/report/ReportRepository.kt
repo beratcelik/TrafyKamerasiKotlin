@@ -107,6 +107,10 @@ class ReportRepository(private val context: Context) {
         flushMutex.withLock {
             // Re-check under the lock — a concurrent caller may have just run.
             if (System.currentTimeMillis() - lastFlushAttemptMs < FLUSH_DEBOUNCE_MS) return@withContext
+            // TODO: a NetworkError (phone on the cam's no-internet AP) also starts this
+            // 15-min window, so after the phone gets back online the report waits for
+            // the window or a new process. iOS fixed it by resetting the window on
+            // network errors (ReportRepository.swift); do the same here. Keep it for 429.
             lastFlushAttemptMs = System.currentTimeMillis()
             val url = reportsUrl
             for (file in ReportQueue.pendingFilesOldestFirst(context)) {

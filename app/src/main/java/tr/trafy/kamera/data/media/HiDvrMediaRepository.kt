@@ -134,10 +134,19 @@ class HiDvrMediaRepository {
     suspend fun fetchVideos(deviceIp: String, clientIp: String): List<MediaFile> {
         prepareSession(deviceIp, clientIp)
         val layout = discoverDirs(deviceIp)
-        val all = layout.videoDirs().flatMap { (dir, hint, isPhoto) ->
+        val perDir = layout.videoDirs().map { (dir, hint, isPhoto) ->
             fetchDir(deviceIp, clientIp, dir, isPhoto, cameraHint = hint)
         }
-        return all.sortedByDescending { it.name }
+        // Report #18: when NO video dir answered (cam rebooting, still in
+        // RECORD mode, registration lost) we used to return an empty list and
+        // the UI said "Henüz video kaydedilmedi" for a card full of footage.
+        // Fail instead so the screen offers a retry. One dir failing while
+        // another answers is still a valid (partial) listing — fallback dirs
+        // that don't exist on single-cam firmware fail that way too.
+        if (perDir.isNotEmpty() && perDir.all { it == null }) {
+            throw java.io.IOException("No video directory answered the file-list request")
+        }
+        return perDir.filterNotNull().flatten().sortedByDescending { it.name }
     }
 
     /**
@@ -146,8 +155,9 @@ class HiDvrMediaRepository {
     suspend fun fetchPhotos(deviceIp: String, clientIp: String): List<MediaFile> {
         prepareSession(deviceIp, clientIp)
         val layout = discoverDirs(deviceIp)
+        // Photos stay lenient: a failed photo listing mustn't hide the videos.
         val all = layout.photoDirs().flatMap { (dir, hint, isPhoto) ->
-            fetchDir(deviceIp, clientIp, dir, isPhoto, cameraHint = hint)
+            fetchDir(deviceIp, clientIp, dir, isPhoto, cameraHint = hint).orEmpty()
         }
         return all.sortedByDescending { it.name }
     }
@@ -220,6 +230,9 @@ class HiDvrMediaRepository {
     /**
      * Fetches all files in one SD-card directory.
      * Two-step: first getdirfilecount (sets the active directory server-side), then getfilelist.
+     *
+     * @return the files (empty when the dir genuinely has none), or null when
+     *   the cam didn't answer — callers must not show that as "no videos".
      */
     private suspend fun fetchDir(
         deviceIp: String,
@@ -227,7 +240,7 @@ class HiDvrMediaRepository {
         sdDir: String,
         isPhoto: Boolean,
         cameraHint: String? = null,
-    ): List<MediaFile> {
+    ): List<MediaFile>? {
         val base = "http://$deviceIp$CGI"
 
         // Step 1: get count AND tell the camera which directory we want.
@@ -243,11 +256,11 @@ class HiDvrMediaRepository {
         }
         if (countBody == null) {
             Log.w(TAG, "getdirfilecount failed for $sdDir")
-            return emptyList()
+            return null
         }
         if (countBody.contains(NOT_REGISTERED_TOKEN)) {
             Log.w(TAG, "fetchDir($sdDir): still not-registered after retry — giving up")
-            return emptyList()
+            return null
         }
         val count = parseVarInt(countBody, "count")
         Log.d(TAG, "dir=$sdDir count=$count hint=$cameraHint")
@@ -268,7 +281,7 @@ class HiDvrMediaRepository {
         }
         if (listBody == null) {
             Log.w(TAG, "getfilelist failed for $sdDir")
-            return emptyList()
+            return null
         }
         if (listBody.isBlank() && count > 0) {
             // Surface as an error to the caller so the UI shows "retry" instead

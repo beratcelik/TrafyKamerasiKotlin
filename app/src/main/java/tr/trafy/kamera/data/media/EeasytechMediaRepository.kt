@@ -81,14 +81,21 @@ class EeasytechMediaRepository {
     suspend fun fetchVideos(deviceIp: String): List<MediaFile> {
         val loop = fetchFolder(deviceIp, FOLDER_LOOP, isPhoto = false)
         val emr  = fetchFolder(deviceIp, FOLDER_EMR,  isPhoto = false)
-        return (loop + emr).sortedByDescending { it.name }
+        // Report #18: if neither folder answered (e.g. the cam rebooted when
+        // Media opened) this used to be an empty list → "Henüz video
+        // kaydedilmedi". Fail so the screen offers a retry instead.
+        if (loop == null && emr == null) {
+            throw java.io.IOException("Camera did not answer getfilelist")
+        }
+        return (loop.orEmpty() + emr.orEmpty()).sortedByDescending { it.name }
     }
 
     /**
      * Fetches all photo files sorted newest-first.
      */
     suspend fun fetchPhotos(deviceIp: String): List<MediaFile> {
-        return fetchFolder(deviceIp, FOLDER_PHOTO, isPhoto = true)
+        // Lenient: a failed photo listing mustn't hide the videos.
+        return fetchFolder(deviceIp, FOLDER_PHOTO, isPhoto = true).orEmpty()
             .sortedByDescending { it.name }
     }
 
@@ -108,12 +115,16 @@ class EeasytechMediaRepository {
 
     /**
      * Fetches all files in one folder, paging through results until done.
+     *
+     * @return the files (empty when the folder genuinely has none), or null
+     *   when the very first page got no answer. A later page failing keeps
+     *   the pages already fetched.
      */
     private suspend fun fetchFolder(
         deviceIp: String,
         folder: String,
         isPhoto: Boolean,
-    ): List<MediaFile> {
+    ): List<MediaFile>? {
         val result = mutableListOf<MediaFile>()
         var start  = 0
         while (true) {
@@ -122,6 +133,7 @@ class EeasytechMediaRepository {
             val body = DashcamHttpClient.get(url)
             if (body == null) {
                 Log.w(TAG, "getfilelist($folder, $start..$end) failed")
+                if (start == 0) return null
                 break
             }
             val (files, totalCount) = parseFileList(body, deviceIp, isPhoto)

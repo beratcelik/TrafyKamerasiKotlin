@@ -33,6 +33,10 @@ object TrafyModelIdentifier {
         // dirs); shares the HI_DVR protocol with Uno Pro but is distinguished by
         // this model string from getdeviceattr.cgi.
         "HI3516CV610-B-FV-CARRECORDER"   to "Trafy Dos",
+        // Confirmed Trafy Dos (invoice-checked, report #18): later board
+        // revision, softversion 1.0.4.1.20251022. Showed as "HiSilicon DVR"
+        // until this mapping was added.
+        "HI3516CV610-E-CARRECORDER"      to "Trafy Dos",
     )
 
     /**

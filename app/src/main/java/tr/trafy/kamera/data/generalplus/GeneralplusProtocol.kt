@@ -167,21 +167,46 @@ object GeneralplusProtocol {
     }
 
     /**
-     * Builds a 17-byte SetParameter command for enum and action settings.
+     * Builds an 18-byte SetParameter command for an enum setting.
      * mode=MODE_MENU (0x04), cmdId=CMD_MENU_SET_PARAMETER (0x01)
-     * settingId encoded as uint32 LE in bytes 12-15, newValueIdx in byte 16.
-     * Confirmed from PcapDroid: 17-byte format with settingId embedded (NOT stateful).
+     * settingId as uint32 LE in bytes 12-15, then a 1-byte value LENGTH (=1)
+     * in byte 16 and the value index in byte 17 — the same length-prefixed
+     * layout as [buildSetParameterString].
+     *
+     * Report #19: this used to be 17 bytes with the value directly in byte
+     * 16. Trafy Uno ACKs that but stores nothing (it reads byte 16 as a
+     * zero/odd length), so every enum write failed the readback check and
+     * the user "couldn't change any setting". iOS fixed the same bug in
+     * `GpSocketProtocol.setParameter`.
      * Response: 14 bytes (pure ACK, DataSize=0).
      */
     fun buildSetParameter(cmdIdx: Byte, settingId: Int, newValueIdx: Int): ByteArray {
-        val buf = ByteArray(CMD_EXT_SIZE + 1)   // 16 + 1 = 17 bytes
+        val buf = ByteArray(CMD_EXT_SIZE + 2)   // 16 + length + value = 18 bytes
         MAGIC.copyInto(buf, 0)
         buf[8]  = TYPE_CMD
         buf[9]  = cmdIdx
         buf[10] = MODE_MENU
         buf[11] = CMD_MENU_SET_PARAMETER
         ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(settingId).array().copyInto(buf, 12)
-        buf[16] = (newValueIdx and 0xFF).toByte()
+        buf[16] = 1
+        buf[17] = (newValueIdx and 0xFF).toByte()
+        return buf
+    }
+
+    /**
+     * Builds a 17-byte SetParameter command that triggers an action setting
+     * (Format SD, Factory Reset): settingId then a zero value length.
+     * Confirmed from PcapDroid (17-byte form, byte 16 = 0x00).
+     */
+    fun buildTriggerAction(cmdIdx: Byte, settingId: Int): ByteArray {
+        val buf = ByteArray(CMD_EXT_SIZE + 1)   // 16 + zero length = 17 bytes
+        MAGIC.copyInto(buf, 0)
+        buf[8]  = TYPE_CMD
+        buf[9]  = cmdIdx
+        buf[10] = MODE_MENU
+        buf[11] = CMD_MENU_SET_PARAMETER
+        ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(settingId).array().copyInto(buf, 12)
+        buf[16] = 0
         return buf
     }
 

@@ -194,7 +194,7 @@ fun HomeScreen(
                 // Number is in international format with no '+' or spaces.
                 val intent = Intent(
                     Intent.ACTION_VIEW,
-                    Uri.parse("https://wa.me/905554005342")
+                    Uri.parse("https://wa.me/905554005347")
                 ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
                 try {
                     context.startActivity(intent)

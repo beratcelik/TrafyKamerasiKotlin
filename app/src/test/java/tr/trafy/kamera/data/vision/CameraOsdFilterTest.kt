@@ -42,6 +42,16 @@ class CameraOsdFilterTest {
         assertFalse(osd(300f, 760f, 520f, 800f))
     }
 
+    @Test fun `time boxed together with the bumper is rejected`() {
+        // Seen on device: box over "17:02:24" + bumper, centre x ≈ 0.40.
+        assertTrue(osd(480f, 961f, 1075f, 1048f))
+    }
+
+    @Test fun `close plate slightly left of centre is kept`() {
+        // ~25% of the plate lies in the zone.
+        assertFalse(osd(672f, 864f, 1056f, 929f))
+    }
+
     @Test fun `bottom-right is not the OSD zone`() {
         assertFalse(osd(1500f, 1030f, 1700f, 1062f))
     }

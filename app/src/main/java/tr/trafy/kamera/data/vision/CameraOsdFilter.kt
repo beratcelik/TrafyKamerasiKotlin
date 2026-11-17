@@ -7,7 +7,7 @@ package tr.trafy.kamera.data.vision
  * happily fires on that white text, and the overlay then enlarges it as a
  * billboard (user report: "kamera yazısını plaka sanıyor").
  *
- * We filter by position, not by content, so firmware font / format changes
+ * We filter by position (overlap with the stamp zone), not by content, so firmware font / format changes
  * don't matter. The zone is deliberately limited to the bottom-left: a
  * windshield-mounted dashcam sees its own hood in the bottom strip, so a
  * real plate essentially never has its centre there — and one that did
@@ -31,15 +31,27 @@ object CameraOsdFilter {
      */
     const val LEFT_ZONE_FRAC = 0.40f
 
-    /** True when a plate candidate is centred inside the bottom-left OSD zone. */
+    /**
+     * Share of a candidate's area inside the stamp zone above which it's
+     * rejected. Overlap, not centre: on the iPhone port the detector boxed the
+     * time digits together with the bumper to their right, pushing the centre
+     * just outside the zone while half the box sat on the stamp.
+     */
+    const val MAX_OVERLAP_FRAC = 0.30f
+
+    /** True when ≥ [MAX_OVERLAP_FRAC] of the candidate lies in the bottom-left OSD zone. */
     fun isLikelyOsd(
         left: Float, top: Float, right: Float, bottom: Float,
         frameWidth: Int, frameHeight: Int,
     ): Boolean {
         if (frameWidth <= 0 || frameHeight <= 0) return false
-        val centerX = (left + right) / 2f
-        val centerY = (top + bottom) / 2f
-        return centerY > frameHeight * (1f - BOTTOM_BAND_FRAC) &&
-               centerX < frameWidth * LEFT_ZONE_FRAC
+        val area = (right - left) * (bottom - top)
+        if (area <= 0f) return false
+        val zoneRight = frameWidth * LEFT_ZONE_FRAC
+        val zoneTop   = frameHeight * (1f - BOTTOM_BAND_FRAC)
+        val ix = minOf(right, zoneRight) - maxOf(left, 0f)
+        val iy = minOf(bottom, frameHeight.toFloat()) - maxOf(top, zoneTop)
+        if (ix <= 0f || iy <= 0f) return false
+        return ix * iy / area >= MAX_OVERLAP_FRAC
     }
 }

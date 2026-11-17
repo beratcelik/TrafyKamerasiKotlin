@@ -1,6 +1,7 @@
 package tr.trafy.kamera.data.settings
 
 import android.content.Context
+import tr.trafy.kamera.R
 import android.util.Log
 import tr.trafy.kamera.data.generalplus.GeneralplusMenuParser
 import tr.trafy.kamera.data.generalplus.GeneralplusProtocol
@@ -46,11 +47,11 @@ class GeneralplusSettingsRepository(private val context: Context) {
         // users — and Trafy Uno has no built-in screen anyway, so this only
         // affects timestamp overlay format. Hidden from the settings list.
         private const val ID_LANGUAGE  = 0x0203  // 515
-        // ACC-Off Behavior. Cam advertises it as writable but the firmware
-        // ACKs SetParameter and silently drops the value (verify-after-set
-        // confirmed the readback never changes). The OEM Viidure app also
-        // hides this setting, which suggests the firmware just doesn't
-        // expose a working write path for it. Hidden to match Viidure.
+        // ACC-Off Behavior (keep running 12/24/48 h after ignition off).
+        // Meaningless on Trafy Uno: it's powered over USB from the car, so
+        // ignition off cuts its power and it shuts down regardless. Hidden.
+        // (Writes DO work since the SetParameter length-byte fix — the old
+        // "firmware drops the value" note was that bug, not the firmware.)
         private const val ID_ACC_OFF   = 0x0009  // 9
 
         // Semantic keys used by SettingsScreen/SettingsViewModel for special item types.
@@ -119,7 +120,7 @@ class GeneralplusSettingsRepository(private val context: Context) {
 
                 // Skip the cam's display-language setting (see ID_LANGUAGE comment).
                 if (id == ID_LANGUAGE) continue
-                // Skip ACC-Off Behavior — firmware advertises it but won't apply writes.
+                // Skip ACC-Off Behavior — USB-powered, see ID_ACC_OFF.
                 if (id == ID_ACC_OFF) continue
 
                 // WiFi password: cache it for the WiFi dialog but don't add to the settings list
@@ -158,11 +159,16 @@ class GeneralplusSettingsRepository(private val context: Context) {
                         val currentIdx = if (resp.data.isNotEmpty()) resp.data[0].toInt() and 0xFF else 0
                         val currentOption = options.find { it.value == currentIdx.toString() }
                         Log.d(TAG, "Setting $id: idx=$currentIdx label=${currentOption?.label}")
+                        // A stored index that isn't a menu option is garbage —
+                        // pre-1.6.16 apps wrote it with the length-less
+                        // SetParameter (report #19; seen as 69). Say so, so the
+                        // user re-picks a value, instead of showing the number.
+                        val invalidLabel = context.getString(R.string.gp_setting_value_invalid)
                         items.add(SettingItem(
                             key               = id.toString(),
                             title             = GeneralplusTranslations.title(context, id, gpSetting.name),
                             currentValue      = currentIdx.toString(),
-                            currentValueLabel = currentOption?.label ?: currentIdx.toString(),
+                            currentValueLabel = currentOption?.label ?: invalidLabel,
                             options           = options,
                             description       = GeneralplusTranslations.description(context, id),
                         ))
@@ -284,7 +290,7 @@ class GeneralplusSettingsRepository(private val context: Context) {
         Log.i(TAG, "triggerAction key=$key settingId=$settingId")
 
         val success = GeneralplusSession.withSession { _, sendPacket, receive ->
-            sendPacket(GeneralplusProtocol.buildSetParameter(0, settingId, 0x00))
+            sendPacket(GeneralplusProtocol.buildTriggerAction(0, settingId))
             val ack = receive(GeneralplusProtocol.CMD_MENU_SET_PARAMETER)
             // No ACK is expected for Format (camera busy formatting) and Factory Reset
             // (camera reboots immediately). As long as the session connected and the

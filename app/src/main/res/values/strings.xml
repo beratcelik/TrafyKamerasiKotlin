@@ -429,6 +429,7 @@
     <string name="gp_setting_title_5">Audio Recording</string>
     <string name="gp_setting_title_7">Collision Sensing</string>
     <string name="gp_setting_title_8">Speaker Volume</string>
+    <string name="gp_setting_value_invalid">Invalid — pick again</string>
     <string name="gp_setting_title_9">ACC-Off Behavior</string>
     <string name="gp_setting_title_10">Time-Lapse Frame Rate</string>
     <string name="gp_setting_title_515">Language</string>

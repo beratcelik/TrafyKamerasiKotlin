@@ -22,4 +22,13 @@ data class TrackedScene(
     /** Total plate-inference time across all vehicle crops, for the debug UI. */
     val plateLatencyMs:     Int? = null,
     val tracks:             List<TrackedDetection>? = null,
+    /**
+     * Sharpest plate crop seen so far per vehicle track id, cut from the
+     * real frame pixels. The overlay enlarges these into a "billboard" above
+     * each vehicle — same idea as the offline burn-in — so the viewer reads
+     * the plate themselves instead of trusting OCR text. Bitmaps are owned
+     * by the pipeline and shared across scenes: consumers must NOT recycle
+     * them (they're small and left to the GC).
+     */
+    val plateCrops:         Map<Int, android.graphics.Bitmap>? = null,
 )

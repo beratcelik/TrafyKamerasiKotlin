@@ -4,7 +4,6 @@ import android.util.Size
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -18,12 +17,12 @@ import tr.trafy.kamera.data.vision.PlateDetection
 import tr.trafy.kamera.data.vision.TrackedScene
 import tr.trafy.kamera.data.vision.dedupePlatesByIou
 import tr.trafy.kamera.data.vision.dedupeTracksByIou
-import tr.trafy.kamera.data.vision.formatTurkishPlate
 import kotlin.math.tan
 
 /**
  * Live AI overlay: paints each tracked vehicle as a translucent green slab
- * with the estimated distance-to-vehicle written over it, plus the four HUD
+ * with the estimated distance-to-vehicle written over it, an enlarged crop
+ * of its plate (real pixels, not OCR text) pinned above it, plus the four HUD
  * chrome widgets (clip-clock, compass, speed dial, altitude pill). Visually
  * mirrors the offline burn-in produced by `OverlayVideoEncoder` so a clip
  * recorded live and re-encoded later look identical.
@@ -70,14 +69,6 @@ fun BoundingBoxOverlay(
     val liveSensor by rememberLiveSensorData()
     val effectiveSensor = sensorData ?: liveSensor
 
-    // Locked plate text per track id. Once OCR's vote book is confident
-    // about a track's plate we commit to that text for the rest of the
-    // session and stop updating — matches the offline pipeline's
-    // "freeze on confidence" promise. Plain HashMap (not state-backed):
-    // the scene flow already triggers recomposition, so we don't need
-    // mutations here to drive any redraw.
-    val lockedPlateText = remember { HashMap<Int, String>() }
-
     Canvas(modifier = modifier) {
         // Contain-fit: preserve aspect ratio of the source frame, centre it
         // inside the Canvas. Vehicle / plate boxes use this transform.
@@ -117,14 +108,6 @@ fun BoundingBoxOverlay(
                 val plate = plateByTrackId[td.trackId]
                 val distM = plate?.let { distanceMeters(it, focalPx) }
                 if (distM != null) drawDistanceCentered(r, distM)
-
-                // Lock-once plate text. If we already have a locked text for
-                // this track id, draw it. Otherwise check the latest scene's
-                // voted text for a confident read and commit it here.
-                val locked = lockedPlateText[td.trackId]
-                    ?: plate?.let { tryLockPlateText(it) }
-                        ?.also { lockedPlateText[td.trackId] = it }
-                if (locked != null) drawPlateTextAbove(r, locked)
             }
         } else {
             scene.detections.forEachIndexed { idx, det ->
@@ -134,6 +117,21 @@ fun BoundingBoxOverlay(
                 val plate = plateByDetIdx[idx]
                 val distM = plate?.let { distanceMeters(it, focalPx) }
                 if (distM != null) drawDistanceCentered(r, distM)
+            }
+        }
+
+        // ── Plate billboards ───────────────────────────────────────────────
+        // The real plate pixels, enlarged and pinned above each vehicle —
+        // same as the offline "AI katmanı" burn-in. Drawn after every slab
+        // so a nearby car's slab can't paint over another car's plate.
+        // Replaces the old OCR text label: the viewer reads the plate
+        // themselves instead of trusting a possibly-wrong OCR guess.
+        val crops = scene.plateCrops
+        if (!crops.isNullOrEmpty() && tracks != null) {
+            val canvas = drawContext.canvas.nativeCanvas
+            tracks.forEach { td ->
+                val crop = crops[td.trackId] ?: return@forEach
+                drawPlateBillboard(canvas, crop, boxRect(td.bbox, offX, offY, scale), offX, drawW, offY)
             }
         }
 
@@ -151,12 +149,16 @@ fun BoundingBoxOverlay(
             val pillScale = (dialR / 48f).coerceIn(1.5f, 3.8f)
             val canvas = drawContext.canvas.nativeCanvas
 
+            // Top-left, smaller than the speed dial: bottom-left is where
+            // the cam burns in its resolution + date/time stamp, and the
+            // compass used to sit right on top of it.
             effectiveSensor.headingDeg?.let { headingDeg ->
+                val compassR = (dialR * COMPASS_TO_DIAL_FRAC).coerceAtLeast(COMPASS_MIN_R_PX)
                 HudWidgets.drawCompassDisc(
                     canvas     = canvas,
-                    cx         = margin + dialR,
-                    cy         = vh - margin - dialR,
-                    radius     = dialR,
+                    cx         = margin + compassR,
+                    cy         = margin + compassR,
+                    radius     = compassR,
                     headingDeg = headingDeg,
                 )
             }
@@ -220,39 +222,45 @@ private fun distanceMeters(plate: PlateDetection, focalPx: Float): Int? {
 }
 
 /**
- * Returns the Turkish-formatted plate text if the OCR vote book is confident
- * enough to "lock" it. Same threshold as the offline pipeline (3 votes,
- * 0.70 agreement) so live and burn-in pin the same instant. Null means
- * "not confident yet — keep waiting."
+ * Draws [crop] enlarged above [slab] with the yellow/black double border
+ * used by `OverlayVideoEncoder.drawBillboard`. Width follows the vehicle's
+ * on-screen width with floor/ceiling relative to the visible video area
+ * (not density) so it reads the same in portrait and full-screen landscape.
+ * Clamped inside the video area horizontally and to its top edge.
  */
-private fun tryLockPlateText(p: PlateDetection): String? {
-    val voted = p.votedText ?: return null
-    if (voted.votes < 3) return null
-    if (voted.agreement < 0.70f) return null
-    if (voted.text.isEmpty()) return null
-    return formatTurkishPlate(voted.text)
+private fun drawPlateBillboard(
+    canvas: android.graphics.Canvas,
+    crop: android.graphics.Bitmap,
+    slab: Rect,
+    videoLeft: Float,
+    videoWidth: Float,
+    videoTop: Float,
+) {
+    if (crop.isRecycled || crop.width < 4 || crop.height < 4) return
+    val targetW = (slab.width * BILLBOARD_VEHICLE_WIDTH_FRAC)
+        .coerceAtLeast(videoWidth * BILLBOARD_MIN_VIDEO_FRAC)
+        .coerceAtMost(videoWidth * BILLBOARD_MAX_VIDEO_FRAC)
+    val targetH = targetW * crop.height / crop.width
+    var left = slab.left + slab.width / 2f - targetW / 2f
+    left = left.coerceAtMost(videoLeft + videoWidth - targetW).coerceAtLeast(videoLeft)
+    val top = (slab.top - targetH - BILLBOARD_GAP_PX).coerceAtLeast(videoTop)
+    val dst = android.graphics.RectF(left, top, left + targetW, top + targetH)
+
+    canvas.drawBitmap(crop, null, dst, BillboardBitmapPaint)
+    BillboardBorderPaint.color = android.graphics.Color.BLACK
+    BillboardBorderPaint.strokeWidth = 4f
+    canvas.drawRect(dst, BillboardBorderPaint)
+    BillboardBorderPaint.color = android.graphics.Color.YELLOW
+    BillboardBorderPaint.strokeWidth = 2.5f
+    canvas.drawRect(dst, BillboardBorderPaint)
 }
 
-/** Paints the locked plate text in yellow centred just above the slab. */
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPlateTextAbove(
-    slab: Rect,
-    text: String,
-) {
-    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFFFD60A.toInt()                                          // bright yellow
-        isFakeBoldText = true
-        // Proportional to slab width with raw-px clamps — density coupling
-        // forced too-large text on portrait canvases. The slab itself is
-        // already canvas-proportional via the contain-fit scale, so this
-        // grows / shrinks naturally with the visible video area.
-        textSize = (slab.width * 0.15f).coerceIn(18f, 56f)
-        setShadowLayer(8f, 0f, 0f, android.graphics.Color.BLACK)
-    }
-    val canvas = drawContext.canvas.nativeCanvas
-    val tw = paint.measureText(text)
-    val cx = slab.left + slab.width / 2f
-    val baselineY = (slab.top - 6f).coerceAtLeast(paint.textSize)
-    canvas.drawText(text, cx - tw / 2f, baselineY, paint)
+// Bilinear filtering keeps the upscaled plate smooth instead of blocky.
+private val BillboardBitmapPaint = android.graphics.Paint(
+    android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG,
+)
+private val BillboardBorderPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+    style = android.graphics.Paint.Style.STROKE
 }
 
 /** Paints `<N>` over `M` centred in [boxOut] — matches the burn-in style. */
@@ -284,3 +292,15 @@ private const val ASSUMED_DASHCAM_FOV_DEG = 70.0
 private const val PLATE_PHYSICAL_WIDTH_MM = 520f
 private const val DISTANCE_MIN_PLATE_PX   = 10f
 private const val DISTANCE_MAX_M          = 80
+
+// Billboard sizing. Somewhat larger than the burn-in's (0.35 / 160 px on a
+// 720p frame) because a phone screen is smaller than the exported video.
+private const val BILLBOARD_VEHICLE_WIDTH_FRAC = 0.45f
+private const val BILLBOARD_MIN_VIDEO_FRAC     = 0.20f
+private const val BILLBOARD_MAX_VIDEO_FRAC     = 0.40f
+private const val BILLBOARD_GAP_PX             = 8f
+
+// Compass is a secondary readout — about half the speed dial's size.
+// Floor keeps the fixed-px needle (HudWidgets.drawCompassDisc) legible.
+private const val COMPASS_TO_DIAL_FRAC = 0.55f
+private const val COMPASS_MIN_R_PX     = 32f

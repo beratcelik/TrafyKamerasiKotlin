@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.RectF
 import android.util.Log
+import tr.trafy.kamera.data.vision.CameraOsdFilter
 import tr.trafy.kamera.data.vision.ModelLoader
 import tr.trafy.kamera.data.vision.ModelSource
 import tr.trafy.kamera.data.vision.ModelTelemetry
@@ -87,13 +88,15 @@ class NcnnPlateDetector(
             val ly1  = flat[i + 3]
             val lx2  = flat[i + 4]
             val ly2  = flat[i + 5]
+            i += 6
+            // Drop the cam's own date/time/resolution stamp — see CameraOsdFilter.
+            if (CameraOsdFilter.isLikelyOsd(lx1 + x, ly1 + y, lx2 + x, ly2 + y, frameW, frameH)) continue
             // Shift back into full-frame coordinates.
             out += PlateDetection(
                 parentVehicleIndex = vehicleIndex,
                 confidence = conf,
                 bbox = RectF(lx1 + x, ly1 + y, lx2 + x, ly2 + y),
             )
-            i += 6
         }
         out
     }

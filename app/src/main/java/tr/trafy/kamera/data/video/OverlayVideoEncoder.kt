@@ -265,13 +265,15 @@ class OverlayVideoEncoder(
             timestampUs = presentationTimeUs,
         )
         val dialR = (minOf(width, height) * 0.045f).coerceIn(40f, 70f)
-        // Bottom-left: compass disc.
+        // Top-left, smaller: bottom-left is the cam's own resolution +
+        // date/time stamp, which the compass used to cover.
         resolved.compassDeg?.let { headingDeg ->
+            val compassR = (dialR * 0.6f).coerceAtLeast(28f)
             HudWidgets.drawCompassDisc(
                 canvas     = compositeCanvas,
-                cx         = margin + dialR,
-                cy         = height - margin - dialR,
-                radius     = dialR,
+                cx         = margin + compassR,
+                cy         = margin + compassR,
+                radius     = compassR,
                 headingDeg = headingDeg,
             )
         }

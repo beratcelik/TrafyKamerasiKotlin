@@ -71,6 +71,10 @@ class LiveVisionPipeline(
     private val tracker  = ByteTracker()
     private val voteBook = PlateVoteBook()
 
+    /** Sharpest plate crop per track id — see [keepIfSharpest]. */
+    private val bestPlateCrops = java.util.concurrent.ConcurrentHashMap<Int, Bitmap>()
+    private val bestPlateArea  = java.util.concurrent.ConcurrentHashMap<Int, Float>()
+
     private var vehicle: NcnnVehicleDetector? = null
     private var plate:   NcnnPlateDetector?   = null
     private var ocr:     OnnxPlateOcr?        = null
@@ -119,6 +123,8 @@ class LiveVisionPipeline(
     fun reset() {
         tracker.reset()
         voteBook.clear()
+        bestPlateCrops.clear()
+        bestPlateArea.clear()
         sampler.set(0)
         _scene.value = null
         histogram.clear()
@@ -172,17 +178,23 @@ class LiveVisionPipeline(
             }
         } else emptyList()
 
-        val plated: List<PlateDetection> = if (ocrEngine != null) plates.map { p ->
+        // Drop billboards of tracks the tracker has forgotten. No recycle():
+        // the overlay may still be drawing the previous scene's bitmap.
+        val active = tracker.activeTrackIds()
+        bestPlateCrops.keys.retainAll(active)
+        bestPlateArea.keys.retainAll(active)
+
+        val plated: List<PlateDetection> = plates.map { p ->
             val trackId = p.parentTrackId
             val crop = cropBitmap(frame.bitmap, p.bbox) ?: return@map p
-            val recog = runCatching { ocrEngine.recognize(crop) }.getOrNull()
-            crop.recycle()
+            val recog = ocrEngine?.let { e -> runCatching { e.recognize(crop) }.getOrNull() }
             if (trackId != null && recog != null && recog.text.isNotEmpty()) {
                 voteBook.record(trackId, recog.text)
             }
+            if (!keepIfSharpest(trackId, p.bbox, crop)) crop.recycle()
             val voted = trackId?.let { voteBook.bestText(it) }
             p.copy(recognition = recog, votedText = voted)
-        } else plates
+        }
 
         _scene.value = TrackedScene(
             sourceFrameSize    = Size(frame.bitmap.width, frame.bitmap.height),
@@ -191,7 +203,25 @@ class LiveVisionPipeline(
             inferenceLatencyMs = vehicleMs,
             plates             = plated,
             tracks             = tracks,
+            plateCrops         = HashMap(bestPlateCrops),
         )
+    }
+
+    /**
+     * Live counterpart of the offline processor's "pass 1": per track keep
+     * the LARGEST plate crop seen so far (largest ≈ closest ≈ sharpest).
+     * The billboard upgrades as the car gets nearer and never degrades as
+     * it drives away. Returns true when [crop] was kept (caller must not
+     * recycle it).
+     */
+    private fun keepIfSharpest(trackId: Int?, bbox: RectF, crop: Bitmap): Boolean {
+        if (trackId == null) return false
+        if (bbox.width() < MIN_BILLBOARD_W || bbox.height() < MIN_BILLBOARD_H) return false
+        val area = bbox.width() * bbox.height()
+        if (area <= (bestPlateArea[trackId] ?: 0f)) return false
+        bestPlateArea[trackId] = area
+        bestPlateCrops[trackId] = crop
+        return true
     }
 
     private fun cropBitmap(src: Bitmap, bbox: RectF): Bitmap? {
@@ -230,5 +260,11 @@ class LiveVisionPipeline(
         catch (t: Throwable) { Log.w(TAG, "OCR init failed", t); null }
     }
 
-    companion object { private const val TAG = "Trafy.LivePipeline" }
+    companion object {
+        private const val TAG = "Trafy.LivePipeline"
+        // Same floor as OverlayVideoEncoder's billboard: smaller plates are
+        // unreadable even enlarged, so they never become the billboard.
+        private const val MIN_BILLBOARD_W = 20f
+        private const val MIN_BILLBOARD_H = 8f
+    }
 }

@@ -29,7 +29,7 @@
     <string name="home_shortcut_shop">Mağaza</string>
     <string name="home_shortcut_community">Topluluk</string>
     <string name="home_shortcut_support">Destek</string>
-    <string name="support_whatsapp_failed">WhatsApp açılamadı. Lütfen yükleyin veya +90 555 400 5342 numarasına manuel mesaj atın.</string>
+    <string name="support_whatsapp_failed">WhatsApp açılamadı. Lütfen yükleyin veya +90 555 400 5347 numarasına manuel mesaj atın.</string>
 
     <!-- Bağlantı kartı -->
     <string name="connection_scanning_title">Trafy Kamerası ağları aranıyor…</string>

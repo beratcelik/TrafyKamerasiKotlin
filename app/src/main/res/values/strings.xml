@@ -29,7 +29,7 @@
     <string name="home_shortcut_shop">Shop</string>
     <string name="home_shortcut_community">Community</string>
     <string name="home_shortcut_support">Support</string>
-    <string name="support_whatsapp_failed">Couldn\'t open WhatsApp. Please install it or message +90 555 400 5342 manually.</string>
+    <string name="support_whatsapp_failed">Couldn\'t open WhatsApp. Please install it or message +90 555 400 5347 manually.</string>
 
     <!-- Dashcam connection card -->
     <string name="connection_scanning_title">Scanning for Trafy Kamerası networks…</string>

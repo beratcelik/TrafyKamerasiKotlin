@@ -48,8 +48,8 @@ class HiDvrSettingsRepository(private val context: Context) {
          */
         private val DEFAULT_DROPDOWN_KEYS = listOf(
             "MEDIAMODE", "ENC_PAYLOAD_TYPE", "AUDIO", "Rec_Split_Time",
-            "GSR_SENSITIVITY", "GSR_PARKING", "LOW_POWER_PROTECT",
-            "VOLUME", "FLIP", "MIRROR",
+            "GSR_SENSITIVITY", "GSR_PARKING", "LOW_FPS_REC", "LOW_FPS_REC_TIME",
+            "LOW_POWER_PROTECT", "VOLUME", "FLIP", "MIRROR",
         )
 
         /**
@@ -67,8 +67,15 @@ class HiDvrSettingsRepository(private val context: Context) {
         )
 
         /**
-         * Keys whose capability CGI is unreliable on old HiSilicon firmware;
-         * we hardcode the valid values instead. Source: HiDvrProtocol.getCapability().
+         * Fallback values for keys whose capability CGI may be missing on old
+         * HiSilicon firmware. Source: HiDvrProtocol.getCapability().
+         *
+         * Used ONLY when the cam's own capability CGI returns nothing. The
+         * Trafy Dos (boardversion "Hi.C610BD…", GoLook's "new Hi" family)
+         * answers the capability CGI with string values — LOW_POWER_PROTECT
+         * = "11.8V,12.0V,12.2V", LOW_FPS_REC = "OFF,15MIN,12H,24H,48H" — and
+         * rejects the numeric ids below with SvrFuncResult="-2222". It has no
+         * LOW_FPS_REC_TIME key at all (duration is folded into LOW_FPS_REC).
          */
         private val HARDCODED_CAPABILITY = mapOf(
             "AUDIO"             to "0,1",
@@ -127,13 +134,19 @@ class HiDvrSettingsRepository(private val context: Context) {
 
         val dropdowns = DEFAULT_DROPDOWN_KEYS.map { key ->
             async {
-                val raw = HARDCODED_CAPABILITY[key] ?: run {
-                    val url = if (isCamType(key)) {
-                        "$base/getcamparamcapability.cgi?&-workmode=$WORKMODE&-type=$key"
-                    } else {
-                        "$base/getcommparamcapability.cgi?&-type=$key"
-                    }
-                    DashcamHttpClient.get(url)?.let { parseVarValue(it, "capability") }
+                // The cam's own list wins: its values are what setcommparam accepts.
+                val capUrl = if (isCamType(key)) {
+                    "$base/getcamparamcapability.cgi?&-workmode=$WORKMODE&-type=$key"
+                } else {
+                    "$base/getcommparamcapability.cgi?&-type=$key"
+                }
+                val camCapability = DashcamHttpClient.get(capUrl)
+                    ?.let { parseVarValue(it, "capability") }
+                    ?.takeIf { it.isNotEmpty() }
+                val raw = camCapability ?: HARDCODED_CAPABILITY[key]?.takeIf {
+                    // Only fall back when the key exists on this firmware —
+                    // otherwise we'd render a row whose every write fails.
+                    isKeySupported(base, key)
                 }
                 if (raw.isNullOrEmpty()) {
                     Log.v(TAG, "  $key → capability empty, skipping")
@@ -231,6 +244,18 @@ class HiDvrSettingsRepository(private val context: Context) {
     // ── Private helpers ────────────────────────────────────────────────────
 
     private fun isCamType(key: String) = key in CAM_TYPE_KEYS
+
+    /** True when the cam answers a current value for [key] (unknown keys get SvrFuncResult="-2222"). */
+    private suspend fun isKeySupported(base: String, key: String): Boolean {
+        val url = if (isCamType(key)) {
+            "$base/getcamparam.cgi?&-workmode=$WORKMODE&-type=$key"
+        } else {
+            "$base/getcommparam.cgi?&-type=$key"
+        }
+        val supported = DashcamHttpClient.get(url)?.let { parseVarValue(it, "value") } != null
+        if (!supported) Log.v(TAG, "  $key → not supported by this firmware, skipping")
+        return supported
+    }
 
     /**
      * Executes an action-type item (Format SD Card, Factory Reset, etc.).

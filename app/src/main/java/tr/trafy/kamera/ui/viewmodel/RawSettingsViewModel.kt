@@ -46,7 +46,12 @@ class RawSettingsViewModel : ViewModel() {
                     val body = DashcamHttpClient.get(url)
                     if (body != null) {
                         listOf(RawEntry("Settings Menu XML", url, body))
-                    } else null
+                    } else {
+                        // Old/"new Hi" firmware without cammenu.xml (e.g. Trafy Dos):
+                        // dump device attributes plus value + capability per key.
+                        Log.i(TAG, "No cammenu.xml — dumping per-key CGIs")
+                        hiDvrPerKeyDump(ip)
+                    }
                 }
                 ChipsetProtocol.EEASYTECH -> {
                     val urlItems  = "http://$ip/app/getparamitems?param=all"
@@ -126,7 +131,7 @@ class RawSettingsViewModel : ViewModel() {
                 }
             }
 
-            _state.value = if (entries != null) {
+            _state.value = if (!entries.isNullOrEmpty()) {
                 Log.i(TAG, "Raw dump success: ${entries.size} entry/entries")
                 RawSettingsState.Success(entries)
             } else {
@@ -134,5 +139,43 @@ class RawSettingsViewModel : ViewModel() {
                 RawSettingsState.Error
             }
         }
+    }
+
+    /**
+     * Per-key raw dump for HiDVR firmware that serves no cammenu.xml. Sequential
+     * on purpose: the cam's thttpd handles one request at a time comfortably.
+     * Returns null only if the cam answered nothing at all.
+     */
+    private suspend fun hiDvrPerKeyDump(ip: String): List<RawEntry>? {
+        val base = "http://$ip/cgi-bin/hisnet"
+        val camKeys = setOf("MEDIAMODE", "ENC_PAYLOAD_TYPE", "Rec_Split_Time", "FLIP", "MIRROR")
+        val keys = listOf(
+            "MEDIAMODE", "ENC_PAYLOAD_TYPE", "AUDIO", "Rec_Split_Time",
+            "GSR_SENSITIVITY", "GSR_PARKING", "LOW_FPS_REC", "LOW_FPS_REC_TIME",
+            "LOW_POWER_PROTECT", "VOLUME", "FLIP", "MIRROR",
+            "MD_SENSITIVITY", "SCREEN_DORMANT", "ANTIFLICKER",
+        )
+        val entries = mutableListOf<RawEntry>()
+        "$base/getdeviceattr.cgi?".let { url ->
+            DashcamHttpClient.get(url)?.let { entries += RawEntry("Device Attributes", url, it) }
+        }
+        for (key in keys) {
+            val (valueUrl, capUrl) = if (key in camKeys) {
+                "$base/getcamparam.cgi?&-workmode=NORM_REC&-type=$key" to
+                    "$base/getcamparamcapability.cgi?&-workmode=NORM_REC&-type=$key"
+            } else {
+                "$base/getcommparam.cgi?&-type=$key" to
+                    "$base/getcommparamcapability.cgi?&-type=$key"
+            }
+            val value = DashcamHttpClient.get(valueUrl)
+            val cap = DashcamHttpClient.get(capUrl)
+            if (value == null && cap == null) continue
+            entries += RawEntry(
+                label = key,
+                url   = valueUrl,
+                body  = "${value?.trim() ?: "<no answer>"}\n${cap?.trim() ?: "<no answer>"}",
+            )
+        }
+        return entries.takeIf { it.isNotEmpty() }
     }
 }

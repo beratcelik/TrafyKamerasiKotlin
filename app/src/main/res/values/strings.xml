@@ -209,7 +209,7 @@
     <string name="hidvr_title_wifi_settings">Wi-Fi Settings</string>
     <string name="hidvr_title_rec_split_time">Recording Clip Length</string>
     <string name="hidvr_title_gsr_sensitivity">G-Sensor Sensitivity</string>
-    <string name="hidvr_title_gsr_parking">Parking Mode</string>
+    <string name="hidvr_title_gsr_parking">Parking Mode – Impact Sensitivity</string>
     <string name="hidvr_title_low_power_protect">Low Voltage Protection</string>
     <string name="hidvr_title_volume">Speaker Volume</string>
     <string name="hidvr_title_flip">Flip</string>
@@ -236,8 +236,8 @@
     <string name="hidvr_title_enc_payload_type">Video Codec</string>
     <string name="hidvr_title_md_sensitivity">Motion Detection</string>
     <string name="hidvr_title_screen_dormant">Screen Sleep</string>
-    <string name="hidvr_title_low_fps_rec">Low-Speed Recording</string>
-    <string name="hidvr_title_low_fps_rec_time">Low-Speed Duration</string>
+    <string name="hidvr_title_low_fps_rec">Parking Mode – Time-Lapse Recording</string>
+    <string name="hidvr_title_low_fps_rec_time">Time-Lapse Recording Duration</string>
     <string name="hidvr_title_enable_watermark">Watermark</string>
     <string name="hidvr_title_watermark_id">Watermark ID</string>
     <string name="hidvr_title_adas_en">ADAS</string>
@@ -258,13 +258,13 @@
     <!-- HiSilicon DVR — descriptions for non-obvious settings -->
     <string name="hidvr_desc_rec_split_time">Length of each video clip; the oldest is auto-deleted when the SD card fills up.</string>
     <string name="hidvr_desc_gsr_sensitivity">Locks the current clip when an impact is detected; sets the trigger sensitivity.</string>
-    <string name="hidvr_desc_gsr_parking">Triggers a recording when an impact is detected while parked.</string>
+    <string name="hidvr_desc_gsr_parking">While parked, wakes the camera and records a short clip when an impact is detected. Off means no impact recordings while parked. Works only when hardwired to the fuse box (yellow + red wire).</string>
     <string name="hidvr_desc_low_power_protect">Shuts the camera off when the car battery drops below the chosen voltage so the engine still starts next morning.</string>
     <string name="hidvr_desc_enc_payload_type">H.265 produces smaller files but may not play on every device.</string>
     <string name="hidvr_desc_md_sensitivity">Starts a recording when motion is detected in front of the camera.</string>
     <string name="hidvr_desc_screen_dormant">Turns off the camera\'s built-in screen after the chosen idle time.</string>
-    <string name="hidvr_desc_low_fps_rec">Records at low frame rate when the car is moving slowly to save SD space.</string>
-    <string name="hidvr_desc_low_fps_rec_time">How long the camera stays in low-frame-rate mode before reverting.</string>
+    <string name="hidvr_desc_low_fps_rec">After the ignition is switched off, keeps recording continuously at a low frame rate (time-lapse) for the chosen duration. Works only when hardwired to the fuse box (yellow + red wire).</string>
+    <string name="hidvr_desc_low_fps_rec_time">How long time-lapse recording continues after the ignition is switched off. Works only when hardwired to the fuse box (yellow + red wire).</string>
     <string name="hidvr_desc_enable_watermark">Burns the configured ID text onto the recorded video.</string>
     <string name="hidvr_desc_adas_en">Driver-assist alerts: lane departure and front-vehicle distance.</string>
     <string name="hidvr_desc_auto_poweroff">Camera turns off after the chosen idle period.</string>

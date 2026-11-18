@@ -143,8 +143,6 @@ object HiDvrTranslations {
         ("VOLUME"           to "1") to R.string.hidvr_opt_low,
         ("VOLUME"           to "2") to R.string.hidvr_opt_medium,
         ("VOLUME"           to "3") to R.string.hidvr_opt_high,
-        // Low voltage: 0 is Off; 1/2 remain voltage strings in the legacy map
-        ("LOW_POWER_PROTECT" to "0") to R.string.hidvr_opt_off,
     )
 
     // Context+entry pairs that format a numeric minutes value. The entryId
@@ -170,8 +168,13 @@ object HiDvrTranslations {
 
     /** Static voltage / codec context entries that aren't locale-sensitive. */
     private val NEUTRAL_CONTEXT_OPTIONS = mapOf(
-        ("LOW_POWER_PROTECT" to "1") to "11.8 V",
-        ("LOW_POWER_PROTECT" to "2") to "12.0 V",
+        // Low-voltage cut-off. There is no "off" value: 0/1/2 are three
+        // thresholds. Source: HiDvrProtocol (GoLook) maps 0→11.8v, 1→12v,
+        // 2→12.2v; confirmed on a Trafy Dos where picking our old "12.0 V"
+        // (value 2) read back as 12.2 V in GoLook.
+        ("LOW_POWER_PROTECT" to "0") to "11.8 V",
+        ("LOW_POWER_PROTECT" to "1") to "12.0 V",
+        ("LOW_POWER_PROTECT" to "2") to "12.2 V",
         ("ENC_PAYLOAD_TYPE"  to "0") to "H.264",
         ("ENC_PAYLOAD_TYPE"  to "1") to "H.265",
     )
@@ -201,11 +204,14 @@ object HiDvrTranslations {
         }
         // Newer firmware contexts that map an integer entry id to a duration.
         when (menuKey) {
+            // How long parking time-lapse keeps recording after ignition off.
+            // Source: HiDvrProtocol (GoLook) list_low_fps_rec_time =
+            // "15 minutes,12 hours,24 hours,48 hours" for values 0,1,2,3.
             "LOW_FPS_REC_TIME" -> when (entryId) {
-                "0" -> return ctx.getString(R.string.hidvr_opt_seconds_fmt, 30)
-                "1" -> return ctx.getString(R.string.hidvr_opt_minutes_fmt, 1)
-                "2" -> return ctx.getString(R.string.hidvr_opt_minutes_fmt, 2)
-                "3" -> return ctx.getString(R.string.hidvr_opt_minutes_fmt, 3)
+                "0" -> return ctx.getString(R.string.hidvr_opt_minutes_fmt, 15)
+                "1" -> return ctx.getString(R.string.hidvr_opt_hours_fmt, 12)
+                "2" -> return ctx.getString(R.string.hidvr_opt_hours_fmt, 24)
+                "3" -> return ctx.getString(R.string.hidvr_opt_hours_fmt, 48)
             }
             "SCREEN_DORMANT" -> when (entryId) {
                 "0" -> return ctx.getString(R.string.hidvr_opt_never)

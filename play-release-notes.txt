@@ -1,0 +1,6 @@
+<tr-TR>
+Trafy Dos'ta park modu ayarları (hızlandırılmış kayıt süresi ve darbe hassasiyeti) ile düşük voltaj koruması artık kaydediliyor; önceki sürümde bu ayarlar "işlem başarısız" hatası veriyordu. Park modu ayarlarına, yalnızca sigorta kutusu bağlantısında çalıştıklarını belirten açıklamalar eklendi.
+</tr-TR>
+<en-US>
+On the Trafy Dos, parking-mode settings (time-lapse duration and impact sensitivity) and low-voltage protection now save; the previous version reported "operation failed" for these. Parking-mode settings now explain that they only work when the camera is hardwired to the fuse box.
+</en-US>
